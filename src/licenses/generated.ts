@@ -19,6 +19,15 @@ export const GENERATED_OPEN_SOURCE_LICENSES = [
     licenseAsset: require("../../assets/licenses/generated/22a28f29cff8f5ec.txt"),
   },
   {
+    id: "npm-react-native-clipboard-clipboard-1-16-3",
+    category: "npm",
+    projectName: "@react-native-clipboard/clipboard",
+    sourceUrl: "https://github.com/react-native-clipboard/clipboard",
+    attribution: "Direct npm dependency · version 1.16.3",
+    licenseName: "MIT",
+    licenseAsset: require("../../assets/licenses/generated/22a28f29cff8f5ec.txt"),
+  },
+  {
     id: "npm-react-native-community-slider-5-2-0",
     category: "npm",
     projectName: "@react-native-community/slider",

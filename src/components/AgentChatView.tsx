@@ -20,7 +20,6 @@ import {
 } from 'lucide-react-native';
 import {
   ActivityIndicator,
-  Clipboard,
   Linking,
   Pressable,
   ScrollView,
@@ -29,6 +28,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import Animated, {
   cancelAnimation,
   Easing,

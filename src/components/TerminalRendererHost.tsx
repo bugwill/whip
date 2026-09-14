@@ -8,11 +8,11 @@ import {
 } from 'react';
 import {
   AppState,
-  Clipboard,
   Platform,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import WebView from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview/lib/WebViewTypes';
 

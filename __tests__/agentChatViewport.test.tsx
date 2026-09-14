@@ -39,7 +39,6 @@ jest.mock('react-native-css-interop/jsx-runtime', () =>
 );
 jest.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
-  Clipboard: { setString: jest.fn() },
   Linking: { openURL: jest.fn(async () => undefined) },
   Pressable: 'Pressable',
   ScrollView: 'ScrollView',

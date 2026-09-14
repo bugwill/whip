@@ -1,4 +1,5 @@
 import { createRef } from 'react';
+import Clipboard from '@react-native-clipboard/clipboard';
 import {
   act,
   create,
@@ -29,7 +30,6 @@ jest.mock('react-native', () => {
         return { remove: () => mockListeners.delete(listener) };
       }),
     },
-    Clipboard: { setString: jest.fn() },
     Platform: {
       OS: 'android',
       select: (options: Record<string, unknown>) => options.android,
@@ -286,6 +286,25 @@ describe('TerminalRendererHost lifecycle', () => {
     };
     return { activateTarget, eventCallbacks, injected, webView };
   };
+
+  test('copies terminal text and pastes clipboard text through the maintained native module', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll });
+    const target = createTarget('term-1', client, scroll);
+    const { webView, eventCallbacks } = await mountReadyHost(target);
+    const text = 'printf "你好 🌍"';
+
+    await sendRendererMessage(webView, { type: 'clipboard-write', key: target.key, text });
+    expect(Clipboard.setString).toHaveBeenCalledWith(text);
+
+    jest.mocked(Clipboard.getString).mockResolvedValueOnce(text);
+    await sendRendererMessage(webView, { type: 'clipboard-read', key: target.key });
+    expect(client.native.requestHerdrApi).toHaveBeenCalledWith({
+      method: 'pane.send_input',
+      params: { pane_id: target.session.paneId, text, keys: [] },
+    });
+    expect(eventCallbacks.onPaste).toHaveBeenCalledWith(target, text);
+  });
 
   test('closes the native bridge when a terminal target is removed', () => {
     const closeTerminalBridge = jest.fn();
