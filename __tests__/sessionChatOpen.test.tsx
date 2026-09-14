@@ -4,8 +4,10 @@ import { SessionScreen } from '../src/components/SessionScreen';
 import { agentChatCache } from '../src/services/agentChatCache';
 import { agentTranscriptService } from '../src/services/NativeTranscriptService';
 import type { ChatAgent } from '../src/lib/agentChatSession';
+import { AgentChatPresentationPhase } from '../src/lib/agentChatPresentation';
 import type { HerdrSnapshot, PaneInfo } from '../src/types';
 import type {
+  NativeAgentChatBinding,
   NativeAgentChatOpenResult,
   NativeAgentChatStartResult,
   RuntimeAgentIntegrationStatus,
@@ -129,7 +131,9 @@ function setup(agent: ChatAgent) {
         reason: 'unsupported-pane',
       }),
     ),
-    currentAgentChat: jest.fn(() => undefined),
+    currentAgentChat: jest.fn(
+      (_terminalId: string): NativeAgentChatBinding | undefined => undefined,
+    ),
     startAgentChat: jest.fn(
       (): NativeAgentChatStartResult => ({ type: 'stale-binding' }),
     ),
@@ -202,6 +206,10 @@ let renderer: ReactTestRenderer;
 const ui = (name: string) =>
   renderer.root.find(node => String(node.type) === name);
 const control = () => ui('TerminalScreen').props.chatControl;
+const navigationPhases = [
+  AgentChatPresentationPhase.Visible,
+  AgentChatPresentationPhase.PreparingViewport,
+];
 
 beforeEach(() => {
   jest.spyOn(console, 'info').mockImplementation(() => {});
@@ -214,7 +222,7 @@ afterEach(() => {
 });
 
 function bindChat(host: ReturnType<typeof setup>, agent: ChatAgent) {
-  host.native.openAgentChat.mockReturnValue({
+  const result: NativeAgentChatOpenResult = {
     type: 'bound',
     binding: {
       bindingToken: 'binding-1',
@@ -234,10 +242,154 @@ function bindChat(host: ReturnType<typeof setup>, agent: ChatAgent) {
         turns: [],
       },
     },
+  };
+  host.native.openAgentChat.mockReturnValue(result);
+  return result.binding;
+}
+
+async function openReadyChat(host: ReturnType<typeof setup>, agent: ChatAgent) {
+  const binding = bindChat(host, agent);
+  host.native.currentAgentChat.mockImplementation(terminalId =>
+    terminalId === binding.terminalId ? binding : undefined,
+  );
+  host.native.startAgentChat.mockReturnValue({
+    type: 'started',
+    state: { ...binding.state, status: 'live', revision: 1 },
   });
+  act(() => {
+    renderer = create(<SessionScreen {...host.props} />);
+  });
+  await act(async () => {
+    await control().onPress();
+  });
+  return binding;
+}
+
+function revealChat() {
+  const viewport = ui('TerminalScreen').props.renderViewportOverlay(
+    { top: 0, bottom: 0 },
+    0,
+  );
+  act(() => { viewport.props.onInitialViewportReady(); });
+  expect(ui('TerminalScreen').props.chatViewEnabled).toBe(true);
 }
 
 describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
+  test.each(navigationPhases)(
+    'bottom-tab navigation preserves %s Chat presentation',
+    async phase => {
+      const host = setup(agent);
+      await openReadyChat(host, agent);
+      if (phase === AgentChatPresentationPhase.Visible) revealChat();
+
+      act(() => renderer.update(<SessionScreen {...host.props} visible={false} />));
+      expect(ui('TerminalScreen').props.visible).toBe(false);
+      act(() => renderer.update(<SessionScreen {...host.props} visible />));
+
+      if (phase === AgentChatPresentationPhase.PreparingViewport) {
+        expect(control().loading).toBe(true);
+        revealChat();
+      }
+      expect(ui('TerminalScreen').props.chatViewEnabled).toBe(true);
+      expect(control().active).toBe(true);
+      expect(host.native.detachAgentChat).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each(navigationPhases)(
+    'switching terminals preserves A\'s %s Chat and B\'s Terminal selection',
+    async phase => {
+      const host = setup(agent);
+      const terminalB = {
+        ...host.props.terminalState.sessions[0],
+        terminalId: 'terminal-2',
+        paneId: 'pane-2',
+      };
+      host.props.terminalState.sessions = [
+        ...host.props.terminalState.sessions,
+        terminalB,
+      ];
+      host.props.snapshot.panes.push({
+        ...host.pane,
+        terminal_id: terminalB.terminalId,
+        pane_id: terminalB.paneId,
+        focused: false,
+      });
+      host.props.terminalTargets = [
+        ...host.props.terminalTargets,
+        {
+          key: 'target-2',
+          hostSessionId: host.props.hostSessionId,
+          client: host.client,
+          session: terminalB,
+        },
+      ];
+      await openReadyChat(host, agent);
+      if (phase === AgentChatPresentationPhase.Visible) revealChat();
+      const selectB = () => renderer.update(
+        <SessionScreen
+          {...host.props}
+          terminalState={{
+            ...host.props.terminalState,
+            activeTerminalId: terminalB.terminalId,
+          }}
+        />,
+      );
+
+      act(selectB);
+      expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+      expect(control().active).toBe(false);
+      expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+      act(() => renderer.update(<SessionScreen {...host.props} />));
+
+      if (phase === AgentChatPresentationPhase.PreparingViewport) {
+        expect(control().loading).toBe(true);
+        revealChat();
+      }
+      expect(ui('TerminalScreen').props.chatViewEnabled).toBe(true);
+      expect(control().active).toBe(true);
+      act(selectB);
+      expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+      expect(host.native.detachAgentChat).not.toHaveBeenCalled();
+    },
+  );
+
+  test('explicitly toggling Chat off restores Terminal View across navigation', async () => {
+    const host = setup(agent);
+    await openReadyChat(host, agent);
+    revealChat();
+
+    act(() => { control().onPress(); });
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    expect(control().active).toBe(false);
+    act(() => renderer.update(<SessionScreen {...host.props} visible={false} />));
+    act(() => renderer.update(<SessionScreen {...host.props} />));
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+  });
+
+  test('removing a terminal clears its Chat selection and detaches its transcript', async () => {
+    const host = setup(agent);
+    const binding = await openReadyChat(host, agent);
+    revealChat();
+    expect(agentTranscriptService.getState(binding.bindingToken)).not.toBeNull();
+
+    act(() => renderer.update(
+      <SessionScreen
+        {...host.props}
+        visible={false}
+        terminalState={{ sessions: [], activeTerminalId: null }}
+        terminalTargets={[]}
+      />,
+    ));
+    expect(host.native.detachAgentChat).toHaveBeenCalledWith(binding.terminalId);
+    expect(agentTranscriptService.getState(binding.bindingToken)).toBeNull();
+    // Reusing the ID must not resurrect the removed terminal's presentation.
+    act(() => renderer.update(<SessionScreen {...host.props} />));
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    expect(control().loading).toBe(false);
+  });
+
   test('tap Chat starts the spinner immediately, then persistent native no-chat shows remediation and stops it', async () => {
     const host = setup(agent);
     act(() => {

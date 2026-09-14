@@ -703,18 +703,6 @@ export function SessionScreen({
   ]);
 
   useEffect(() => {
-    // Leaving a terminal cancels an opening viewport as well as the controller.
-    setChatViews(current => {
-      const next = new Map(current);
-      for (const [id, view] of current) {
-        if (visible && id === terminalState.activeTerminalId) continue;
-        next.set(id, { ...view, presentation: closeChatPresentation(view.presentation) });
-      }
-      return next;
-    });
-  }, [terminalState.activeTerminalId, visible]);
-
-  useEffect(() => {
     const pending = pendingFocus.current;
     if (pending) {
       const previousStillPresent =
