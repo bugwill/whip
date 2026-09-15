@@ -1500,6 +1500,10 @@ impl CodexSessionCore {
         Ok(self.state())
     }
 
+    pub fn committable_offset(&self) -> u64 {
+        self.framer.committable_offset()
+    }
+
     pub fn cache_blob(&self) -> Result<Vec<u8>, AgentCacheError> {
         let committable = self.framer.committable_offset();
         let committed_line_count = self

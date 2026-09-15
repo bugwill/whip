@@ -18,6 +18,13 @@ jest.mock('react-native', () => ({
   Modal: 'Modal',
   ScrollView: 'ScrollView',
   ActivityIndicator: 'Spinner',
+  AppState: {
+    currentState: 'active',
+    addEventListener: jest.fn((_event, listener) => {
+      mockAppStateListeners.add(listener);
+      return { remove: () => mockAppStateListeners.delete(listener) };
+    }),
+  },
   NativeModules: {},
   Platform: { OS: 'android' },
   Linking: { openURL: jest.fn() },
@@ -87,6 +94,7 @@ jest.mock('../src/theme', () => ({
 }));
 
 type Props = ComponentProps<typeof SessionScreen>;
+const mockAppStateListeners = new Set<(state: string) => void>();
 function setup(agent: ChatAgent) {
   const pane: PaneInfo = {
     pane_id: 'pane-1',
@@ -275,8 +283,36 @@ function revealChat() {
 }
 
 describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
+  test.each(['unavailable', 'replaced'] as const)('restores a suspended chat after its host was %s on return', async reason => {
+    const host = setup(agent);
+    await openReadyChat(host, agent);
+    revealChat();
+    act(() => renderer.update(<SessionScreen {...host.props} visible={false} />));
+    host.native.openAgentChat.mockImplementationOnce(() => {
+      if (reason === 'replaced') throw new Error('runtime replaced during reconnect');
+      return { type: 'no-chat', terminalId: 'terminal-1', reason: 'host-state-unavailable' };
+    });
+    await act(async () => renderer.update(<SessionScreen {...host.props} />));
+    expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    const snapshot = { ...host.props.snapshot, panes: [...host.props.snapshot.panes] };
+    await act(async () => renderer.update(<SessionScreen {...host.props} snapshot={snapshot} />));
+    revealChat();
+    expect(control().active).toBe(true);
+  });
+
+  test('backgrounding releases the chat and foregrounding restores its view intent', async () => {
+    const host = setup(agent);
+    await openReadyChat(host, agent);
+    revealChat();
+    act(() => { for (const listener of mockAppStateListeners) listener('background'); });
+    expect(host.native.detachAgentChat).toHaveBeenCalledWith('terminal-1');
+    expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    await act(async () => { for (const listener of mockAppStateListeners) listener('active'); });
+    revealChat();
+    expect(control().active).toBe(true);
+  });
   test.each(navigationPhases)(
-    'bottom-tab navigation preserves %s Chat presentation',
+    'bottom-tab navigation archives and restores %s Chat',
     async phase => {
       const host = setup(agent);
       await openReadyChat(host, agent);
@@ -286,18 +322,17 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
       expect(ui('TerminalScreen').props.visible).toBe(false);
       act(() => renderer.update(<SessionScreen {...host.props} visible />));
 
-      if (phase === AgentChatPresentationPhase.PreparingViewport) {
-        expect(control().loading).toBe(true);
-        revealChat();
-      }
+      await act(async () => {});
+      expect(control().loading).toBe(true);
+      revealChat();
       expect(ui('TerminalScreen').props.chatViewEnabled).toBe(true);
       expect(control().active).toBe(true);
-      expect(host.native.detachAgentChat).not.toHaveBeenCalled();
+      expect(host.native.detachAgentChat).toHaveBeenCalledWith('terminal-1');
     },
   );
 
   test.each(navigationPhases)(
-    'switching terminals preserves A\'s %s Chat and B\'s Terminal selection',
+    'switching terminals releases A\'s %s Chat and restores its selection',
     async phase => {
       const host = setup(agent);
       const terminalB = {
@@ -342,15 +377,14 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
       expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
       act(() => renderer.update(<SessionScreen {...host.props} />));
 
-      if (phase === AgentChatPresentationPhase.PreparingViewport) {
-        expect(control().loading).toBe(true);
-        revealChat();
-      }
+      await act(async () => {});
+      expect(control().loading).toBe(true);
+      revealChat();
       expect(ui('TerminalScreen').props.chatViewEnabled).toBe(true);
       expect(control().active).toBe(true);
       act(selectB);
       expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
-      expect(host.native.detachAgentChat).not.toHaveBeenCalled();
+      expect(host.native.detachAgentChat).toHaveBeenCalledWith('terminal-1');
     },
   );
 

@@ -146,7 +146,7 @@ const runtimeHandlers = new Map<
 >();
 const agentTranscriptHandlers = new Map<
   string,
-  Map<string, (event: NativeAgentTranscriptUpdate) => void>
+  Map<string, (event: AgentTranscriptEvent) => boolean>
 >();
 const agentTranscriptRetentionVersions = new Map<string, number>();
 const runtimeSshShellHandlers = new Map<
@@ -2531,13 +2531,13 @@ const agentTranscriptEventSink = {
       transcriptRoutingKey(event.runtimeId, Number(event.runtimeIncarnation)),
     );
     const handler = handlers?.get(event.key);
-    handler?.(nativeAgentUpdate(event));
+    const accepted = handler?.(event);
     const closed = event.update.deltas.some(
       delta =>
         delta.tag === AgentTranscriptDelta_Tags.StatusChanged &&
         delta.inner.status === AgentTranscriptStatus.Closed,
     );
-    if (closed) handlers?.delete(event.key);
+    if (accepted && closed && handlers?.get(event.key) === handler) handlers?.delete(event.key);
   },
 };
 
@@ -2754,7 +2754,11 @@ export class NativeHostRuntime {
         handlers = new Map();
         agentTranscriptHandlers.set(this.transcriptRoute, handlers);
       }
-      handlers.set(binding.transcriptKey, handler);
+      handlers.set(binding.transcriptKey, event => {
+        if (!this.runtime.acceptsAgentTranscriptEvent(event.key, event.operationEpoch)) return false;
+        handler(nativeAgentUpdate(event));
+        return true;
+      });
     }
   }
 
@@ -2776,7 +2780,11 @@ export class NativeHostRuntime {
     return nativeAgentTranscript(this.runtime.agentTranscript(key));
   }
 
-  detachAgentChat(terminalId: string): boolean {
+  detachAgentChat(terminalId: string): {
+    namespace: string;
+    key: string;
+    blob: ArrayBuffer;
+  } | undefined {
     // Unroute callbacks before native detach. Native may synchronously close a
     // resource, but an intentional release is not a transcript failure.
     this.forgetAgentChatRoute(terminalId);

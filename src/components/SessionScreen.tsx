@@ -14,6 +14,7 @@ import {
 } from 'lucide-react-native';
 import {
   ActivityIndicator,
+  AppState,
   Linking,
   Modal,
   Platform,
@@ -66,7 +67,6 @@ import {
   chatPresentationMountsViewport,
   chatPresentationRequested,
   chatPresentationVisible,
-  closeChatPresentation,
   dormantChatPresentation,
   requestChatPresentation,
   revealPreparedChat,
@@ -243,6 +243,11 @@ export function SessionScreen({
   const [chatViews, setChatViews] = useState(
     () => new Map<string, AgentChatViewState>(),
   );
+  const [appActive, setAppActive] = useState(() => AppState.currentState !== 'background');
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => setAppActive(state === 'active'));
+    return () => subscription.remove();
+  }, []);
   const [pasteRequest, setPasteRequest] = useState<{
     id: number;
     terminalId: string;
@@ -257,6 +262,8 @@ export function SessionScreen({
   const lastActivePaneId = useRef<string | null>(null);
   const pendingFocus = useRef<PendingFocus | null>(null);
   const chatViewsRef = useRef(chatViews);
+  // Remember only view intent while SQLite owns an inactive transcript.
+  const suspendedChatsRef = useRef(new Map<string, string>());
   const activeTerminalIdRef = useRef(terminalState.activeTerminalId);
   const chatPresentationGenerationRef = useRef(0);
   const lastActiveChatDiagnosticRef = useRef('');
@@ -556,6 +563,7 @@ export function SessionScreen({
     setAttachmentsOpen(false);
     setPasteRequest(null);
     setChatViews(new Map());
+    suspendedChatsRef.current.clear();
     reportedChatFailureGenerationsRef.current.clear();
   }, [hostSessionId]);
 
@@ -577,6 +585,59 @@ export function SessionScreen({
     },
     [client, hostSessionId],
   );
+
+  useEffect(() => {
+    const activeId = visible && appActive ? terminalState.activeTerminalId : null;
+    const liveIds = new Set(terminalState.sessions.map(session => session.terminalId));
+    const next = new Map(chatViewsRef.current);
+    let changed = false;
+    for (const [terminalId, view] of next) {
+      if (terminalId === activeId) continue;
+      if (liveIds.has(terminalId) && chatPresentationRequested(view.presentation)) {
+        suspendedChatsRef.current.set(terminalId, view.binding.transcriptKey);
+      }
+      agentTranscriptService.closeTerminal(hostSessionId, terminalId, client.native);
+      next.delete(terminalId);
+      changed = true;
+    }
+    const host = client.native.hostState();
+    for (const terminalId of suspendedChatsRef.current.keys()) {
+      if (!liveIds.has(terminalId) || confirmedChatExit(host, terminalId)) {
+        suspendedChatsRef.current.delete(terminalId);
+      }
+    }
+    if (activeId && suspendedChatsRef.current.has(activeId)) {
+      const transcriptKey = suspendedChatsRef.current.get(activeId);
+      try {
+        const projection = agentTranscriptService.activate(hostSessionId, activeId, client.native);
+        if (projection.type === 'bound') {
+          suspendedChatsRef.current.delete(activeId);
+          if (projection.binding.transcriptKey === transcriptKey) {
+            next.set(activeId, {
+              binding: projection.binding,
+              presentation: requestedChatPresentation(projection.state),
+              state: projection.state,
+            });
+            changed = true;
+          } else {
+            agentTranscriptService.closeTerminal(hostSessionId, activeId, client.native);
+          }
+        } else if (projection.reason !== 'host-state-unavailable') {
+          suspendedChatsRef.current.delete(activeId);
+        }
+      } catch (error) {
+        // A reconnect can replace the native runtime between snapshots. Keep
+        // the selection pending for the next host update, without its history.
+        const failure = error instanceof Error ? error : new Error(String(error));
+        reportBackgroundFailure(Promise.reject(failure), 'agent-chat-resume');
+      }
+    }
+    if (changed) {
+      chatViewsRef.current = next;
+      setChatViews(next);
+    }
+  }, [visible, appActive, terminalState.activeTerminalId, terminalState.sessions, snapshot.panes,
+    client, hostSessionId, requestedChatPresentation]);
 
   useEffect(() => {
     const terminalIds = terminalState.sessions.map(
@@ -1036,16 +1097,15 @@ export function SessionScreen({
     const terminalId = activeTerminalSession?.terminalId;
     if (!terminalId) return;
     cancelChatOpen();
+    suspendedChatsRef.current.delete(terminalId);
+    agentTranscriptService.closeTerminal(hostSessionId, terminalId, client.native);
     setChatViews(current => {
-      const view = current.get(terminalId);
-      if (!view) return current;
-      const presentation = closeChatPresentation(view.presentation);
-      if (presentation === view.presentation) return current;
+      if (!current.has(terminalId)) return current;
       const next = new Map(current);
-      next.set(terminalId, { ...view, presentation });
+      next.delete(terminalId);
       return next;
     });
-  }, [activeTerminalSession?.terminalId, cancelChatOpen]);
+  }, [activeTerminalSession?.terminalId, cancelChatOpen, hostSessionId, client]);
 
   const openAgentChat = () => {
     if (activeChatView && chatPresentationRequested(activeChatView.presentation)) return;

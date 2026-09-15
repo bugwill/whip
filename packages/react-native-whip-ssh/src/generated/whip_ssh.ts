@@ -3487,6 +3487,60 @@ const FfiConverterTypeAgentStatusTransition = (() => {
   return new FFIConverter();
 })();
 
+/**
+ * Final checkpoint returned synchronously before an inactive session is freed.
+ */
+export type AgentTranscriptArchive = {
+  namespace: string;
+  key: string;
+  blob: ArrayBuffer;
+};
+
+/**
+ * Generated factory for {@link AgentTranscriptArchive} record objects.
+ */
+export const AgentTranscriptArchive = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      AgentTranscriptArchive,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () =>
+      Object.freeze(defaults()) as Partial<AgentTranscriptArchive>,
+  });
+})();
+
+const FfiConverterTypeAgentTranscriptArchive = (() => {
+  type TypeName = AgentTranscriptArchive;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        namespace: FfiConverterString.read(from),
+        key: FfiConverterString.read(from),
+        blob: FfiConverterArrayBuffer.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.namespace, into);
+      FfiConverterString.write(value.key, into);
+      FfiConverterArrayBuffer.write(value.blob, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.namespace) +
+        FfiConverterString.allocationSize(value.key) +
+        FfiConverterArrayBuffer.allocationSize(value.blob)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
 export type AgentTranscriptCacheWrite = {
   namespace: string;
   key: string;
@@ -4043,6 +4097,7 @@ const FfiConverterTypeAgentTranscriptUpdate = (() => {
 export type AgentTranscriptEvent = {
   runtimeId: string;
   runtimeIncarnation: bigint;
+  operationEpoch: bigint;
   key: string;
   update: AgentTranscriptUpdate;
   cacheWrite?: AgentTranscriptCacheWrite;
@@ -4073,6 +4128,7 @@ const FfiConverterTypeAgentTranscriptEvent = (() => {
       return {
         runtimeId: FfiConverterString.read(from),
         runtimeIncarnation: FfiConverterUInt64.read(from),
+        operationEpoch: FfiConverterUInt64.read(from),
         key: FfiConverterString.read(from),
         update: FfiConverterTypeAgentTranscriptUpdate.read(from),
         cacheWrite:
@@ -4082,6 +4138,7 @@ const FfiConverterTypeAgentTranscriptEvent = (() => {
     write(value: TypeName, into: RustBuffer): void {
       FfiConverterString.write(value.runtimeId, into);
       FfiConverterUInt64.write(value.runtimeIncarnation, into);
+      FfiConverterUInt64.write(value.operationEpoch, into);
       FfiConverterString.write(value.key, into);
       FfiConverterTypeAgentTranscriptUpdate.write(value.update, into);
       FfiConverterOptionalTypeAgentTranscriptCacheWrite.write(
@@ -4093,6 +4150,7 @@ const FfiConverterTypeAgentTranscriptEvent = (() => {
       return (
         FfiConverterString.allocationSize(value.runtimeId) +
         FfiConverterUInt64.allocationSize(value.runtimeIncarnation) +
+        FfiConverterUInt64.allocationSize(value.operationEpoch) +
         FfiConverterString.allocationSize(value.key) +
         FfiConverterTypeAgentTranscriptUpdate.allocationSize(value.update) +
         FfiConverterOptionalTypeAgentTranscriptCacheWrite.allocationSize(
@@ -20278,6 +20336,11 @@ const uniffiCallbackInterfaceAgentTranscriptEventSink: {
 };
 
 export interface HostRuntimeLike {
+  /**
+   * Recheck after the bridge queue: detached/replaced operations cannot
+   * update a new view or persist an obsolete checkpoint for the same key.
+   */
+  acceptsAgentTranscriptEvent(key: string, operationEpoch: bigint): boolean;
   agentIntegrationStatus(
     kind: HerdrAgentKind,
     asyncOpts_?: { signal: AbortSignal },
@@ -20313,7 +20376,9 @@ export interface HostRuntimeLike {
    * explicit `open_agent_chat` operation.
    */
   currentAgentChat(terminalId: string): AgentChatBinding | undefined;
-  detachAgentChat(terminalId: string): boolean;
+  detachAgentChat(
+    terminalId: string,
+  ): /*throws*/ AgentTranscriptArchive | undefined;
   disconnect(asyncOpts_?: { signal: AbortSignal }): /*throws*/ Promise<void>;
   discoverGitRepository(
     path: string,
@@ -20490,6 +20555,29 @@ export class HostRuntime
     this[pointerLiteralSymbol] = pointer;
     this[destructorGuardSymbol] =
       uniffiTypeHostRuntimeObjectFactory.bless(pointer);
+  }
+
+  /**
+   * Recheck after the bridge queue: detached/replaced operations cannot
+   * update a new view or persist an obsolete checkpoint for the same key.
+   */
+  acceptsAgentTranscriptEvent(key: string, operationEpoch: bigint): boolean {
+    return FfiConverterBool.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ callStatus => {
+          return nativeModule().ubrn_uniffi_whip_ssh_fn_method_hostruntime_accepts_agent_transcript_event(
+            uniffiTypeHostRuntimeObjectFactory.clonePointer(this),
+            FfiConverterString.lower(key, nativeModule().rustbuffer_alloc),
+            FfiConverterUInt64.lower(
+              operationEpoch,
+              nativeModule().rustbuffer_alloc,
+            ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
   }
 
   async agentIntegrationStatus(
@@ -20882,9 +20970,20 @@ export class HostRuntime
     );
   }
 
-  detachAgentChat(terminalId: string): boolean {
-    return FfiConverterBool.lift(
-      uniffiCaller.rustCall(
+  detachAgentChat(
+    terminalId: string,
+  ): AgentTranscriptArchive | undefined /*throws*/ {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterOptionalTypeAgentTranscriptArchive.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCallWithError(
+        /*liftError:*/ FfiConverterTypeAgentSessionError.lift.bind(
+          FfiConverterTypeAgentSessionError,
+        ),
         /*caller:*/ callStatus => {
           return nativeModule().ubrn_uniffi_whip_ssh_fn_method_hostruntime_detach_agent_chat(
             uniffiTypeHostRuntimeObjectFactory.clonePointer(this),
@@ -25059,6 +25158,11 @@ const FfiConverterOptionalTypeAgentChatBinding = new FfiConverterOptional(
   FfiConverterTypeAgentChatBinding,
 );
 
+// FfiConverter for AgentTranscriptArchive | undefined
+const FfiConverterOptionalTypeAgentTranscriptArchive = new FfiConverterOptional(
+  FfiConverterTypeAgentTranscriptArchive,
+);
+
 // FfiConverter for GitRepository | undefined
 const FfiConverterOptionalTypeGitRepository = new FfiConverterOptional(
   FfiConverterTypeGitRepository,
@@ -25884,6 +25988,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_whip_ssh_checksum_method_hostruntime_accepts_agent_transcript_event() !==
+    50224
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_whip_ssh_checksum_method_hostruntime_accepts_agent_transcript_event',
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_whip_ssh_checksum_method_hostruntime_agent_integration_status() !==
     28637
   ) {
@@ -25989,7 +26101,7 @@ function uniffiEnsureInitialized() {
   }
   if (
     nativeModule().ubrn_uniffi_whip_ssh_checksum_method_hostruntime_detach_agent_chat() !==
-    50228
+    43667
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       'uniffi_whip_ssh_checksum_method_hostruntime_detach_agent_chat',
@@ -26502,6 +26614,7 @@ export default Object.freeze({
     FfiConverterTypeAgentToolDiagnostic,
     FfiConverterTypeAgentToolState,
     FfiConverterTypeAgentToolStatus,
+    FfiConverterTypeAgentTranscriptArchive,
     FfiConverterTypeAgentTranscriptCacheWrite,
     FfiConverterTypeAgentTranscriptDelta,
     FfiConverterTypeAgentTranscriptEvent,
