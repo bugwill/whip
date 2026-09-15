@@ -260,9 +260,9 @@ async function openReadyChat(host: ReturnType<typeof setup>, agent: ChatAgent) {
   host.native.currentAgentChat.mockImplementation(terminalId =>
     terminalId === binding.terminalId ? binding : undefined,
   );
-  host.native.startAgentChat.mockReturnValue({
-    type: 'started',
-    state: { ...binding.state, status: 'live', revision: 1 },
+  host.native.startAgentChat.mockImplementation(() => {
+    binding.state = { ...binding.state, status: 'live', revision: 1 };
+    return { type: 'started', state: binding.state };
   });
   act(() => {
     renderer = create(<SessionScreen {...host.props} />);
@@ -300,16 +300,76 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
     expect(control().active).toBe(true);
   });
 
-  test('backgrounding releases the chat and foregrounding restores its view intent', async () => {
+  test('background bridge release and reattachment keep Chat visible and bound', async () => {
     const host = setup(agent);
-    await openReadyChat(host, agent);
+    const binding = await openReadyChat(host, agent);
+    revealChat();
+    const state = agentTranscriptService.getState(binding.bindingToken);
+    const transitions = [
+      { appState: 'inactive', status: 'connected' },
+      { appState: 'background', status: 'disconnected' },
+      { appState: 'active', status: 'connecting' },
+      { appState: 'active', status: 'connected' },
+    ] as const;
+    for (const { appState, status } of transitions) {
+      await act(async () => {
+        for (const listener of mockAppStateListeners) listener(appState);
+        renderer.update(<SessionScreen
+          {...host.props}
+          terminalState={{
+            ...host.props.terminalState,
+            sessions: host.props.terminalState.sessions.map(terminal => ({ ...terminal, status })),
+          }}
+        />);
+      });
+      expect(ui('TerminalScreen').props.chatViewEnabled).toBe(true);
+      expect(ui('TerminalScreen').props.renderViewportOverlay).toBeDefined();
+      expect(control().active).toBe(true);
+      expect(control().loading).toBe(false);
+      expect(agentTranscriptService.getState(binding.bindingToken)).toBe(state);
+      expect(host.native.detachAgentChat).not.toHaveBeenCalled();
+      expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+      expect(host.native.startAgentChat).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  test('foreground reconciles an agent exit missed while backgrounded', async () => {
+    const host = setup(agent);
+    const binding = await openReadyChat(host, agent);
     revealChat();
     act(() => { for (const listener of mockAppStateListeners) listener('background'); });
-    expect(host.native.detachAgentChat).toHaveBeenCalledWith('terminal-1');
-    expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    host.native.currentAgentChat.mockReturnValue(undefined);
+    host.setSnapshot({
+      ...host.props.snapshot,
+      panes: [{ ...host.pane, agent: 'shell', display_agent: 'shell', agent_session: undefined }],
+    });
+
     await act(async () => { for (const listener of mockAppStateListeners) listener('active'); });
+
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    expect(agentTranscriptService.getState(binding.bindingToken)).toBeNull();
+    expect(ui('Alert').props.visible).toBe(false);
+    expect(host.native.detachAgentChat).not.toHaveBeenCalled();
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+  });
+
+  test('foreground adopts a replacement native binding after a real reconnect', async () => {
+    const host = setup(agent);
+    const binding = await openReadyChat(host, agent);
+    revealChat();
+    act(() => { for (const listener of mockAppStateListeners) listener('background'); });
+    const replacement = { ...binding, runtimeIncarnation: 2, bindingGeneration: 2, bindingToken: 'binding-2' };
+    host.native.currentAgentChat.mockReturnValue(replacement);
+
+    await act(async () => { for (const listener of mockAppStateListeners) listener('active'); });
+
+    expect(agentTranscriptService.getState(binding.bindingToken)).toBeNull();
+    expect(agentTranscriptService.getState(replacement.bindingToken)).not.toBeNull();
     revealChat();
     expect(control().active).toBe(true);
+    expect(host.native.detachAgentChat).not.toHaveBeenCalled();
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
   });
   test.each(navigationPhases)(
     'bottom-tab navigation archives and restores %s Chat',

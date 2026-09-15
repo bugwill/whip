@@ -587,7 +587,7 @@ export function SessionScreen({
   );
 
   useEffect(() => {
-    const activeId = visible && appActive ? terminalState.activeTerminalId : null;
+    const activeId = visible ? terminalState.activeTerminalId : null;
     const liveIds = new Set(terminalState.sessions.map(session => session.terminalId));
     const next = new Map(chatViewsRef.current);
     let changed = false;
@@ -636,7 +636,7 @@ export function SessionScreen({
       chatViewsRef.current = next;
       setChatViews(next);
     }
-  }, [visible, appActive, terminalState.activeTerminalId, terminalState.sessions, snapshot.panes,
+  }, [visible, terminalState.activeTerminalId, terminalState.sessions, snapshot.panes,
     client, hostSessionId, requestedChatPresentation]);
 
   useEffect(() => {
@@ -684,6 +684,8 @@ export function SessionScreen({
       ),
     );
   }, [
+    // Native state may change while JS is paused without a new pane snapshot.
+    appActive,
     client,
     hostSessionId,
     snapshot.panes,
