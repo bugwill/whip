@@ -2564,8 +2564,8 @@ mod tests {
         assert_eq!((tools[0].0, tools[0].1), ("exec-search", "websearch"));
         assert_eq!((tools[1].0, tools[1].1), ("exec-open", "websearch"));
         assert_eq!(tools[0].2.status, AgentToolStatus::Completed);
-        assert_eq!(tools[0].2.started_at_ms, Some(1789473603000));
-        assert_eq!(tools[0].2.completed_at_ms, Some(1789473604000));
+        assert_eq!(tools[0].2.started_at_ms, Some(1_789_473_603_000));
+        assert_eq!(tools[0].2.completed_at_ms, Some(1_789_473_604_000));
         assert!(tools[0].2.input.iter().any(|field| field.key == "query"
             && field.value
                 == AgentScalarValue::String {
