@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-code-highlighter/dist/commonjs/lib/CodeHighlighter.js b/node_modules/react-native-code-highlighter/dist/commonjs/lib/CodeHighlighter.js
-index 0dfea90..53dd959 100644
+index 0dfea90..0ef1ac7 100644
 --- a/node_modules/react-native-code-highlighter/dist/commonjs/lib/CodeHighlighter.js
 +++ b/node_modules/react-native-code-highlighter/dist/commonjs/lib/CodeHighlighter.js
 @@ -17,6 +17,7 @@ const CodeHighlighter = ({
@@ -39,7 +39,7 @@ index 0dfea90..53dd959 100644
          children: renderNode(rows)
        })
 diff --git a/node_modules/react-native-code-highlighter/dist/module/lib/CodeHighlighter.js b/node_modules/react-native-code-highlighter/dist/module/lib/CodeHighlighter.js
-index 8eb424c..055de3f 100644
+index 8eb424c..59f4d4c 100644
 --- a/node_modules/react-native-code-highlighter/dist/module/lib/CodeHighlighter.js
 +++ b/node_modules/react-native-code-highlighter/dist/module/lib/CodeHighlighter.js
 @@ -11,6 +11,7 @@ export const CodeHighlighter = ({
@@ -79,7 +79,7 @@ index 8eb424c..055de3f 100644
          children: renderNode(rows)
        })
 diff --git a/node_modules/react-native-code-highlighter/dist/typescript/lib/CodeHighlighter.d.ts b/node_modules/react-native-code-highlighter/dist/typescript/lib/CodeHighlighter.d.ts
-index 9f0116e..42d0986 100644
+index 9f0116e..3e3eaa3 100644
 --- a/node_modules/react-native-code-highlighter/dist/typescript/lib/CodeHighlighter.d.ts
 +++ b/node_modules/react-native-code-highlighter/dist/typescript/lib/CodeHighlighter.d.ts
 @@ -6,6 +6,7 @@ export interface CodeHighlighterProps extends SyntaxHighlighterProps {
