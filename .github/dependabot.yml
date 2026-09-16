@@ -7,6 +7,11 @@ updates:
     schedule:
       interval: daily
     groups:
+      # Beta addons declare peer ranges on core; update the family together.
+      xterm:
+        applies-to: version-updates
+        patterns:
+          - '@xterm/*'
       expo-patches:
         applies-to: version-updates
         patterns:
@@ -19,6 +24,7 @@ updates:
         patterns:
           - '*'
         exclude-patterns:
+          - '@xterm/*'
           - expo
           - 'expo-*'
         update-types:
