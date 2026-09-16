@@ -129,6 +129,20 @@ function openedToken(
 }
 
 describe('Rust-owned agent Chat projection', () => {
+  test('distinguishes history baselines from live deltas for speech subscribers', async () => {
+    const remote = fakeTransport();
+    const service = new NativeTranscriptService(new MemoryAgentChatCache());
+    const token = openedToken(service, remote.value);
+    await flush();
+    const listener = jest.fn();
+    service.subscribe(token, listener);
+    expect(listener).toHaveBeenLastCalledWith(expect.any(Object), true);
+    remote.emit({ revision: 2, deltas: [{ type: 'reset', state: state('live', 2) }] });
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 2 }), true);
+    remote.emit({ revision: 3, deltas: [{ type: 'status-changed', status: 'live' }] });
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 3 }), false);
+  });
+
   test('confirmed removal invalidates UI bindings, pending restoration, and late events', async () => {
     const cache = new MemoryAgentChatCache();
     await cache.saveNative({ namespace: 'profile', key: transcriptKey, blob: new Uint8Array([1]).buffer });

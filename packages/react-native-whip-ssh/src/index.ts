@@ -1,6 +1,7 @@
 import {
   AppConnectionStatus,
   AppCore as RustAppCore,
+  ChatSpeechQueue as RustChatSpeechQueue,
   AgentDiagnosticSeverity,
   AgentMessageRole,
   AgentNoticeLevel,
@@ -3262,6 +3263,28 @@ export class NativeAppCore {
         reconnectAttempt,
       ),
     );
+  }
+}
+
+/** Rust owns history baselines, completion deduplication, formatting and order. */
+export class NativeChatSpeechQueue {
+  private readonly queue = new RustChatSpeechQueue();
+
+  update(kind: 'codex' | 'opencode', live: boolean, messages: readonly NativeAgentTranscriptMessage[]): void {
+    this.queue.update(kind === 'codex' ? AgentTranscriptKind.Codex : AgentTranscriptKind.OpenCode, live, messages.map(message => ({
+      id: message.id,
+      assistant: message.role === 'assistant',
+      completed: message.completedAt !== undefined,
+      prose: message.parts.flatMap(part => part.type === 'text' ? [{ id: part.id, text: part.text }] : []),
+    })));
+  }
+
+  next(): string | undefined {
+    return this.queue.next();
+  }
+
+  dispose(): void {
+    this.queue.uniffiDestroy();
   }
 }
 

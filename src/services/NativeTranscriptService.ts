@@ -29,7 +29,7 @@ export type NativeTranscriptTransport = Pick<
   | 'startAgentChat'
 >;
 
-type Listener = (state: AgentChatState | null) => void;
+type Listener = (state: AgentChatState | null, baseline?: boolean) => void;
 
 function activatingState(state: AgentChatState): AgentChatState {
   return state.status === 'unavailable' || state.status === 'error'
@@ -220,7 +220,7 @@ export class NativeTranscriptService {
       return () => undefined;
     }
     listeners.add(listener);
-    listener(entry.state);
+    listener(entry.state, true);
     return () => listeners.delete(listener);
   }
 
@@ -373,7 +373,7 @@ export class NativeTranscriptService {
         });
       }
     } else if (next !== entry.state) {
-      this.publish(entry, next);
+      this.publish(entry, next, event.deltas.some(delta => delta.type === 'reset'));
     }
     if (!event.cacheWrite) return;
     const checkpoint = event.cacheWrite;
@@ -401,13 +401,13 @@ export class NativeTranscriptService {
     native: NativeAgentTranscriptState,
   ): void {
     if ((entry.state.revision ?? -1) >= native.revision) return;
-    this.publish(entry, agentChatStateFromNative(native));
+    this.publish(entry, agentChatStateFromNative(native), true);
   }
 
-  private publish(entry: TranscriptEntry, state: AgentChatState): void {
+  private publish(entry: TranscriptEntry, state: AgentChatState, baseline = false): void {
     entry.state = state;
     for (const listeners of entry.listeners.values()) {
-      for (const listener of listeners) listener(state);
+      for (const listener of listeners) listener(state, baseline);
     }
   }
 

@@ -80,6 +80,7 @@ import {
   type AgentChatViewState,
 } from '../lib/agentChatReconciliation';
 import { useAgentChatOpen } from '../hooks/useAgentChatOpen';
+import { useFocusedChatSpeech } from '../hooks/useFocusedChatSpeech';
 import type { AgentChatState } from '../agentChat';
 import type { HerdrClient } from '../services/HerdrClient';
 import {
@@ -131,6 +132,7 @@ import { useAppGlassEnabled } from './GlassSurface';
 interface Props {
   hostSessionId: string;
   visible: boolean;
+  ttsEnabled: boolean;
   snapshot: HerdrSnapshot;
   client: HerdrClient;
   terminalState: TerminalSessionsState;
@@ -182,6 +184,7 @@ const BROWSER_WEBVIEW_STYLE = { flex: 1 } as const;
 export function SessionScreen({
   hostSessionId,
   visible,
+  ttsEnabled,
   snapshot,
   client,
   terminalState,
@@ -399,6 +402,22 @@ export function SessionScreen({
     activePane?.pane_id || null,
   );
   const chatVisible = chatPresentationVisible(activeChatView?.presentation);
+  const onChatSpeechError = useCallback((error: unknown) => {
+    setAppAlert({ title: 'Could not read chat aloud', message: String(error) });
+  }, []);
+  useFocusedChatSpeech(
+    visible && chatVisible && activeChatView && activePane
+      ? {
+          agent: activeChatView.binding.agent,
+          bindingToken: activeChatView.binding.bindingToken,
+          hostId: hostSessionId,
+          paneId: activePane.pane_id,
+          label: chatAgentDisplayName(activeChatView.binding.agent),
+        }
+      : null,
+    ttsEnabled,
+    onChatSpeechError,
+  );
   const chatViewportMounted = Boolean(
     activeChatView &&
       chatPresentationMountsViewport(activeChatView.presentation) &&
@@ -587,7 +606,7 @@ export function SessionScreen({
   );
 
   useEffect(() => {
-    const activeId = visible && appActive ? terminalState.activeTerminalId : null;
+    const activeId = visible ? terminalState.activeTerminalId : null;
     const liveIds = new Set(terminalState.sessions.map(session => session.terminalId));
     const next = new Map(chatViewsRef.current);
     let changed = false;
@@ -636,7 +655,7 @@ export function SessionScreen({
       chatViewsRef.current = next;
       setChatViews(next);
     }
-  }, [visible, appActive, terminalState.activeTerminalId, terminalState.sessions, snapshot.panes,
+  }, [visible, terminalState.activeTerminalId, terminalState.sessions, snapshot.panes,
     client, hostSessionId, requestedChatPresentation]);
 
   useEffect(() => {
@@ -684,6 +703,8 @@ export function SessionScreen({
       ),
     );
   }, [
+    // Native state may change while JS is paused without a new pane snapshot.
+    appActive,
     client,
     hostSessionId,
     snapshot.panes,
