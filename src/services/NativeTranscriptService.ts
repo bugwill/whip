@@ -74,6 +74,25 @@ export class NativeTranscriptService {
 
   constructor(private readonly cache: AgentChatCache = agentChatCache) {}
 
+  /** Speculative opening only: no remediation, and no restart of an existing binding. */
+  preload(
+    hostSessionId: string,
+    terminalId: string,
+    transport: NativeTranscriptTransport,
+  ): AgentChatProjection | null {
+    try {
+      const current = this.reconcile(hostSessionId, terminalId, transport);
+      return current.type === 'bound'
+        ? current
+        : this.activate(hostSessionId, terminalId, transport);
+    } catch (error) {
+      // A missing/replaced host is expected during speculative preload. An
+      // explicit Chat request still uses activate and its actionable errors.
+      recordAgentChatDiagnostic('preload-unavailable', { terminalId, error: String(error) });
+      return null;
+    }
+  }
+
   activate(
     hostSessionId: string,
     terminalId: string,
@@ -155,7 +174,7 @@ export class NativeTranscriptService {
     }
 
     const boundState = agentChatStateFromNative(binding.state);
-    const activationState = activatingState(boundState);
+    const activationState = explicitOpen ? activatingState(boundState) : boundState;
     const retrying = activationState !== boundState;
     let entry = this.entries.get(entryKey);
     const isNewEntry = !entry;

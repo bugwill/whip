@@ -12,6 +12,7 @@ import type {
   NativeAgentChatBinding,
   NativeAgentChatOpenResult,
   NativeAgentChatStartResult,
+  NativeAgentTranscriptUpdate,
   RuntimeAgentIntegrationStatus,
 } from 'react-native-whip-ssh';
 
@@ -124,6 +125,9 @@ type Props = ComponentProps<typeof SessionScreen>;
 const mockChatFrames: Array<{ visible: boolean; chat: boolean }> = [];
 const mockAppStateListeners = new Set<(state: string) => void>();
 function setup(agent: ChatAgent) {
+  const bindings = new Map<string, NativeAgentChatBinding>();
+  const availableBindings = new Map<string, NativeAgentChatBinding>();
+  const handlers = new Map<string, (event: NativeAgentTranscriptUpdate) => void>();
   const pane: PaneInfo = {
     pane_id: 'pane-1',
     terminal_id: 'terminal-1',
@@ -161,19 +165,27 @@ function setup(agent: ChatAgent) {
       snapshot,
     })),
     openAgentChat: jest.fn(
-      (): NativeAgentChatOpenResult => ({
-        type: 'no-chat',
-        terminalId: 'terminal-1',
-        reason: 'unsupported-pane',
-      }),
+      (terminalId: string, handler?: (event: NativeAgentTranscriptUpdate) => void): NativeAgentChatOpenResult => {
+        const binding = availableBindings.get(terminalId);
+        if (!binding) return { type: 'no-chat', terminalId, reason: 'unsupported-pane' };
+        bindings.set(terminalId, binding);
+        if (handler) handlers.set(terminalId, handler);
+        return { type: 'bound', binding };
+      },
     ),
     currentAgentChat: jest.fn(
-      (_terminalId: string): NativeAgentChatBinding | undefined => undefined,
+      (terminalId: string, handler?: (event: NativeAgentTranscriptUpdate) => void): NativeAgentChatBinding | undefined => {
+        if (handler) handlers.set(terminalId, handler);
+        return bindings.get(terminalId);
+      },
     ),
     startAgentChat: jest.fn(
-      (): NativeAgentChatStartResult => ({ type: 'stale-binding' }),
+      (_bindingToken: string, _cacheBlob?: ArrayBuffer): NativeAgentChatStartResult => ({ type: 'stale-binding' }),
     ),
-    detachAgentChat: jest.fn(),
+    detachAgentChat: jest.fn((terminalId: string) => {
+      bindings.delete(terminalId);
+      return undefined as { namespace: string; key: string; blob: ArrayBuffer } | undefined;
+    }),
     agentIntegrationStatus: jest.fn(
       async (): Promise<RuntimeAgentIntegrationStatus> => 'current',
     ),
@@ -230,6 +242,9 @@ function setup(agent: ChatAgent) {
     onExit: jest.fn(),
   };
   return {
+    bindings,
+    availableBindings,
+    handlers,
     injected: [] as string[],
     props,
     native,
@@ -262,7 +277,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-function bindChat(host: ReturnType<typeof setup>, agent: ChatAgent) {
+function bindChat(host: ReturnType<typeof setup>, agent: ChatAgent, overrides: Partial<NativeAgentChatBinding> = {}) {
   const result: NativeAgentChatOpenResult = {
     type: 'bound',
     binding: {
@@ -282,17 +297,15 @@ function bindChat(host: ReturnType<typeof setup>, agent: ChatAgent) {
         messages: [],
         turns: [],
       },
+      ...overrides,
     },
   };
-  host.native.openAgentChat.mockReturnValue(result);
+  host.availableBindings.set(result.binding.terminalId, result.binding);
   return result.binding;
 }
 
 async function openReadyChat(host: ReturnType<typeof setup>, agent: ChatAgent) {
   const binding = bindChat(host, agent);
-  host.native.currentAgentChat.mockImplementation(terminalId =>
-    terminalId === binding.terminalId ? binding : undefined,
-  );
   host.native.startAgentChat.mockImplementation(() => {
     binding.state = { ...binding.state, status: 'live', revision: 1 };
     return { type: 'started', state: binding.state };
@@ -340,6 +353,274 @@ function addCachePressure(host: ReturnType<typeof setup>) {
 }
 
 describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
+  test.each(['hidden', 'background', 'ssh', 'shell', 'no-target'] as const)('does not preload an ineligible %s terminal', async reason => {
+    const host = setup(agent);
+    bindChat(host, agent);
+    if (reason === 'hidden') host.props.visible = false;
+    if (reason === 'ssh') host.props.terminalTargets[0].session.kind = 'ssh';
+    if (reason === 'shell') Object.assign(host.pane, { agent: 'shell', display_agent: 'shell', agent_session: undefined });
+    if (reason === 'no-target') host.props.terminalTargets = [];
+    // Mount hidden first so the AppState listener can receive a background event.
+    if (reason === 'background') host.props.visible = false;
+    act(() => { renderer = create(<SessionScreen {...host.props} />); });
+    if (reason === 'background') {
+      act(() => {
+        for (const listener of mockAppStateListeners) listener('background');
+        renderer.update(<SessionScreen {...host.props} visible />);
+      });
+    }
+    await act(async () => {});
+    expect(host.native.openAgentChat).not.toHaveBeenCalled();
+    expect(agentChatCache.loadNative).not.toHaveBeenCalled();
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    if (reason === 'hidden' || reason === 'background') {
+      await act(async () => {
+        for (const listener of mockAppStateListeners) listener('active');
+        renderer.update(<SessionScreen {...host.props} visible />);
+      });
+      expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  test('Chat can request a preloaded binding while remote synchronization is still loading', async () => {
+    const host = setup(agent);
+    const binding = bindChat(host, agent);
+    host.native.startAgentChat.mockImplementation(() => ({ type: 'started', state: binding.state }));
+    await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
+    expect(host.native.startAgentChat).toHaveBeenCalledTimes(1);
+    expect(control().loading).toBe(false);
+    act(() => { control().onPress(); });
+    expect(control().loading).toBe(true);
+    expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    act(() => {
+      binding.state = { ...binding.state, status: 'live', revision: 1 };
+      host.handlers.get(binding.terminalId)?.({
+        key: binding.transcriptKey, runtimeIncarnation: binding.runtimeIncarnation,
+        revision: 1, deltas: [{ type: 'reset', state: binding.state }],
+      });
+    });
+    expect(control().loading).toBe(true);
+    revealChat();
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+    expect(host.native.startAgentChat).toHaveBeenCalledTimes(1);
+  });
+
+  test('a failed background transcript is silent and explicit Chat retries its native lifecycle', async () => {
+    const host = setup(agent);
+    const binding = bindChat(host, agent);
+    host.native.startAgentChat.mockImplementation(() => {
+      binding.state = { ...binding.state, status: 'error', revision: 1, error: 'source unavailable' };
+      return { type: 'started', state: binding.state };
+    });
+    await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
+    expect(ui('Alert').props.visible).toBe(false);
+    expect(control().loading).toBe(false);
+    host.native.startAgentChat.mockImplementation(() => {
+      binding.state = { ...binding.state, status: 'live', revision: 2, error: undefined };
+      return { type: 'started', state: binding.state };
+    });
+    await act(async () => { await control().onPress(); });
+    revealChat();
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(2);
+    expect(host.native.startAgentChat).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([true, false])('preloads silently and reuses its binding when cache finishes before Chat: %s', async readyBeforePress => {
+    const host = setup(agent);
+    const binding = bindChat(host, agent);
+    let restore!: (blob: ArrayBuffer) => void;
+    jest.mocked(agentChatCache.loadNative).mockReturnValueOnce(new Promise(resolve => { restore = resolve; }));
+    host.native.startAgentChat.mockImplementation(() => {
+      binding.state = { ...binding.state, status: 'stale', revision: 1 };
+      return { type: 'started', state: binding.state };
+    });
+    act(() => { renderer = create(<SessionScreen {...host.props} />); });
+    const terminal = ui('WebView');
+    expect(mockChatFrames[0]).toEqual({ visible: true, chat: false });
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+    expect(agentChatCache.loadNative).toHaveBeenCalledWith(binding.transcriptKey);
+    expect(host.native.startAgentChat).not.toHaveBeenCalled();
+    expect(control()).toMatchObject({ active: false, loading: false, disabled: false });
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    expect(ui('Alert').props.visible).toBe(false);
+    expect(ui('IntegrationSheet').props.integration).toBeNull();
+    expect(ui('IdentitySheet').props.warning).toBeNull();
+    expect(host.client.snapshot).not.toHaveBeenCalled();
+    expect(host.props.onRefresh).not.toHaveBeenCalled();
+    expect(host.native.agentIntegrationStatus).not.toHaveBeenCalled();
+
+    const blob = new Uint8Array([1, 2]).buffer;
+    if (readyBeforePress) {
+      await act(async () => { restore(blob); });
+      expect(control().loading).toBe(false);
+      expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    }
+    act(() => { control().onPress(); });
+    expect(control().loading).toBe(true);
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    if (!readyBeforePress) {
+      expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+      await act(async () => { restore(blob); });
+    }
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+    expect(host.native.startAgentChat).toHaveBeenCalledTimes(1);
+    expect(host.native.startAgentChat).toHaveBeenCalledWith(binding.bindingToken, blob);
+    expect(ui('AgentChatView').parent?.props).toMatchObject({
+      pointerEvents: 'none', accessibilityElementsHidden: true, style: { opacity: 0 },
+    });
+    revealChat();
+    expect(ui('WebView')).toBe(terminal);
+    expect(host.client.terminal.closeTerminalBridge).not.toHaveBeenCalled();
+  });
+
+  test('returning to Terminal keeps the viewport and subscription warm without intercepting input', async () => {
+    const host = setup(agent);
+    const binding = await openReadyChat(host, agent);
+    revealChat();
+    const viewport = ui('AgentChatView');
+    const terminal = ui('WebView');
+    act(() => { control().onPress(); });
+    expect(ui('AgentChatView')).toBe(viewport);
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    expect(control()).toMatchObject({ active: false, loading: false, disabled: false });
+    expect(viewport.parent?.props).toMatchObject({
+      pointerEvents: 'none', accessibilityElementsHidden: true,
+      importantForAccessibility: 'no-hide-descendants', style: { opacity: 0 },
+    });
+    act(() => {
+      binding.state = { ...binding.state, revision: 2 };
+      host.handlers.get(binding.terminalId)?.({
+        key: binding.transcriptKey, runtimeIncarnation: binding.runtimeIncarnation,
+        revision: 2, deltas: [{ type: 'reset', state: binding.state }],
+      });
+    });
+    expect(viewport.props.state.revision).toBe(2);
+    act(() => { control().onPress(); });
+    expect(ui('AgentChatView')).toBe(viewport);
+    expect(ui('WebView')).toBe(terminal);
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(true);
+    expect(control().loading).toBe(false);
+    expect(host.native.detachAgentChat).not.toHaveBeenCalled();
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+    expect(host.native.startAgentChat).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(['dormant', 'warm'] as const)('%s preload is released on real residency eviction', async phase => {
+    const host = setup(agent);
+    const binding = await openReadyChat(host, agent);
+    revealChat();
+    act(() => { control().onPress(); });
+    if (phase === 'dormant') {
+      // A native loading reset drops the hidden warm viewport back to dormancy.
+      act(() => host.handlers.get(binding.terminalId)?.({
+        key: binding.transcriptKey, runtimeIncarnation: binding.runtimeIncarnation,
+        revision: 2, deltas: [{ type: 'status-changed', status: 'loading' }],
+      }));
+    }
+    const visits = addCachePressure(host);
+    for (const visit of visits) act(visit);
+    expect(host.native.detachAgentChat).toHaveBeenCalledTimes(1);
+    expect(agentTranscriptService.getState(binding.bindingToken)).toBeNull();
+    expect(renderer.root.findAll(node => String(node.type) === 'AgentChatView')).toHaveLength(0);
+  });
+
+  test('A → B → A keeps pending preloads tied to their terminal and starts each only once', async () => {
+    const host = setup(agent);
+    const visits = addCachePressure(host);
+    const paneB = { ...host.pane, terminal_id: 'terminal-2', pane_id: 'pane-2', focused: false };
+    host.props.snapshot.panes.push(paneB);
+    const a = bindChat(host, agent);
+    const b = bindChat(host, agent, {
+      terminalId: paneB.terminal_id, paneId: paneB.pane_id,
+      bindingToken: 'binding-2', transcriptKey: 'transcript-2', sessionId: 'session-2',
+    });
+    const restores = new Map<string, (blob: null) => void>();
+    jest.mocked(agentChatCache.loadNative).mockImplementation(key => new Promise(resolve => { restores.set(key, resolve); }));
+    host.native.startAgentChat.mockImplementation(token => {
+      const binding = token === a.bindingToken ? a : b;
+      binding.state = { ...binding.state, status: 'live', revision: 1, sessionId: binding.sessionId };
+      return { type: 'started', state: binding.state };
+    });
+    act(() => { renderer = create(<SessionScreen {...host.props} />); });
+    act(visits[0]);
+    await act(async () => { restores.get(a.transcriptKey)?.(null); });
+    expect(control()).toMatchObject({ active: false, loading: false });
+    expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    act(() => renderer.update(<SessionScreen {...host.props} />));
+    await act(async () => { restores.get(b.transcriptKey)?.(null); });
+    act(() => { control().onPress(); });
+    expect(ui('AgentChatView').props.state.sessionId).toBe(a.sessionId);
+    revealChat();
+    act(visits[0]);
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    expect(agentTranscriptService.getState(b.bindingToken)?.sessionId).toBe(b.sessionId);
+    expect(host.native.openAgentChat.mock.calls.map(call => call[0])).toEqual([a.terminalId, b.terminalId]);
+    expect(host.native.startAgentChat.mock.calls.map(call => call[0])).toEqual([a.bindingToken, b.bindingToken]);
+  });
+
+  test('authoritative identity replacement cancels the old cache completion and keeps the new preload dormant', async () => {
+    const host = setup(agent);
+    const old = bindChat(host, agent);
+    let restoreOld!: (blob: null) => void;
+    jest.mocked(agentChatCache.loadNative).mockReturnValueOnce(new Promise(resolve => { restoreOld = resolve; }));
+    act(() => { renderer = create(<SessionScreen {...host.props} />); });
+    const replacement = bindChat(host, agent, { bindingToken: 'binding-2', transcriptKey: 'transcript-2', sessionId: 'session-2' });
+    // Rust's authoritative reconciliation may already have rebound the terminal.
+    host.bindings.set(replacement.terminalId, replacement);
+    host.native.startAgentChat.mockImplementation(() => {
+      replacement.state = { ...replacement.state, status: 'live', revision: 1 };
+      return { type: 'started', state: replacement.state };
+    });
+    const snapshot = { ...host.props.snapshot, panes: [{
+      ...host.pane, revision: 2,
+      agent_session: { ...host.pane.agent_session!, value: replacement.sessionId },
+    }] };
+    host.setSnapshot(snapshot);
+    await act(async () => renderer.update(<SessionScreen {...host.props} snapshot={snapshot} />));
+    await act(async () => { restoreOld(null); });
+    expect(agentTranscriptService.getState(old.bindingToken)).toBeNull();
+    expect(host.native.startAgentChat).toHaveBeenCalledTimes(1);
+    expect(host.native.startAgentChat).toHaveBeenCalledWith(replacement.bindingToken, undefined);
+    expect(control().loading).toBe(false);
+    expect(ui('TerminalScreen').props.renderViewportOverlay).toBeUndefined();
+    act(() => { control().onPress(); });
+    revealChat();
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(['no-chat', 'throw', 'stale-start'] as const)('background %s is silent and later explicit Chat still offers remediation', async failure => {
+    const host = setup(agent);
+    if (failure === 'throw') host.native.openAgentChat.mockImplementationOnce(() => { throw new Error('host replaced'); });
+    if (failure === 'stale-start') bindChat(host, agent);
+    await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
+    expect(ui('Alert').props.visible).toBe(false);
+    expect(ui('IdentitySheet').props.warning).toBeNull();
+    expect(ui('IntegrationSheet').props.integration).toBeNull();
+    expect(control()).toMatchObject({ loading: false, disabled: false });
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    expect(host.client.snapshot).not.toHaveBeenCalled();
+    host.bindings.clear();
+    host.availableBindings.clear();
+    host.native.agentIntegrationStatus.mockResolvedValue('not-installed');
+    await act(async () => { await control().onPress(); });
+    expect(ui('IntegrationSheet').props.integration.agent).toBe(agent);
+    expect(host.client.snapshot).toHaveBeenCalledTimes(1);
+  });
+
+  test('unmount while cache hydration is pending prevents native startup', async () => {
+    const host = setup(agent);
+    const binding = bindChat(host, agent);
+    let restore!: (blob: null) => void;
+    jest.mocked(agentChatCache.loadNative).mockReturnValueOnce(new Promise(resolve => { restore = resolve; }));
+    act(() => { renderer = create(<SessionScreen {...host.props} />); });
+    act(() => renderer.unmount());
+    await act(async () => { restore(null); });
+    expect(host.native.detachAgentChat).toHaveBeenCalledTimes(1);
+    expect(host.native.startAgentChat).not.toHaveBeenCalled();
+    expect(agentTranscriptService.getState(binding.bindingToken)).toBeNull();
+  });
+
   test.each(['terminal', 'host', 'pane'] as const)('keeps focused chat speech in background and stops on leaving the %s', async destination => {
     const host = setup(agent);
     host.props.ttsEnabled = true;
@@ -602,7 +883,8 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
       act(selectB);
       expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
       expect(host.native.detachAgentChat).not.toHaveBeenCalled();
-      expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+      expect(host.native.openAgentChat.mock.calls.map(call => call[0]))
+        .toEqual(['terminal-1', 'terminal-2', 'terminal-2']);
       expect(host.native.startAgentChat).toHaveBeenCalledTimes(1);
     },
   );
@@ -629,7 +911,8 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
     expect(host.native.detachAgentChat).not.toHaveBeenCalled();
     expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
     expect(host.native.startAgentChat).toHaveBeenCalledTimes(1);
-    expect(other.native.openAgentChat).not.toHaveBeenCalled();
+    expect(other.native.openAgentChat).toHaveBeenCalledTimes(1);
+    expect(other.native.startAgentChat).not.toHaveBeenCalled();
   });
 
   test('unmounting the terminal cache releases its attached Chat resources', async () => {
@@ -690,7 +973,7 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
     await act(async () => {
       await opening;
     });
-    expect(host.native.openAgentChat).toHaveBeenCalledTimes(2);
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(3);
     expect(host.native.agentIntegrationStatus).toHaveBeenCalledWith(agent);
     expect(ui('IdentitySheet').props.warning).toMatchObject({
       agent,

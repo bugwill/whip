@@ -60,6 +60,7 @@ import type {
 import {
   activePaneForTerminal,
   agentChatControlState,
+  chatAgentForPane,
   chatAgentDisplayName,
 } from '../lib/agentChatSession';
 import {
@@ -68,6 +69,7 @@ import {
   chatPresentationMountsViewport,
   chatPresentationRequested,
   chatPresentationVisible,
+  closeChatPresentation,
   dormantChatPresentation,
   requestChatPresentation,
   revealPreparedChat,
@@ -684,9 +686,17 @@ export function SessionScreen({
       const target = targets.get(key);
       if (!target) continue; // The residency callback owns cleanup of removed targets.
       const { client: targetClient, hostSessionId: targetHost, session } = target;
-      const projection = agentTranscriptService.reconcile(
-        targetHost, session.terminalId, targetClient.native,
-      );
+      let projection: AgentChatProjection;
+      try {
+        projection = agentTranscriptService.reconcile(
+          targetHost, session.terminalId, targetClient.native,
+        );
+      } catch (error) {
+        // Runtime replacement can race a snapshot/foreground notification.
+        // Wait for the next authoritative projection; never fail Terminal.
+        recordAgentChatDiagnostic('reconcile-unavailable', { error: String(error) });
+        continue;
+      }
       projections.set(key, projection);
       if (confirmedChatExit(targetClient.native.hostState(), session.terminalId)) {
         exitedTerminalKeys.add(key);
@@ -699,18 +709,45 @@ export function SessionScreen({
         reboundPresentations.set(key, requestedChatPresentation(projection.state));
       }
     }
-    setChatViews(current =>
-      reconcileAgentChatViews(
+    // Terminal selection/rendering has already committed. Only the selected
+    // resident Herdr target may establish a speculative binding; cache and
+    // remote work continue independently inside the transcript service.
+    const preloadTarget = visible && appActive && activeTarget &&
+      activeTarget.session.kind !== 'ssh' && chatAgentForPane(activePane) &&
+      !chatRestoreIntentsRef.current.has(activeTarget.key)
+      ? activeTarget : null;
+    const existing = preloadTarget && chatViewsRef.current.get(preloadTarget.key);
+    const preload = preloadTarget &&
+      projections.get(preloadTarget.key)?.type !== 'bound' &&
+      (!existing || existing.presentation.phase === AgentChatPresentationPhase.Dormant ||
+        existing.presentation.phase === AgentChatPresentationPhase.Warm)
+      ? agentTranscriptService.preload(
+          preloadTarget.hostSessionId, preloadTarget.session.terminalId, preloadTarget.client.native,
+        )
+      : null;
+    setChatViews(current => {
+      const next = reconcileAgentChatViews(
         current,
         liveTerminalKeys,
         projections,
         reboundPresentations,
         exitedTerminalKeys,
-      ),
-    );
+      );
+      if (preloadTarget && preload?.type === 'bound') {
+        return new Map(next).set(preloadTarget.key, {
+          binding: preload.binding,
+          state: preload.state,
+          presentation: dormantChatPresentation(),
+        });
+      }
+      return next;
+    });
   }, [
     // Native state may change while JS is paused without a new pane snapshot.
     appActive,
+    visible,
+    activeTarget,
+    activePane,
     client,
     hostSessionId,
     snapshot.panes,
@@ -1133,17 +1170,44 @@ export function SessionScreen({
     cancelChatOpen();
     if (!activeTarget) return;
     updateChatRestoreIntent(activeTarget.key);
-    agentTranscriptService.closeTerminal(hostSessionId, terminalId, client.native);
     setChatViews(current => {
-      if (!current.has(activeTarget.key)) return current;
-      const next = new Map(current);
-      next.delete(activeTarget.key);
-      return next;
+      const view = current.get(activeTarget.key);
+      if (!view) return current;
+      return new Map(current).set(activeTarget.key, {
+        ...view, presentation: closeChatPresentation(view.presentation),
+      });
     });
-  }, [activeTerminalSession?.terminalId, activeTarget, cancelChatOpen, hostSessionId, client, updateChatRestoreIntent]);
+  }, [activeTerminalSession?.terminalId, activeTarget, cancelChatOpen, updateChatRestoreIntent]);
 
   const openAgentChat = () => {
     if (activeChatView && chatPresentationRequested(activeChatView.presentation)) return;
+    if (activeTarget && activeChatView) {
+      try {
+        const projection = agentTranscriptService.reconcile(
+          activeTarget.hostSessionId, activeTarget.session.terminalId, activeTarget.client.native,
+        );
+        if (projection.type === 'bound' && agentTranscriptReadiness(projection.state) !== 'failed') {
+          const generation = nextChatPresentationGeneration();
+          const presentation = requestChatPresentation(
+            projection.binding.bindingToken === activeChatView.binding.bindingToken
+              ? updateChatTranscriptReadiness(
+                  activeChatView.presentation,
+                  agentTranscriptReadiness(projection.state),
+                  generation,
+                )
+              : dormantChatPresentation(),
+            agentTranscriptReadiness(projection.state),
+            generation,
+          );
+          setChatViews(current => new Map(current).set(activeTarget.key, {
+            binding: projection.binding, state: projection.state, presentation,
+          }));
+          return;
+        }
+      } catch (error) {
+        recordAgentChatDiagnostic('warm-binding-unavailable', { error: String(error) });
+      }
+    }
     return chatOpen.open();
   };
 
@@ -1487,15 +1551,16 @@ export function SessionScreen({
               mountedChatViews.length
                 ? (insets, latestButtonBottom) => mountedChatViews.map(([key, chatView]) => {
                     const selected = key === activeTarget?.key;
+                    const shown = visible && selected && chatPresentationVisible(chatView.presentation);
                     const terminalId = chatView.binding.terminalId;
                     return (
                       <View
                         key={key}
                         className="absolute inset-0"
-                        style={{ opacity: selected ? 1 : 0 }}
-                        pointerEvents={selected ? 'auto' : 'none'}
-                        accessibilityElementsHidden={!selected}
-                        importantForAccessibility={selected ? 'auto' : 'no-hide-descendants'}
+                        style={{ opacity: shown ? 1 : 0 }}
+                        pointerEvents={shown ? 'auto' : 'none'}
+                        accessibilityElementsHidden={!shown}
+                        importantForAccessibility={shown ? 'auto' : 'no-hide-descendants'}
                       >
                         <AgentChatView
                           key={[

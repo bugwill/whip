@@ -129,6 +129,63 @@ function openedToken(
 }
 
 describe('Rust-owned agent Chat projection', () => {
+  test('preload establishes once and deduplicates pending cache restoration and native startup', async () => {
+    const cache = new MemoryAgentChatCache();
+    let restore!: (blob: ArrayBuffer) => void;
+    const load = jest.spyOn(cache, 'loadNative').mockReturnValue(new Promise(resolve => { restore = resolve; }));
+    const remote = fakeTransport(state('loading', 0));
+    jest.mocked(remote.value.currentAgentChat).mockReturnValueOnce(undefined);
+    const service = new NativeTranscriptService(cache);
+    const first = service.preload('host', 'terminal-1', remote.value);
+    expect(first?.type).toBe('bound');
+    expect(service.preload('host', 'terminal-1', remote.value)).toEqual(first);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(remote.value.openAgentChat).toHaveBeenCalledTimes(1);
+    expect(remote.value.startAgentChat).not.toHaveBeenCalled();
+    const blob = new Uint8Array([1, 2]).buffer;
+    restore(blob);
+    await flush();
+    service.preload('host', 'terminal-1', remote.value);
+    expect(remote.value.startAgentChat).toHaveBeenCalledTimes(1);
+    expect(remote.value.startAgentChat).toHaveBeenCalledWith('binding-1', blob);
+    expect(remote.value.openAgentChat).toHaveBeenCalledTimes(1);
+  });
+
+  test('reconciliation observes an absent binding without opening, while preload can establish it', () => {
+    const remote = fakeTransport();
+    jest.mocked(remote.value.currentAgentChat).mockReturnValue(undefined);
+    const service = new NativeTranscriptService(new MemoryAgentChatCache());
+    expect(service.reconcile('host', 'terminal-1', remote.value).type).toBe('no-chat');
+    expect(remote.value.openAgentChat).not.toHaveBeenCalled();
+    expect(service.preload('host', 'terminal-1', remote.value)?.type).toBe('bound');
+    expect(remote.value.openAgentChat).toHaveBeenCalledTimes(1);
+  });
+
+  test('preload contains unavailable host errors while activation still exposes explicit failures', () => {
+    const remote = fakeTransport();
+    jest.mocked(remote.value.currentAgentChat).mockReturnValue(undefined);
+    jest.mocked(remote.value.openAgentChat).mockImplementation(() => { throw new Error('host replaced'); });
+    const service = new NativeTranscriptService(new MemoryAgentChatCache());
+    expect(service.preload('host', 'terminal-1', remote.value)).toBeNull();
+    expect(remote.value.startAgentChat).not.toHaveBeenCalled();
+    expect(() => service.activate('host', 'terminal-1', remote.value)).toThrow('host replaced');
+  });
+
+  test('preload and reconciliation preserve failed readiness until an explicit activation retries', async () => {
+    const remote = fakeTransport(state('loading', 0));
+    const service = new NativeTranscriptService(new MemoryAgentChatCache());
+    openedToken(service, remote.value);
+    await flush();
+    remote.rebind(binding('terminal-1', 'binding-1', state('error', 2)));
+    const observed = service.preload('host', 'terminal-1', remote.value);
+    expect(observed).toMatchObject({ type: 'bound', state: { status: 'error' } });
+    expect(remote.value.startAgentChat).toHaveBeenCalledTimes(1);
+    expect(service.reconcile('host', 'terminal-1', remote.value)).toMatchObject({ state: { status: 'error' } });
+    service.activate('host', 'terminal-1', remote.value);
+    expect(remote.value.openAgentChat).toHaveBeenCalledTimes(2);
+    expect(remote.value.startAgentChat).toHaveBeenCalledTimes(2);
+  });
+
   test('distinguishes history baselines from live deltas for speech subscribers', async () => {
     const remote = fakeTransport();
     const service = new NativeTranscriptService(new MemoryAgentChatCache());
