@@ -44,6 +44,7 @@ import {
   touchTerminalRendererEntry,
 } from '../lib/terminalRendererLru';
 import type { TerminalPreferences } from '../services/devicePreferences';
+import { TerminalResidencyEndReason, type TerminalResidencyEnd } from '../lib/terminalResidency';
 import { bestEffortCleanup } from '../services/backgroundOperations';
 import type { TerminalAttachmentId } from '../services/TerminalBridgeController';
 import { networkErrorMessage, recordNetworkDiagnostic } from '../services/networkDiagnostics';
@@ -197,6 +198,7 @@ export interface TerminalRendererHandle {
 }
 
 interface Props {
+  onResidencyEnd?: TerminalResidencyEnd;
   activeTarget: TerminalRenderTarget | null;
   targets: readonly TerminalRenderTarget[];
   visible: boolean;
@@ -232,6 +234,7 @@ interface Props {
 }
 
 export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(function TerminalRendererHostComponent({
+  onResidencyEnd,
   activeTarget,
   targets,
   visible,
@@ -274,6 +277,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   visualViewportRef.current = visualViewport;
 
   const reportReady = useEffectEvent(() => onReady?.());
+  const reportResidencyEnd = useEffectEvent((...args: Parameters<TerminalResidencyEnd>) => onResidencyEnd?.(...args));
   const reportInput = useEffectEvent(onInput);
   const reportScroll = useEffectEvent(onScroll);
   const reportOfflineScroll = useEffectEvent(onOfflineScroll);
@@ -337,6 +341,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       waiter.reject(new Error('Terminal renderer was disposed'));
     }
     entries.current.delete(key);
+    reportResidencyEnd(entry.target, closeBridge ? TerminalResidencyEndReason.Closed : TerminalResidencyEndReason.Evicted);
     const terminalId = entry.target.session.terminalId;
     if (closeBridge) {
       entry.controllerAttachment = null;
@@ -971,6 +976,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       const entry = entries.current.get(key);
       if (entry) disposeEntry(key, entry, true);
       else {
+        reportResidencyEnd(target, TerminalResidencyEndReason.Closed);
         target.client.terminal.closeTerminalBridge(target.session.terminalId);
       }
     }
@@ -1179,6 +1185,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   useEffect(() => () => {
     resumeScrolls.current.clear();
     for (const entry of entries.current.values()) {
+      reportResidencyEnd(entry.target, TerminalResidencyEndReason.Evicted);
       if (
         hostReady.current
         && entry.target.session.kind !== 'ssh'

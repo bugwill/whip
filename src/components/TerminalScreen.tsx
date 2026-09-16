@@ -138,9 +138,12 @@ import { Icon } from './ui/icon';
 import { Input } from './ui/input';
 import { Text } from './ui/text';
 
+import type { TerminalResidencyEnd } from '../lib/terminalResidency';
+
 const TERMINAL_INPUT_CONTEXT = 'terminal-input-send';
 
 interface Props {
+  onResidencyEnd?: TerminalResidencyEnd;
   activeTarget: TerminalRenderTarget | null;
   targets: readonly TerminalRenderTarget[];
   visible: boolean;
@@ -391,6 +394,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
   function TerminalScreenComponent(
     {
       activeTarget,
+      onResidencyEnd,
       targets,
       visible,
       preferences,
@@ -2064,6 +2068,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           }
         >
           <TerminalRendererHost
+            onResidencyEnd={onResidencyEnd}
             ref={renderer}
             activeTarget={activeTarget}
             targets={targets}
@@ -2184,7 +2189,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                 <Text className="text-[10px] font-semibold">Latest</Text>
               </Button>
             )}
-          {viewportOverlay && (
+          {(viewportOverlay || chatViewEnabled) && (
             <>
               {chatViewEnabled && (
                 <View

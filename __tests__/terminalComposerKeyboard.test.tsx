@@ -242,6 +242,17 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+test('Chat mode covers the terminal while the evicted transcript has no viewport yet', () => {
+  mount();
+  const onResidencyEnd = jest.fn();
+  act(() => renderer.update(<TerminalScreen {...props} chatViewEnabled onResidencyEnd={onResidencyEnd} />));
+  const background = renderer.root.find(node => node.props.className === 'absolute inset-0 z-10 bg-background');
+  expect(background.props.accessibilityElementsHidden).toBe(true);
+  expect(ui('TerminalRendererHost').props.onResidencyEnd).toBe(onResidencyEnd);
+  act(() => renderer.update(<TerminalScreen {...props} />));
+  expect(renderer.root.findAll(node => node.props.className === 'absolute inset-0 z-10 bg-background')).toHaveLength(0);
+});
+
 describe.each(['android', 'ios'] as const)(
   '%s terminal composer keyboard',
   platform => {

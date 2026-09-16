@@ -48,6 +48,7 @@ import {
   type TranscriptFileLinkTarget,
 } from '@/src/lib/transcriptLinks';
 import type { TerminalRenderTarget } from '@/src/lib/terminalRenderer';
+import { TerminalResidencyEndReason, type TerminalResidencyEnd } from '../lib/terminalResidency';
 import {
   resolveTerminalVolumeKeyAction,
   type TerminalVolumeKey,
@@ -265,8 +266,11 @@ export function SessionScreen({
   const lastActivePaneId = useRef<string | null>(null);
   const pendingFocus = useRef<PendingFocus | null>(null);
   const chatViewsRef = useRef(chatViews);
-  // Remember only view intent while SQLite owns an inactive transcript.
-  const suspendedChatsRef = useRef(new Map<string, string>());
+  // Eviction drops hydrated resources, but keeps Chat-mode intent during restore.
+  // This holds only transcript identities, never a second residency/capacity policy.
+  const [chatRestoreIntents, setChatRestoreIntents] = useState(new Map<string, string>());
+  const chatRestoreIntentsRef = useRef(chatRestoreIntents);
+  chatRestoreIntentsRef.current = chatRestoreIntents;
   const activeTerminalIdRef = useRef(terminalState.activeTerminalId);
   const chatPresentationGenerationRef = useRef(0);
   const lastActiveChatDiagnosticRef = useRef('');
@@ -369,8 +373,14 @@ export function SessionScreen({
     terminalState.sessions,
     terminalState.activeTerminalId,
   );
-  const activeChatView = activeTerminalSession
-    ? chatViews.get(activeTerminalSession.terminalId) || null
+  const activeTarget =
+    terminalTargets.find(
+      target =>
+        target.hostSessionId === hostSessionId &&
+        target.session.terminalId === activeTerminalSession?.terminalId,
+    ) || null;
+  const activeChatView = activeTarget
+    ? chatViews.get(activeTarget.key) || null
     : null;
   const chatOpen = useAgentChatOpen({
     hostSessionId,
@@ -381,7 +391,8 @@ export function SessionScreen({
     onRefresh,
     onBound: projection => {
       const presentation = requestedChatPresentation(projection.state);
-      setChatViews(current => new Map(current).set(projection.binding.terminalId, {
+      if (!activeTarget) return;
+      setChatViews(current => new Map(current).set(activeTarget.key, {
         binding: projection.binding, presentation, state: projection.state,
       }));
     },
@@ -389,7 +400,10 @@ export function SessionScreen({
   const cancelChatOpen = chatOpen.cancel;
   const pendingChatOpenTerminalId = chatOpen.pendingTerminalId;
   const visibleAppAlert = appAlert || (chatOpen.notice?.type === 'error' ? chatOpen.notice : null);
+  const restoringChat = Boolean(activeTarget && chatRestoreIntents.has(activeTarget.key));
   const chatControlLoading =
+    (restoringChat &&
+      !chatPresentationVisible(activeChatView?.presentation)) ||
     chatPresentationLoading(activeChatView?.presentation) ||
     pendingChatOpenTerminalId === activeTerminalSession?.terminalId;
   const activeChatControl = agentChatControlState(
@@ -401,12 +415,12 @@ export function SessionScreen({
     visible,
     activePane?.pane_id || null,
   );
-  const chatVisible = chatPresentationVisible(activeChatView?.presentation);
+  const chatVisible = chatPresentationVisible(activeChatView?.presentation) || restoringChat;
   const onChatSpeechError = useCallback((error: unknown) => {
     setAppAlert({ title: 'Could not read chat aloud', message: String(error) });
   }, []);
   useFocusedChatSpeech(
-    visible && chatVisible && activeChatView && activePane
+    visible && activeChatView && chatPresentationVisible(activeChatView.presentation) && activePane
       ? {
           agent: activeChatView.binding.agent,
           bindingToken: activeChatView.binding.bindingToken,
@@ -423,9 +437,13 @@ export function SessionScreen({
       chatPresentationMountsViewport(activeChatView.presentation) &&
       agentTranscriptReadiness(activeChatView.state) === 'usable',
   );
+  const mountedChatViews = [...chatViews.entries()].filter(([, view]) =>
+    chatPresentationMountsViewport(view.presentation) &&
+    agentTranscriptReadiness(view.state) === 'usable',
+  );
   const chatSubscriptionIdentity = [...chatViews.entries()]
-    .map(([terminalId, view]) =>
-      [terminalId, view.binding.bindingToken, view.presentation.generation].join(':'),
+    .map(([key, view]) =>
+      [key, view.binding.bindingToken, view.presentation.generation].join(':'),
     )
     .sort()
     .join('|');
@@ -461,12 +479,6 @@ export function SessionScreen({
     chatVisible,
     pendingChatOpenTerminalId,
   ]);
-  const activeTarget =
-    terminalTargets.find(
-      target =>
-        target.hostSessionId === hostSessionId &&
-        target.session.terminalId === activeTerminalSession?.terminalId,
-    ) || null;
   const registerInteraction = (
     target: TerminalRenderTarget | null = activeTarget,
   ) => {
@@ -581,8 +593,6 @@ export function SessionScreen({
     setBrowserLoading(false);
     setAttachmentsOpen(false);
     setPasteRequest(null);
-    setChatViews(new Map());
-    suspendedChatsRef.current.clear();
     reportedChatFailureGenerationsRef.current.clear();
   }, [hostSessionId]);
 
@@ -592,45 +602,50 @@ export function SessionScreen({
     );
   }, [snapshot]);
 
-  useEffect(
-    () => () => {
-      for (const terminalId of chatViewsRef.current.keys()) {
-        agentTranscriptService.closeTerminal(
-          hostSessionId,
-          terminalId,
-          client.native,
-        );
-      }
-    },
-    [client, hostSessionId],
-  );
+  const updateChatRestoreIntent = useCallback((key: string, transcriptKey?: string) => {
+    const current = chatRestoreIntentsRef.current;
+    if (current.get(key) === transcriptKey) return;
+    const next = new Map(current);
+    if (transcriptKey) next.set(key, transcriptKey);
+    else next.delete(key);
+    chatRestoreIntentsRef.current = next;
+    setChatRestoreIntents(next);
+  }, []);
+
+  const onTerminalResidencyEnd: TerminalResidencyEnd = useCallback((target, reason) => {
+    const terminalId = target.session.terminalId;
+    const key = target.key;
+    const view = chatViewsRef.current.get(key);
+    if (reason === TerminalResidencyEndReason.Closed) updateChatRestoreIntent(key);
+    if (!view) return;
+    if (reason === TerminalResidencyEndReason.Evicted && chatPresentationRequested(view.presentation)) {
+      updateChatRestoreIntent(key, view.binding.transcriptKey);
+    }
+    const next = new Map(chatViewsRef.current);
+    next.delete(key);
+    chatViewsRef.current = next;
+    setChatViews(next);
+    agentTranscriptService.closeTerminal(target.hostSessionId, terminalId, target.client.native);
+  }, [updateChatRestoreIntent]);
 
   useEffect(() => {
-    const activeId = visible ? terminalState.activeTerminalId : null;
-    const liveIds = new Set(terminalState.sessions.map(session => session.terminalId));
+    const activeId = visible ? activeTarget?.key : null;
+    const targets = new Map(terminalTargets.map(target => [target.key, target]));
     const next = new Map(chatViewsRef.current);
     let changed = false;
-    for (const [terminalId, view] of next) {
-      if (terminalId === activeId) continue;
-      if (liveIds.has(terminalId) && chatPresentationRequested(view.presentation)) {
-        suspendedChatsRef.current.set(terminalId, view.binding.transcriptKey);
-      }
-      agentTranscriptService.closeTerminal(hostSessionId, terminalId, client.native);
-      next.delete(terminalId);
-      changed = true;
-    }
-    const host = client.native.hostState();
-    for (const terminalId of suspendedChatsRef.current.keys()) {
-      if (!liveIds.has(terminalId) || confirmedChatExit(host, terminalId)) {
-        suspendedChatsRef.current.delete(terminalId);
+    for (const key of chatRestoreIntentsRef.current.keys()) {
+      const target = targets.get(key);
+      if (!target || confirmedChatExit(target.client.native.hostState(), target.session.terminalId) ||
+        next.get(key)?.presentation.phase === AgentChatPresentationPhase.Failed ||
+        chatPresentationVisible(next.get(key)?.presentation)) {
+        updateChatRestoreIntent(key);
       }
     }
-    if (activeId && suspendedChatsRef.current.has(activeId)) {
-      const transcriptKey = suspendedChatsRef.current.get(activeId);
+    if (activeTarget && activeId && !next.has(activeId) && chatRestoreIntentsRef.current.has(activeId)) {
+      const transcriptKey = chatRestoreIntentsRef.current.get(activeId);
       try {
-        const projection = agentTranscriptService.activate(hostSessionId, activeId, client.native);
+        const projection = agentTranscriptService.activate(hostSessionId, activeTarget.session.terminalId, client.native);
         if (projection.type === 'bound') {
-          suspendedChatsRef.current.delete(activeId);
           if (projection.binding.transcriptKey === transcriptKey) {
             next.set(activeId, {
               binding: projection.binding,
@@ -639,10 +654,11 @@ export function SessionScreen({
             });
             changed = true;
           } else {
-            agentTranscriptService.closeTerminal(hostSessionId, activeId, client.native);
+            updateChatRestoreIntent(activeId);
+            agentTranscriptService.closeTerminal(hostSessionId, activeTarget.session.terminalId, client.native);
           }
         } else if (projection.reason !== 'host-state-unavailable') {
-          suspendedChatsRef.current.delete(activeId);
+          updateChatRestoreIntent(activeId);
         }
       } catch (error) {
         // A reconnect can replace the native runtime between snapshots. Keep
@@ -656,50 +672,40 @@ export function SessionScreen({
       setChatViews(next);
     }
   }, [visible, terminalState.activeTerminalId, terminalState.sessions, snapshot.panes,
-    client, hostSessionId, requestedChatPresentation]);
+    client, hostSessionId, requestedChatPresentation, updateChatRestoreIntent, activeTarget, terminalTargets, chatViews]);
 
   useEffect(() => {
-    const terminalIds = terminalState.sessions.map(
-      session => session.terminalId,
-    );
-    const liveTerminalIds = new Set(terminalIds);
+    const targets = new Map(terminalTargets.map(target => [target.key, target]));
+    const liveTerminalKeys = new Set(targets.keys());
     const projections = new Map<string, AgentChatProjection>();
     const reboundPresentations = new Map<string, AgentChatPresentation>();
-    for (const [terminalId, view] of chatViewsRef.current) {
-      if (!liveTerminalIds.has(terminalId)) {
-        agentTranscriptService.closeTerminal(
-          hostSessionId,
-          terminalId,
-          client.native,
-        );
-        continue;
-      }
+    const exitedTerminalKeys = new Set<string>();
+    for (const [key, view] of chatViewsRef.current) {
+      const target = targets.get(key);
+      if (!target) continue; // The residency callback owns cleanup of removed targets.
+      const { client: targetClient, hostSessionId: targetHost, session } = target;
       const projection = agentTranscriptService.reconcile(
-        hostSessionId,
-        terminalId,
-        client.native,
+        targetHost, session.terminalId, targetClient.native,
       );
-      projections.set(terminalId, projection);
+      projections.set(key, projection);
+      if (confirmedChatExit(targetClient.native.hostState(), session.terminalId)) {
+        exitedTerminalKeys.add(key);
+      }
       if (
         projection.type === 'bound' &&
         projection.binding.bindingToken !== view.binding.bindingToken &&
         chatPresentationRequested(view.presentation)
       ) {
-        reboundPresentations.set(
-          terminalId,
-          requestedChatPresentation(projection.state),
-        );
+        reboundPresentations.set(key, requestedChatPresentation(projection.state));
       }
     }
-    const host = client.native.hostState();
-    const exitedTerminalIds = new Set(terminalIds.filter(id => confirmedChatExit(host, id)));
     setChatViews(current =>
       reconcileAgentChatViews(
         current,
-        liveTerminalIds,
+        liveTerminalKeys,
         projections,
         reboundPresentations,
-        exitedTerminalIds,
+        exitedTerminalKeys,
       ),
     );
   }, [
@@ -709,26 +715,33 @@ export function SessionScreen({
     hostSessionId,
     snapshot.panes,
     terminalState.sessions,
+    terminalTargets,
     requestedChatPresentation,
   ]);
 
   useEffect(() => {
     const subscriptions = [...chatViewsRef.current.entries()].flatMap(
-      ([terminalId, view]) => {
+      ([key, view]) => {
+        const terminalId = view.binding.terminalId;
+        const target = terminalTargets.find(item => item.key === key);
+        if (!target) return [];
         return [
           agentTranscriptService.subscribe(view.binding.bindingToken, state => {
             const resetGeneration = nextChatPresentationGeneration();
             setChatViews(current => {
-              const active = current.get(terminalId);
+              const active = current.get(key);
               if (
                 active?.binding.bindingToken !== view.binding.bindingToken ||
                 active.state === state
               )
                 return current;
               if (state === null) {
-                return new Map(current).set(terminalId, chatBindingLost(
-                  active, confirmedChatExit(client.native.hostState(), terminalId),
-                ));
+                if (confirmedChatExit(target.client.native.hostState(), terminalId)) {
+                  const next = new Map(current);
+                  next.delete(key);
+                  return next;
+                }
+                return new Map(current).set(key, chatBindingLost(active, false));
               }
               const readiness = agentTranscriptReadiness(state);
               const nextPresentation = updateChatTranscriptReadiness(
@@ -748,7 +761,7 @@ export function SessionScreen({
                 toPhase: nextPresentation.phase,
               });
               const next = new Map(current);
-              next.set(terminalId, {
+              next.set(key, {
                 ...active,
                 presentation: nextPresentation,
                 state,
@@ -760,7 +773,7 @@ export function SessionScreen({
       },
     );
     return () => subscriptions.forEach(unsubscribe => unsubscribe());
-  }, [chatSubscriptionIdentity, nextChatPresentationGeneration, client]);
+  }, [chatSubscriptionIdentity, nextChatPresentationGeneration, terminalTargets]);
 
   useEffect(() => {
     if (
@@ -1118,15 +1131,16 @@ export function SessionScreen({
     const terminalId = activeTerminalSession?.terminalId;
     if (!terminalId) return;
     cancelChatOpen();
-    suspendedChatsRef.current.delete(terminalId);
+    if (!activeTarget) return;
+    updateChatRestoreIntent(activeTarget.key);
     agentTranscriptService.closeTerminal(hostSessionId, terminalId, client.native);
     setChatViews(current => {
-      if (!current.has(terminalId)) return current;
+      if (!current.has(activeTarget.key)) return current;
       const next = new Map(current);
-      next.delete(terminalId);
+      next.delete(activeTarget.key);
       return next;
     });
-  }, [activeTerminalSession?.terminalId, cancelChatOpen, hostSessionId, client]);
+  }, [activeTerminalSession?.terminalId, activeTarget, cancelChatOpen, hostSessionId, client, updateChatRestoreIntent]);
 
   const openAgentChat = () => {
     if (activeChatView && chatPresentationRequested(activeChatView.presentation)) return;
@@ -1416,6 +1430,7 @@ export function SessionScreen({
       >
         <View pointerEvents="box-none" className="absolute inset-0">
           <TerminalScreen
+            onResidencyEnd={onTerminalResidencyEnd}
             activeTarget={activeTarget}
             targets={terminalTargets}
             compact
@@ -1469,86 +1484,85 @@ export function SessionScreen({
             }
             chatViewEnabled={chatVisible}
             renderViewportOverlay={
-              chatViewportMounted && activeChatView && activePane
-                ? (insets, latestButtonBottom) => (
-                    <AgentChatView
-                      key={[
-                        activeChatView.binding.bindingToken,
-                        activeChatView.presentation.generation,
-                      ].join(':')}
-                      state={activeChatView.state}
-                      agent={activeChatView.binding.agent}
-                      agentStatus={activePane.agent_status}
-                      contentInsets={insets}
-                      latestButtonBottom={latestButtonBottom}
-                      onOpenFile={openChatFile}
-                      onInitialViewportReady={() => {
-                        const terminalId = activeTerminalSession?.terminalId;
-                        const generation =
-                          activeChatView.presentation.generation;
-                        recordAgentChatDiagnostic(
-                          'initial-viewport-callback-received',
-                          {
-                            activeTerminalId: activeTerminalIdRef.current,
-                            bindingToken: agentChatDiagnosticToken(
-                              activeChatView.binding.bindingToken,
-                            ),
-                            generation,
-                            terminalId,
-                          },
-                        );
-                        if (
-                          !terminalId ||
-                          activeTerminalIdRef.current !== terminalId
-                        ) {
-                          recordAgentChatDiagnostic(
-                            'initial-viewport-callback-rejected',
-                            {
-                              reason: 'terminal-changed',
-                              terminalId,
-                            },
-                          );
-                          return;
-                        }
-                        setChatViews(current => {
-                          const view = current.get(terminalId);
-                          if (
-                            view?.binding.bindingToken !==
-                              activeChatView.binding.bindingToken ||
-                            agentTranscriptReadiness(view.state) !== 'usable'
-                          ) {
+              mountedChatViews.length
+                ? (insets, latestButtonBottom) => mountedChatViews.map(([key, chatView]) => {
+                    const selected = key === activeTarget?.key;
+                    const terminalId = chatView.binding.terminalId;
+                    return (
+                      <View
+                        key={key}
+                        className="absolute inset-0"
+                        style={{ opacity: selected ? 1 : 0 }}
+                        pointerEvents={selected ? 'auto' : 'none'}
+                        accessibilityElementsHidden={!selected}
+                        importantForAccessibility={selected ? 'auto' : 'no-hide-descendants'}
+                      >
+                        <AgentChatView
+                          key={[
+                            chatView.binding.bindingToken,
+                            chatView.presentation.generation,
+                          ].join(':')}
+                          state={chatView.state}
+                          agent={chatView.binding.agent}
+                          agentStatus={selected && activePane ? activePane.agent_status : 'idle'}
+                          contentInsets={insets}
+                          latestButtonBottom={latestButtonBottom}
+                          onOpenFile={openChatFile}
+                          onInitialViewportReady={() => {
+                            const generation =
+                              chatView.presentation.generation;
                             recordAgentChatDiagnostic(
-                              'initial-viewport-callback-rejected',
+                              'initial-viewport-callback-received',
                               {
-                                reason: 'binding-or-readiness-changed',
+                                activeTerminalId: activeTerminalIdRef.current,
+                                bindingToken: agentChatDiagnosticToken(
+                                  chatView.binding.bindingToken,
+                                ),
+                                generation,
                                 terminalId,
                               },
                             );
-                            return current;
-                          }
-                          const presentation = revealPreparedChat(
-                            view.presentation,
-                            generation,
-                          );
-                          if (presentation === view.presentation)
-                            return current;
-                          recordAgentChatDiagnostic(
-                            'chat-open-visible',
-                            {
-                              bindingToken: agentChatDiagnosticToken(
-                                view.binding.bindingToken,
-                              ),
-                              generation,
-                              terminalId,
-                            },
-                          );
-                          const next = new Map(current);
-                          next.set(terminalId, { ...view, presentation });
-                          return next;
-                        });
-                      }}
-                    />
-                  )
+                            setChatViews(current => {
+                              const view = current.get(key);
+                              if (
+                                view?.binding.bindingToken !==
+                                  chatView.binding.bindingToken ||
+                                agentTranscriptReadiness(view.state) !== 'usable'
+                              ) {
+                                recordAgentChatDiagnostic(
+                                  'initial-viewport-callback-rejected',
+                                  {
+                                    reason: 'binding-or-readiness-changed',
+                                    terminalId,
+                                  },
+                                );
+                                return current;
+                              }
+                              const presentation = revealPreparedChat(
+                                view.presentation,
+                                generation,
+                              );
+                              if (presentation === view.presentation)
+                                return current;
+                              recordAgentChatDiagnostic(
+                                'chat-open-visible',
+                                {
+                                  bindingToken: agentChatDiagnosticToken(
+                                    view.binding.bindingToken,
+                                  ),
+                                  generation,
+                                  terminalId,
+                                },
+                              );
+                              const next = new Map(current);
+                              next.set(key, { ...view, presentation });
+                              return next;
+                            });
+                          }}
+                        />
+                      </View>
+                    );
+                  })
                 : undefined
             }
             viewportOverlayBackground={
