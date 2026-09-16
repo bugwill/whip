@@ -3475,16 +3475,20 @@ export function createHostRuntime(
   config: RuntimeConfig,
   handler?: (event: RuntimeLifecycleEvent) => void,
 ): NativeHostRuntime {
-  const runtime = createHostRuntimeRust({
-    runtimeId: config.runtimeId,
-    ssh: runtimeSshConfig(config.ssh),
-    jumpHosts: config.jumpHosts.map(runtimeSshConfig),
-    sessionName: config.sessionName,
-    herdrCommand: config.herdrCommand,
-    socketPath: config.socketPath,
-    cachedSocketPath: config.cachedSocketPath,
-  });
-  return new NativeHostRuntime(runtime, handler);
+  try {
+    const runtime = createHostRuntimeRust({
+      runtimeId: config.runtimeId,
+      ssh: runtimeSshConfig(config.ssh),
+      jumpHosts: config.jumpHosts.map(runtimeSshConfig),
+      sessionName: config.sessionName,
+      herdrCommand: config.herdrCommand,
+      socketPath: config.socketPath,
+      cachedSocketPath: config.cachedSocketPath,
+    });
+    return new NativeHostRuntime(runtime, handler);
+  } catch (error) {
+    throw hostRuntimeError(error);
+  }
 }
 
 export function pairHost(

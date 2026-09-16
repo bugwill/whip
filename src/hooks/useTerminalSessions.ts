@@ -113,8 +113,10 @@ export function useTerminalSessions() {
     async (
       sessionId: string,
       hostId: string,
+      isCurrent: () => boolean,
     ): Promise<TerminalSessionsState> => {
       const persisted = await loadPersistedTerminals(hostId);
+      if (!isCurrent()) return emptyTerminalSessions;
       for (const [terminalId, fontSize] of persisted.fontSizes) {
           fontSizesRef.current.set(
             terminalKey(sessionId, terminalId),

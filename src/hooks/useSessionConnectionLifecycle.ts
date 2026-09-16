@@ -2,6 +2,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -128,6 +129,8 @@ export function useSessionConnectionLifecycle({
     ReadonlySet<string>
   >(() => new Set());
   const alertsEnabledRef = useRef(alertsEnabled);
+  // React's session projection can lag native ownership while connecting.
+  const connectionAttemptsRef = useRef(new Map<string, symbol>());
   alertsEnabledRef.current = alertsEnabled;
 
   const getState = useCallback(() => stateRef.current, [stateRef]);
@@ -143,25 +146,24 @@ export function useSessionConnectionLifecycle({
     bestEffortCleanup(disposeRuntimeMap(retained), 'retained-runtime-dispose');
   }, []);
 
-  useEffect(
-    () => () => {
-      if (
-        shouldRetainBackgroundRuntimes(
-          Platform.OS,
-          alertsEnabledRef.current,
-          stateRef.current.sessions.length,
-        )
-      ) {
-        retainedBackgroundRuntimes = runtimesRef.current;
-        return;
-      }
-      bestEffortCleanup(
-        disposeRuntimeMap(runtimesRef.current),
-        'session-runtime-dispose',
-      );
-    },
-    [runtimesRef, stateRef],
-  );
+  const disposeOnUnmount = useEffectEvent(() => {
+    connectionAttemptsRef.current.clear();
+    if (
+      shouldRetainBackgroundRuntimes(
+        Platform.OS,
+        alertsEnabledRef.current,
+        stateRef.current.sessions.length,
+      )
+    ) {
+      retainedBackgroundRuntimes = runtimesRef.current;
+      return;
+    }
+    bestEffortCleanup(
+      disposeRuntimeMap(runtimesRef.current),
+      'session-runtime-dispose',
+    );
+  });
+  useEffect(() => () => disposeOnUnmount(), []);
 
   const trackHostConnection = useCallback(
     (hostId: string, connecting: boolean) => {
@@ -363,7 +365,7 @@ export function useSessionConnectionLifecycle({
     ],
   );
 
-  const close = useCallback(
+  const closeSession = useCallback(
     async (sessionId: string, recordDisconnect = true): Promise<void> => {
       const session = findLiveHostSession(stateRef.current, sessionId);
       if (session && recordDisconnect) hosts.markDisconnected(session.hostId);
@@ -393,13 +395,21 @@ export function useSessionConnectionLifecycle({
     ],
   );
 
+  const close = useCallback(
+    (sessionId: string, recordDisconnect = true): Promise<void> => {
+      connectionAttemptsRef.current.delete(sessionId);
+      trackHostConnection(sessionId, false);
+      return closeSession(sessionId, recordDisconnect);
+    },
+    [closeSession, trackHostConnection],
+  );
+
   const closeHostById = useCallback(
     async (hostId: string, recordDisconnect = true): Promise<void> => {
       const session = stateRef.current.sessions.find(
         item => item.hostId === hostId,
       );
-      if (session) await close(session.id, recordDisconnect);
-      else await waitForRuntimeDestruction(hostId);
+      await close(session?.id ?? hostId, recordDisconnect);
     },
     [close, stateRef],
   );
@@ -452,9 +462,13 @@ export function useSessionConnectionLifecycle({
         promptForUnknownHosts = navigate,
         traceStartupRestore = false,
       } = options;
+      const attempt = Symbol(nextProfile.id);
+      connectionAttemptsRef.current.set(nextProfile.id, attempt);
+      const isCurrentAttempt = () =>
+        connectionAttemptsRef.current.get(nextProfile.id) === attempt;
       if (trackConnecting) trackHostConnection(nextProfile.id, true);
       hosts.setError(null);
-      const existing = stateRef.current.sessions.find(
+      const existing = appCoreRef.current.view().sessions.find(
         session => session.hostId === nextProfile.id,
       );
       const reusingConnectingSession = Boolean(
@@ -462,10 +476,7 @@ export function useSessionConnectionLifecycle({
           existing &&
           !runtimesRef.current.has(existing.id),
       );
-      if (existing && !reusingConnectingSession) await close(existing.id);
-      else await waitForRuntimeDestruction(nextProfile.id);
       let runtime: LiveRuntime | null = null;
-      let liveSessionOpened = false;
       let appCoreSessionPrepared = false;
       let connectionStage = 'prepare';
       recordNetworkDiagnostic('info', 'host-connect-requested', {
@@ -477,12 +488,22 @@ export function useSessionConnectionLifecycle({
         startupRestore: traceStartupRestore,
       });
       try {
+        if (
+          (existing && !reusingConnectingSession) ||
+          runtimesRef.current.has(nextProfile.id)
+        ) {
+          await closeSession(existing?.id ?? nextProfile.id);
+        } else {
+          await waitForRuntimeDestruction(nextProfile.id);
+        }
+        if (!isCurrentAttempt()) return false;
         connectionStage = 'jump-credentials';
         const jumpProfiles = await withOptionalAppPerformanceTrace(
           traceStartupRestore,
           'Whip startup restore: jump credentials',
           () => loadJumpHostConnectionProfiles(hosts.getHosts(), nextProfile),
         );
+        if (!isCurrentAttempt()) return false;
         const jumpWithoutCredential = jumpProfiles.find(
           profile => !profile.secret,
         );
@@ -507,17 +528,21 @@ export function useSessionConnectionLifecycle({
         ) {
           return false;
         }
+        if (!isCurrentAttempt()) return false;
         const saved = persistProfile
           ? await hosts.persistProfile(nextProfile)
           : {
               hosts: hosts.getHosts(),
               host: hosts.getHosts().find(host => host.id === nextProfile.id),
             };
+        if (!isCurrentAttempt()) return false;
         if (!saved.host) {
           throw new Error(`Saved host ${nextProfile.id} no longer exists`);
         }
         const sessionId = nextProfile.id;
         runtime = createRuntime(sessionId, nextProfile);
+        // Closing must own this client even before SSH/terminal restore finishes.
+        runtimesRef.current.set(sessionId, runtime);
         let trustedKeys = 0;
         while (true) {
           try {
@@ -525,17 +550,23 @@ export function useSessionConnectionLifecycle({
             await withOptionalAppPerformanceTrace(
               traceStartupRestore,
               'Whip startup restore: SSH connect',
-              () => runtime!.client.connect(nextProfile, jumpProfiles),
+              () => isCurrentAttempt()
+                ? runtime!.client.connect(nextProfile, jumpProfiles)
+                : Promise.resolve(),
             );
+            if (!isCurrentAttempt()) return false;
             break;
           } catch (connectError) {
+            if (!isCurrentAttempt()) return false;
             const challenge = parseUnknownHostKey(connectError);
             if (!challenge || !promptForUnknownHosts) throw connectError;
             if (trustedKeys >= jumpProfiles.length + 1) throw connectError;
             if (!(await hosts.confirmUnknownHost(challenge))) {
               throw new Error(t('knownHosts.notTrusted'));
             }
+            if (!isCurrentAttempt()) return false;
             await hosts.trustChallenge(challenge);
+            if (!isCurrentAttempt()) return false;
             trustedKeys += 1;
           }
         }
@@ -554,14 +585,13 @@ export function useSessionConnectionLifecycle({
         const restoredTerminals = await withOptionalAppPerformanceTrace(
           traceStartupRestore,
           'Whip startup restore: terminal state',
-          () => terminals.restore(sessionId, nextProfile.id),
+          () => terminals.restore(sessionId, nextProfile.id, isCurrentAttempt),
         );
+        if (!isCurrentAttempt()) return false;
         if (restoredTerminals.activeTerminalId) {
           restoredTerminalHostIdsRef.current.add(nextProfile.id);
         }
-        runtimesRef.current.set(sessionId, runtime);
         commitAppCore(appCoreRef.current.view());
-        liveSessionOpened = true;
         recordNetworkDiagnostic('info', 'host-connect-ready', {
           sessionId,
           endpoint: nextProfile.host.trim(),
@@ -575,6 +605,7 @@ export function useSessionConnectionLifecycle({
         }
         return true;
       } catch (connectError) {
+        if (!isCurrentAttempt()) return false;
         recordNetworkDiagnostic('error', 'host-connect-failed', {
           sessionId: nextProfile.id,
           endpoint: nextProfile.host.trim(),
@@ -606,29 +637,29 @@ export function useSessionConnectionLifecycle({
           commitAppCore(appCoreRef.current.closeSession(nextProfile.id));
         }
         if (runtime) {
-          if (liveSessionOpened)
-            scheduleReconnect(nextProfile.id, connectError);
-          else await destroyRuntime(nextProfile.id, runtime);
+          runtimesRef.current.delete(nextProfile.id);
+          await destroyRuntime(nextProfile.id, runtime);
         }
-        if (navigate) navigation.selectTab('hosts');
+        if (isCurrentAttempt() && navigate) navigation.selectTab('hosts');
         return false;
       } finally {
-        if (trackConnecting) trackHostConnection(nextProfile.id, false);
+        if (isCurrentAttempt()) {
+          connectionAttemptsRef.current.delete(nextProfile.id);
+          if (trackConnecting) trackHostConnection(nextProfile.id, false);
+        }
       }
     },
     [
       appCoreRef,
-      close,
+      closeSession,
       commitAppCore,
       createRuntime,
       hosts,
       navigation,
       restoredTerminalHostIdsRef,
       runtimesRef,
-      scheduleReconnect,
       security,
       sessionProfilesRef,
-      stateRef,
       t,
       terminals,
       trackHostConnection,

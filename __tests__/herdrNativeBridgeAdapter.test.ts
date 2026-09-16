@@ -228,6 +228,17 @@ describe('native HostRuntime adapter', () => {
     jest.clearAllMocks();
   });
 
+  it('preserves the native reason when runtime creation rejects a duplicate host', () => {
+    mockGenerated.createHostRuntime.mockImplementationOnce(() => {
+      throw { tag: 'InvalidConfiguration', inner: ['host runtime thinker already exists'] };
+    });
+    expect(() => createHostRuntime({
+      runtimeId: 'thinker',
+      ssh: { host: 'thinker', port: 22, username: 'test', authMode: 'password', secret: 'test' },
+      jumpHosts: [], sessionName: 'main', herdrCommand: 'herdr',
+    })).toThrow('host runtime thinker already exists');
+  });
+
   it('exposes semantic HostRuntime operations and typed lifecycle events', async () => {
     const nativeState = {
       revision: 7n,
