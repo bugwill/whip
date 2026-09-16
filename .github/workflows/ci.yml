@@ -161,6 +161,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --include=dev
 
+      - name: Check bundled license notices
+        run: nix develop .#default -c npm run check:license-notices
+
       - name: Run Android lint and build
         run: >-
           nix develop .#default -c
