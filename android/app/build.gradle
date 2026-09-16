@@ -4,6 +4,7 @@ apply plugin: "com.facebook.react"
 apply plugin: "whip.react-native-fabric-crash-mitigation"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+def appVersion = new groovy.json.JsonSlurper().parse(file("${projectRoot}/package.json")).version
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -113,7 +114,7 @@ android {
         minSdkVersion = rootProject.ext.minSdkVersion
         targetSdkVersion = rootProject.ext.targetSdkVersion
         versionCode = 220
-        versionName = "1.0.2"
+        versionName = appVersion
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
     signingConfigs {
@@ -161,6 +162,19 @@ android {
             // New-architecture autolinking builds this same local target from
             // app CMake and the library AAR. Package one deterministic copy.
             pickFirsts += ['**/libreact-native-whip-ssh.so']
+        }
+    }
+}
+
+// Evaluate the Android model without compiling an APK, including any future
+// flavor/build-type overrides and versionNameSuffix values.
+tasks.register('checkAppVersion') {
+    doLast {
+        android.applicationVariants.all { variant ->
+            if (variant.versionName != appVersion) {
+                throw new GradleException("${variant.name} versionName: expected ${appVersion}, actual ${variant.versionName}")
+            }
+            println "Android ${variant.name} versionName: ${variant.versionName} (versionCode ${variant.versionCode})"
         }
     }
 }

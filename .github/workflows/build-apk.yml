@@ -43,6 +43,11 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Validate release tag against package version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node scripts/app-version.cjs --tag "$RELEASE_TAG"
+
       - name: Set up Java
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
@@ -62,6 +67,9 @@ jobs:
 
       - name: Install JavaScript dependencies
         run: npm ci --include=dev
+
+      - name: Check app version configuration
+        run: npm run check:app-version
 
       - name: Check license notices
         run: nix develop .#default -c npm run check:license-notices
@@ -106,6 +114,11 @@ jobs:
           -Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=512m"
           -PreactNativeArchitectures=arm64-v8a
           --no-daemon
+
+      - name: Verify APK version before publication
+        run: >-
+          nix develop .#default -c bash scripts/verify-android-version.sh
+          android/app/build/outputs/apk/release/app-release.apk
 
       - name: Package APK
         run: |
@@ -172,6 +185,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      - name: Validate release tag against package version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node scripts/app-version.cjs --tag "$RELEASE_TAG"
 
       - name: Set up Ruby and CocoaPods
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1

@@ -1,6 +1,6 @@
 {
   "name": "whip",
-  "version": "1.0.2",
+  "version": "1.7.0",
   "license": "AGPL-3.0-or-later",
   "private": true,
   "main": "index.js",
@@ -9,6 +9,7 @@
     "bundle:ios": "expo export:embed --platform ios --dev false --entry-file index.js --bundle-output build/ios/main.jsbundle --assets-dest build/ios",
     "benchmark:terminal-bridge": "node --experimental-default-type=module --expose-gc scripts/benchmark-terminal-bridge.mjs",
     "check:cargo-license-notices": "node scripts/check-cargo-license-notices.mjs",
+    "check:app-version": "node scripts/check-app-version.cjs",
     "check:license-notices": "npm run check:npm-license-notices && npm run check:cargo-license-notices && node scripts/sync-bundled-license-notices.mjs",
     "check:npm-license-notices": "node scripts/check-license-notices.mjs",
     "generate:android-icon": "node scripts/generate-android-launcher-vector.mjs",
@@ -94,6 +95,7 @@
     "@babel/preset-env": "^7.25.3",
     "@babel/runtime": "^7.25.0",
     "@cloudflare/workers-types": "^5.20260825.1",
+    "@expo/plist": "^0.8.1",
     "@react-native-community/cli": "20.1.0",
     "@react-native-community/cli-platform-android": "20.1.0",
     "@react-native-community/cli-platform-ios": "20.1.0",

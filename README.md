@@ -386,6 +386,49 @@ npx eas-cli build --profile ios-simulator --platform ios
 
 The `development` profile creates an Expo development client, `preview` creates an installable Android APK, and `ios-simulator` creates an unsigned iOS simulator build.
 
+### App versions and release tags
+
+The root `package.json` `version` is the only marketing version source. Use
+`MAJOR.MINOR.PATCH` (without a `v` prefix or prerelease suffix) for both mobile
+stores. Expo reads it in `app.config.js`, Android Gradle reads it for `versionName`,
+and Xcode's **Prepare app Info.plist** phase reads it for
+`CFBundleShortVersionString`. Xcode writes its intermediate plist under DerivedData;
+no version file is generated or committed in the source tree. Do not add a version
+to `app.json`, the iOS plist template, or Xcode's `MARKETING_VERSION` settings.
+Keep EAS's existing local version source and manual build-number management.
+Because the iOS plist is prepared during compilation, EAS CLI may report that it
+cannot read versions before the build; the compiled app carries the package
+version, and the macOS CI build verifies it from the finished app.
+
+For example, to bump `1.6.3` to `1.6.4`:
+
+```bash
+nix develop -c npm version 1.6.4 --no-git-tag-version
+nix develop -c npm run check:app-version
+nix develop -c android/gradlew -p android :app:checkAppVersion -PreactNativeArchitectures=arm64-v8a
+```
+
+Commit `package.json` and `package-lock.json`. Android `versionCode` and iOS
+`CURRENT_PROJECT_VERSION` remain separate build identifiers; increment them as
+required for store uploads. This fix does not bump or reset either identifier.
+
+The **Build Android APK** workflow accepts `v1.6.4` or `1.6.4` only when the
+package version is exactly `1.6.4`. It rejects mismatches before compiling and
+checks the finished APK with `apkanalyzer` before uploading or updating a release.
+The Play workflow checks the finished AAB with pinned, checksum-verified
+`bundletool`, and validates the tag too when dispatched against a tag.
+
+Normal CI checks Expo/iOS configuration, evaluates all Android variant versions,
+and verifies the built Android and iOS artifacts. To inspect a local APK:
+
+```bash
+nix develop -c bash scripts/verify-android-version.sh android/app/build/outputs/apk/release/app-release.apk
+```
+
+Existing mislabeled releases remain unchanged. Choose the next intended release
+version, bump the package, and rebuild; changing a GitHub tag alone cannot change
+an already installed binary's version.
+
 ### Google Play publishing
 
 The manually triggered `Publish Android app bundle` GitHub Actions workflow builds a signed ARM64 `.aab` and uploads it through EAS Submit. Its default `internal-draft` profile leaves an internal-track release in Google Play Console for review; `production-draft` creates a production draft, `internal` publishes to internal testers, and `closed` creates a completed alpha/closed-testing release.

@@ -41,6 +41,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check app version configuration
+        run: npm run check:app-version
+
       - name: Trigger EAS production build
         env:
           NODE_ENV: production
