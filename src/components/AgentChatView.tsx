@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   FlashList,
   type FlashListRef,
@@ -70,11 +70,14 @@ import { Text } from './ui/text';
 
 interface Props {
   state: AgentChatState;
+  /** Selected and requested, including preparation before the viewport is revealed. */
+  active?: boolean;
   agent: ChatAgent;
   agentStatus: AgentStatus;
   contentInsets: VisualContentInsets;
   latestButtonBottom: number;
   onOpenFile: (target: TranscriptFileLinkTarget) => void;
+  /** Called once per activation, after the initial or saved viewport is ready. */
   onInitialViewportReady?: () => void;
 }
 
@@ -113,6 +116,12 @@ interface InitialViewportReadiness {
   ready: boolean;
   viewableLatestTurnId: string | null;
   viewportLaidOut: boolean;
+  positionConfirmed: boolean;
+}
+
+interface SavedChatViewport {
+  offset: number;
+  followEnd: boolean;
 }
 
 enum ChatScrollInteractionKind {
@@ -784,6 +793,7 @@ const TranscriptTurnView = memo(function TranscriptTurnRow({
 
 export function AgentChatView({
   state,
+  active = true,
   agent,
   agentStatus,
   contentInsets,
@@ -794,6 +804,10 @@ export function AgentChatView({
   const { colors } = useTheme();
   const appGlassEnabled = useAppGlassEnabled();
   const [followEnd, setFollowEndState] = useState(true);
+  const [viewportReady, setViewportReady] = useState(false);
+  // These refs belong to this binding/generation, and survive warm reuse.
+  const savedViewportRef = useRef<SavedChatViewport | null>(null);
+  const activeRef = useRef(active);
   const [scrollGeometry, setScrollGeometry] = useState<ChatScrollGeometry>({
     contentHeight: 0,
     offset: 0,
@@ -819,6 +833,7 @@ export function AgentChatView({
     ready: false,
     viewableLatestTurnId: null,
     viewportLaidOut: false,
+    positionConfirmed: false,
   });
   const initialViewportReadyCallbackRef = useRef(onInitialViewportReady);
   initialViewportReadyCallbackRef.current = onInitialViewportReady;
@@ -884,13 +899,20 @@ export function AgentChatView({
   const initialViewportConditionsSatisfied = () => {
     const readiness = initialViewportRef.current;
     const currentLatestTurnId = latestTurnIdRef.current;
+    const saved = savedViewportRef.current;
+    const geometry = scrollGeometryRef.current;
+    const restoringOffset = saved && !saved.followEnd;
+    const targetOffset = Math.min(saved?.offset ?? 0, Math.max(0, geometry.contentHeight - geometry.viewportHeight));
     return readiness.viewportLaidOut
+      && readiness.itemsLoaded
       && readiness.contentSizeKnown
-      && readiness.measuredLatestTurnId === currentLatestTurnId
-      && readiness.atEnd
-      && (
-        currentLatestTurnId === null
-        || readiness.viewableLatestTurnId === currentLatestTurnId
+      && readiness.positionConfirmed
+      && (restoringOffset
+        ? Math.abs(geometry.offset - targetOffset) <= CHAT_INITIAL_END_THRESHOLD
+        : readiness.measuredLatestTurnId === currentLatestTurnId && readiness.atEnd && (
+          currentLatestTurnId === null
+          || readiness.viewableLatestTurnId === currentLatestTurnId
+        )
       );
   };
 
@@ -923,10 +945,11 @@ export function AgentChatView({
 
   const scheduleInitialViewportReady = (source: string) => {
     const readiness = initialViewportRef.current;
-    if (readiness.ready) return;
+    if (!active || readiness.ready) return;
     recordInitialViewportReadiness(source);
     if (!initialViewportConditionsSatisfied()) return;
     readiness.ready = true;
+    setViewportReady(true);
     recordInitialViewportReadiness('ready');
     recordAgentChatDiagnostic('viewport-ready', {
       latestTurnId: latestTurnIdRef.current,
@@ -943,9 +966,19 @@ export function AgentChatView({
   ) => {
     const maximumOffset = Math.max(0, contentHeight - viewportHeight);
     initialViewportRef.current.atEnd =
+      initialViewportRef.current.positionConfirmed &&
       viewportHeight > 0 &&
-      maximumOffset - offset <= CHAT_INITIAL_END_THRESHOLD;
+      Math.abs(maximumOffset - offset) <= CHAT_INITIAL_END_THRESHOLD;
     scheduleInitialViewportReady('scroll-extent');
+  };
+
+  const confirmListPosition = () => {
+    const geometry = scrollGeometryRef.current;
+    const offset = list.current?.getAbsoluteLastScrollOffset();
+    if (offset === undefined) return;
+    updateScrollGeometry({ ...geometry, offset });
+    initialViewportRef.current.positionConfirmed = true;
+    updateInitialEndPosition(offset, geometry.contentHeight, geometry.viewportHeight);
   };
 
   const updateScrollExtent = ({
@@ -953,24 +986,22 @@ export function AgentChatView({
     viewportHeight,
   }: Pick<ChatScrollGeometry, 'contentHeight' | 'viewportHeight'>) => {
     const current = scrollGeometryRef.current;
-    const nextMaxOffset = Math.max(0, contentHeight - viewportHeight);
-    const boundedOffset = Math.min(current.offset, nextMaxOffset);
     updateScrollGeometry({
       contentHeight,
-      offset: boundedOffset,
+      offset: current.offset,
       viewportHeight,
     });
     const interaction = scrollInteractionRef.current;
     if (interaction.kind !== ChatScrollInteractionKind.Idle) {
       scrollInteractionRef.current = {
         ...interaction,
-        lastOffset: boundedOffset,
+        lastOffset: current.offset,
       };
     }
-    updateInitialEndPosition(boundedOffset, contentHeight, viewportHeight);
+    updateInitialEndPosition(current.offset, contentHeight, viewportHeight);
   };
 
-  const alignLoadedInitialViewportToEnd = () => {
+  const alignLoadedInitialViewport = () => {
     const readiness = initialViewportRef.current;
     const geometry = scrollGeometryRef.current;
     const maximumOffset = Math.max(
@@ -978,23 +1009,59 @@ export function AgentChatView({
       geometry.contentHeight - geometry.viewportHeight,
     );
     if (
-      readiness.ready ||
+      !active || readiness.ready ||
       !readiness.itemsLoaded ||
       !readiness.contentSizeKnown ||
-      geometry.viewportHeight <= 0 ||
-      maximumOffset <= CHAT_INITIAL_END_THRESHOLD ||
-      readiness.atEnd
+      geometry.viewportHeight <= 0
     )
       return;
+    const saved = savedViewportRef.current;
+    const targetOffset = saved && !saved.followEnd
+      ? Math.min(saved.offset, maximumOffset)
+      : maximumOffset;
+    if (readiness.positionConfirmed && Math.abs(geometry.offset - targetOffset) <= CHAT_INITIAL_END_THRESHOLD) {
+      scheduleInitialViewportReady('retained-position');
+      return;
+    }
     scrollInteractionRef.current = {
       kind: ChatScrollInteractionKind.Idle,
-      lastOffset: maximumOffset,
+      lastOffset: geometry.offset,
     };
-    updateScrollGeometry({ ...geometry, offset: maximumOffset });
-    readiness.atEnd = true;
-    list.current?.scrollToOffset({ offset: maximumOffset, animated: false });
-    scheduleInitialViewportReady('initial-end-alignment');
+    // A scroll request is not a position report. Keep Chat hidden until confirmed.
+    list.current?.scrollToOffset({ offset: targetOffset, animated: false });
   };
+
+  const updateViewportActivity = useEffectEvent(() => {
+    if (activeRef.current === active) return;
+    activeRef.current = active;
+    const readiness = initialViewportRef.current;
+    if (!active && readiness.ready) {
+      const geometry = scrollGeometryRef.current;
+      savedViewportRef.current = {
+        offset: geometry.offset,
+        followEnd: followEndRef.current || nearEnd(
+          geometry.offset,
+          Math.max(0, geometry.contentHeight - geometry.viewportHeight),
+        ),
+      };
+    }
+    readiness.ready = false;
+    setViewportReady(false);
+    scrollInteractionRef.current = {
+      kind: ChatScrollInteractionKind.Idle,
+      lastOffset: scrollGeometryRef.current.offset,
+    };
+    scrollbarDragRef.current = null;
+    if (active) {
+      setFollowEnd(savedViewportRef.current?.followEnd ?? true);
+      alignLoadedInitialViewport();
+      scheduleInitialViewportReady('reactivated');
+    }
+  });
+
+  useLayoutEffect(() => {
+    updateViewportActivity();
+  }, [active]);
 
   useEffect(() => {
     recordAgentChatDiagnostic('viewport-props-changed', {
@@ -1039,11 +1106,13 @@ export function AgentChatView({
       offset,
       viewportHeight: layoutMeasurement.height,
     });
+    initialViewportRef.current.positionConfirmed = true;
     updateInitialEndPosition(
       offset,
       contentSize.height,
       layoutMeasurement.height,
     );
+    if (!active) return;
     const interaction = scrollInteractionRef.current;
     if (
       interaction.kind !== ChatScrollInteractionKind.Dragging &&
@@ -1183,6 +1252,7 @@ export function AgentChatView({
   return (
     <View
       className={cn('flex-1', appGlassBackgroundClassName(appGlassEnabled))}
+      style={{ opacity: active && activeRef.current === active && viewportReady ? 1 : 0 }}
     >
       <View
         testID="agent-chat-viewport"
@@ -1194,6 +1264,7 @@ export function AgentChatView({
             contentHeight: current.contentHeight,
             viewportHeight: event.nativeEvent.layout.height,
           });
+          alignLoadedInitialViewport();
         }}
       >
         <FlashList
@@ -1277,9 +1348,10 @@ export function AgentChatView({
               contentHeight: height,
               viewportHeight: current.viewportHeight,
             });
-            alignLoadedInitialViewportToEnd();
+            alignLoadedInitialViewport();
             if (
               contentSizeWasKnown &&
+              active && initialViewportRef.current.ready &&
               height > current.contentHeight + CHAT_SCROLL_OFFSET_EPSILON &&
               followEndRef.current
             )
@@ -1291,16 +1363,15 @@ export function AgentChatView({
               contentHeight: current.contentHeight,
               viewportHeight: event.nativeEvent.layout.height,
             });
+            alignLoadedInitialViewport();
           }}
-          onEndReached={() => {
-            initialViewportRef.current.atEnd = true;
-            scheduleInitialViewportReady('end-reached');
-          }}
+          onEndReached={confirmListPosition}
           onEndReachedThreshold={0}
           onLoad={() => {
             initialViewportRef.current.itemsLoaded = true;
+            if (!initialViewportRef.current.positionConfirmed) confirmListPosition();
             recordInitialViewportReadiness('items-loaded');
-            alignLoadedInitialViewportToEnd();
+            alignLoadedInitialViewport();
           }}
           onScroll={trackScroll}
           onScrollBeginDrag={beginUserScroll}

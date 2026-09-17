@@ -1568,6 +1568,7 @@ export function SessionScreen({
                             chatView.presentation.generation,
                           ].join(':')}
                           state={chatView.state}
+                          active={visible && selected && chatView.presentation.phase !== AgentChatPresentationPhase.Warm}
                           agent={chatView.binding.agent}
                           agentStatus={selected && activePane ? activePane.agent_status : 'idle'}
                           contentInsets={insets}

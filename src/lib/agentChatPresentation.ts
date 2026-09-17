@@ -24,7 +24,8 @@ export function requestChatPresentation(
   generation: number,
 ): AgentChatPresentation {
   if (current.phase === AgentChatPresentationPhase.Warm) {
-    return { ...current, phase: AgentChatPresentationPhase.Visible };
+    // Keep the mounted viewport's identity, but restore it before revealing it.
+    return { ...current, phase: AgentChatPresentationPhase.PreparingViewport };
   }
   if (chatPresentationRequested(current)) return current;
   return {

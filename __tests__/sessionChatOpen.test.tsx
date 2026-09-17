@@ -488,6 +488,7 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
       pointerEvents: 'none', accessibilityElementsHidden: true,
       importantForAccessibility: 'no-hide-descendants', style: { opacity: 0 },
     });
+    expect(viewport.props.active).toBe(false);
     act(() => {
       binding.state = { ...binding.state, revision: 2 };
       host.handlers.get(binding.terminalId)?.({
@@ -499,6 +500,10 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
     act(() => { control().onPress(); });
     expect(ui('AgentChatView')).toBe(viewport);
     expect(ui('WebView')).toBe(terminal);
+    expect(viewport.props.active).toBe(true);
+    expect(viewport.parent?.props.style.opacity).toBe(0);
+    expect(control().loading).toBe(true);
+    revealChat();
     expect(ui('TerminalScreen').props.chatViewEnabled).toBe(true);
     expect(control().loading).toBe(false);
     expect(host.native.detachAgentChat).not.toHaveBeenCalled();

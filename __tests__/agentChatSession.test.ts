@@ -215,7 +215,7 @@ describe('initial Chat presentation lifecycle', () => {
     expect(chatPresentationVisible(reopened)).toBe(false);
   });
 
-  test('reopening an initialized projection uses its warm viewport immediately', () => {
+  test('reopening keeps the warm viewport mounted but prepares its saved position before reveal', () => {
     const preparing = requestChatPresentation(
       dormantChatPresentation(),
       agentTranscriptReadiness(transcriptState('stale')),
@@ -229,8 +229,11 @@ describe('initial Chat presentation lifecycle', () => {
     expect(chatPresentationMountsViewport(warm)).toBe(true);
     expect(reopened).toEqual({
       generation: 12,
-      phase: AgentChatPresentationPhase.Visible,
+      phase: AgentChatPresentationPhase.PreparingViewport,
     });
-    expect(chatPresentationLoading(reopened)).toBe(false);
+    expect(chatPresentationLoading(reopened)).toBe(true);
+    expect(chatPresentationVisible(reopened)).toBe(false);
+    expect(chatPresentationMountsViewport(reopened)).toBe(true);
+    expect(chatPresentationVisible(revealPreparedChat(reopened, 12))).toBe(true);
   });
 });

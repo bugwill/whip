@@ -97,14 +97,16 @@ function chatState(turns: TranscriptTurn[]): AgentChatState {
   };
 }
 
-function chatView(state: AgentChatState) {
+function chatView(state: AgentChatState, active = true, onReady?: () => void) {
   return (
     <AgentChatView
       agent="codex"
+      active={active}
       agentStatus="working"
       contentInsets={CONTENT_INSETS}
       latestButtonBottom={297}
       onOpenFile={jest.fn()}
+      onInitialViewportReady={onReady}
       state={state}
     />
   );
@@ -513,9 +515,14 @@ describe('AgentChatView auto-follow', () => {
 
   const establishScrollableContent = (testRenderer: ReactTestRenderer) => {
     act(() => {
+      chatViewport(testRenderer).props.onLayout({ nativeEvent: { layout: { height: 400 } } });
       flatList(testRenderer).props.onLayout({ nativeEvent: { layout: { height: 400 } } });
       flatList(testRenderer).props.onContentSizeChange(0, 1_000);
       flatList(testRenderer).props.onScroll(scrollEvent(600, 1_000));
+      flatList(testRenderer).props.onViewableItemsChanged({
+        viewableItems: [{ item: TURN, isViewable: true }],
+      });
+      flatList(testRenderer).props.onLoad();
     });
   };
 
@@ -626,14 +633,177 @@ describe('AgentChatView auto-follow', () => {
   });
 });
 
+describe('AgentChatView warm viewport restoration', () => {
+  let renderer: ReactTestRenderer;
+  let state: AgentChatState;
+  let scrollToEnd: jest.Mock;
+  let scrollToOffset: jest.Mock;
+  let onReady: jest.Mock;
+
+  const latestButtons = () => renderer.root.findAll(
+    node => node.props.accessibilityLabel === 'Jump to latest',
+  );
+  const update = (active: boolean) => {
+    act(() => renderer.update(chatView(state, active, onReady)));
+  };
+  const userScrollTo = (offset: number) => {
+    act(() => {
+      flatList(renderer).props.onScrollBeginDrag(scrollEvent(600, 1_000));
+      flatList(renderer).props.onScroll(scrollEvent(offset, 1_000));
+      flatList(renderer).props.onScrollEndDrag(scrollEvent(offset, 1_000));
+    });
+  };
+  const appendHiddenTurn = () => {
+    const next = { ...TURN, id: 'turn-2' };
+    state = chatState([TURN, next]);
+    update(false);
+    act(() => {
+      flatList(renderer).props.onContentSizeChange(0, 1_500);
+      flatList(renderer).props.onViewableItemsChanged({
+        viewableItems: [{ item: TURN, isViewable: true }],
+      });
+    });
+    return next;
+  };
+
+  beforeEach(() => {
+    state = chatState([TURN]);
+    scrollToEnd = jest.fn();
+    scrollToOffset = jest.fn();
+    onReady = jest.fn();
+    act(() => {
+      renderer = create(chatView(state, true, onReady), {
+        createNodeMock: element => element.type === 'FlashList'
+          ? { scrollToEnd, scrollToOffset }
+          : null,
+      });
+    });
+    act(() => {
+      chatViewport(renderer).props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+      flatList(renderer).props.onContentSizeChange(0, 1_000);
+      flatList(renderer).props.onScroll(scrollEvent(600, 1_000));
+      flatList(renderer).props.onViewableItemsChanged({
+        viewableItems: [{ item: TURN, isViewable: true }],
+      });
+      flatList(renderer).props.onLoad();
+    });
+    expect(onReady).toHaveBeenCalledTimes(1);
+    onReady.mockClear();
+  });
+
+  afterEach(() => { act(() => renderer.unmount()); });
+
+  test('reuses a middle viewport without scrolling and keeps auto-follow disabled', () => {
+    userScrollTo(250);
+    const list = flatList(renderer);
+    update(false);
+    update(true);
+    expect(flatList(renderer)).toBe(list);
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(scrollToOffset).not.toHaveBeenCalled();
+    expect(scrollToEnd).not.toHaveBeenCalled();
+    expect(latestButtons()).toHaveLength(1);
+    act(() => { list.props.onContentSizeChange(0, 1_100); });
+    expect(scrollToEnd).not.toHaveBeenCalled();
+  });
+
+  test('a warm viewport left at bottom stays there with auto-follow enabled', () => {
+    update(false);
+    update(true);
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(scrollToOffset).not.toHaveBeenCalled();
+    expect(latestButtons()).toHaveLength(0);
+    act(() => { flatList(renderer).props.onContentSizeChange(0, 1_100); });
+    expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
+  });
+
+  test('leaving near bottom restores the exact bottom before reveal', () => {
+    userScrollTo(560);
+    expect(latestButtons()).toHaveLength(1);
+    update(false);
+    update(true);
+    expect(scrollToOffset).toHaveBeenCalledWith({ offset: 600, animated: false });
+    expect(onReady).not.toHaveBeenCalled();
+    expect(chatViewport(renderer).parent?.props.style.opacity).toBe(0);
+    act(() => { flatList(renderer).props.onScroll(scrollEvent(600, 1_000)); });
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(latestButtons()).toHaveLength(0);
+  });
+
+  test('hidden messages preserve a manual position and Latest remains available', () => {
+    userScrollTo(250);
+    update(false);
+    appendHiddenTurn();
+    update(true);
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(scrollToOffset).not.toHaveBeenCalled();
+    expect(scrollToEnd).not.toHaveBeenCalled();
+    expect(latestButtons()).toHaveLength(1);
+    act(() => { flatList(renderer).props.onContentSizeChange(0, 1_600); });
+    expect(scrollToEnd).not.toHaveBeenCalled();
+    act(() => { latestButtons()[0].props.onPress(); });
+    expect(scrollToEnd).toHaveBeenCalledWith({ animated: true });
+    expect(latestButtons()).toHaveLength(0);
+  });
+
+  test('hidden native movement cannot overwrite the saved manual offset', () => {
+    userScrollTo(250);
+    update(false);
+    appendHiddenTurn();
+    act(() => { flatList(renderer).props.onScroll(scrollEvent(800, 1_500)); });
+    update(true);
+    expect(scrollToOffset).toHaveBeenCalledWith({ offset: 250, animated: false });
+    expect(onReady).not.toHaveBeenCalled();
+    expect(chatViewport(renderer).parent?.props.style.opacity).toBe(0);
+    act(() => { flatList(renderer).props.onScroll(scrollEvent(250, 1_500)); });
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(chatViewport(renderer).parent?.props.style.opacity).toBe(1);
+    expect(latestButtons()).toHaveLength(1);
+    expect(scrollToEnd).not.toHaveBeenCalled();
+  });
+
+  test('restoring a manual position does not wait for an offscreen final turn to measure', () => {
+    userScrollTo(250);
+    update(false);
+    state = chatState([TURN, { ...TURN, id: 'unmeasured-turn' }]);
+    update(false);
+    update(true);
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(latestButtons()).toHaveLength(1);
+    act(() => { flatList(renderer).props.onContentSizeChange(0, 1_500); });
+    expect(scrollToOffset).not.toHaveBeenCalled();
+    expect(scrollToEnd).not.toHaveBeenCalled();
+  });
+
+  test('a bottom follower catches up with hidden messages before becoming visible', () => {
+    update(false);
+    const next = appendHiddenTurn();
+    expect(scrollToEnd).not.toHaveBeenCalled();
+    update(true);
+    expect(scrollToOffset).toHaveBeenCalledWith({ offset: 1_100, animated: false });
+    expect(onReady).not.toHaveBeenCalled();
+    act(() => {
+      flatList(renderer).props.onViewableItemsChanged({
+        viewableItems: [{ item: next, isViewable: true }],
+      });
+    });
+    expect(onReady).not.toHaveBeenCalled();
+    act(() => { flatList(renderer).props.onScroll(scrollEvent(1_100, 1_500)); });
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(latestButtons()).toHaveLength(0);
+  });
+});
+
 describe.each(['codex', 'opencode'] as const)('AgentChatView initial viewport readiness (%s)', agent => {
   let renderer: ReactTestRenderer;
   let scrollToEnd: jest.Mock;
   let scrollToOffset: jest.Mock;
+  let getAbsoluteLastScrollOffset: jest.Mock;
 
   beforeEach(() => {
     scrollToEnd = jest.fn();
     scrollToOffset = jest.fn();
+    getAbsoluteLastScrollOffset = jest.fn(() => 0);
   });
 
   afterEach(() => {
@@ -655,7 +825,7 @@ describe.each(['codex', 'opencode'] as const)('AgentChatView initial viewport re
         />,
         {
           createNodeMock: element => element.type === 'FlashList'
-            ? { scrollToEnd, scrollToOffset }
+            ? { scrollToEnd, scrollToOffset, getAbsoluteLastScrollOffset }
             : null,
         },
       );
@@ -686,9 +856,11 @@ describe.each(['codex', 'opencode'] as const)('AgentChatView initial viewport re
     });
   };
 
-  const reportEndReached = () => {
+  const reportEndReached = (offset = 600) => {
+    getAbsoluteLastScrollOffset.mockReturnValue(offset);
     act(() => {
       flatList(renderer).props.onEndReached();
+      flatList(renderer).props.onLoad();
     });
   };
 
@@ -718,7 +890,19 @@ describe.each(['codex', 'opencode'] as const)('AgentChatView initial viewport re
     expect(onReady).toHaveBeenCalledTimes(1);
   });
 
-  test('aligns a loaded single tall turn to the measured end without waiting for a native scroll event', () => {
+  test('an early end callback cannot claim bottom before the FlashList offset confirms it', () => {
+    const onReady = jest.fn();
+    renderChat(chatState([TURN]), onReady);
+    layoutAndMeasure(1_000);
+    reportViewableTurns([TURN]);
+    reportEndReached(0);
+    expect(onReady).not.toHaveBeenCalled();
+    expect(scrollToOffset).toHaveBeenCalledWith({ offset: 600, animated: false });
+    reportEndReached();
+    expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
+  test('first open aligns a tall final turn while hidden and waits for the native bottom', () => {
     const onReady = jest.fn();
     renderChat(chatState([TURN]), onReady);
     reportViewableTurns([TURN]);
@@ -734,7 +918,13 @@ describe.each(['codex', 'opencode'] as const)('AgentChatView initial viewport re
       animated: false,
       offset: 600,
     });
+    expect(onReady).not.toHaveBeenCalled();
+    expect(chatViewport(renderer).parent?.props.style.opacity).toBe(0);
+    act(() => { flatList(renderer).props.onScroll(scrollEvent(400, 1_000)); });
+    expect(onReady).not.toHaveBeenCalled();
+    act(() => { flatList(renderer).props.onScroll(scrollEvent(600, 1_000)); });
     expect(onReady).toHaveBeenCalledTimes(1);
+    expect(chatViewport(renderer).parent?.props.style.opacity).toBe(1);
   });
 
   test('keeps readiness latched when native geometry jitters after reaching the bottom', () => {
@@ -763,13 +953,32 @@ describe.each(['codex', 'opencode'] as const)('AgentChatView initial viewport re
     expect(flatList(renderer).props.data.map((turn: TranscriptTurn) => turn.id))
       .toEqual(Array.from({ length: 100 }, (_value, index) => `turn-${index + 1}`));
     layoutAndMeasure(20_000);
-    reportEndReached();
+    reportEndReached(19_600);
 
     reportViewableTurns([turns[0]]);
     expect(onReady).not.toHaveBeenCalled();
 
     reportViewableTurns([turns[99]]);
     expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
+  test('remeasures a long transcript with a growing tall final turn before reveal', () => {
+    const onReady = jest.fn();
+    const turns = Array.from({ length: 100 }, (_, index) => ({ ...TURN, id: `turn-${index}` }));
+    renderChat(chatState(turns), onReady);
+    layoutAndMeasure(20_000);
+    act(() => { flatList(renderer).props.onLoad(); });
+    expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 19_600, animated: false });
+    reportViewableTurns([turns[99]]);
+    act(() => { flatList(renderer).props.onContentSizeChange(0, 21_000); });
+    expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 20_600, animated: false });
+    act(() => { flatList(renderer).props.onScroll(scrollEvent(19_600, 21_000)); });
+    expect(onReady).not.toHaveBeenCalled();
+    expect(chatViewport(renderer).parent?.props.style.opacity).toBe(0);
+    act(() => { flatList(renderer).props.onScroll(scrollEvent(20_600, 21_000)); });
+    expect(onReady).toHaveBeenCalledTimes(1);
+    expect(chatViewport(renderer).parent?.props.style.opacity).toBe(1);
+    expect(scrollToEnd).not.toHaveBeenCalled();
   });
 
   test('an empty loaded transcript can complete initial readiness', () => {
@@ -781,6 +990,8 @@ describe.each(['codex', 'opencode'] as const)('AgentChatView initial viewport re
         nativeEvent: { layout: { height: 400 } },
       });
       flatList(renderer).props.onContentSizeChange(0, 0);
+      expect(onReady).not.toHaveBeenCalled();
+      flatList(renderer).props.onLoad();
     });
 
     expect(onReady).toHaveBeenCalledTimes(1);
