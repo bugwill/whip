@@ -284,11 +284,41 @@ because the protocol cannot identify causality, unrelated terminal output can
 also satisfy the first-frame marker.
 
 Warm renderers and retained terminal bridges avoid cold attach work. In the
-newer passive post-change capture, 277 frames took 39.29 ms on average from Rust
+August passive post-change capture, 277 frames took 39.29 ms on average from Rust
 frame delivery to the visibility marker (p50 38.95 ms, p95 55.43 ms, observed
 range 19.09–73.58 ms). See [Android terminal latency
 tracing](docs/android-performance-tracing.md) for the slice definitions,
 capture command, SQL analysis, and interpretation.
+
+A September 17, 2026 passive capture on the same Pixel 9 Pro, with **60 FPS
+spinners enabled** and the redundant resize loop fixed, recorded 748 completed
+terminal updates over 45 seconds. **Median latency was 19% lower, while p95
+was essentially unchanged:**
+
+| Metric | August 27 | September 17 |
+| --- | ---: | ---: |
+| Inbound frame to visible acknowledgement, median | 38.95 ms | 31.45 ms |
+| Inbound frame to visible acknowledgement, p95 | 55.43 ms | 54.74 ms |
+| Inbound frame to visible acknowledgement, average | 39.29 ms | 35.81 ms |
+| Whip CPU, percent of one core | 84.19% | 88.52% |
+| JavaScript CPU, percent of one core | 54.31% | 8.58% |
+| RenderThread CPU, percent of one core | 3.65% | 43.94% |
+
+One of the 748 current acknowledgements exceeded 100 ms (0.13%), reaching
+172.84 ms; none of August's 277 exceeded 100 ms. The cause of this isolated
+observed stall has not been established. Median and p95 describe typical and
+tail latency; rare stalls are tracked separately because p95 can hide them.
+
+Total app CPU was 5% higher, with rendering now the largest thread cost.
+The newer capture had more frequent but much smaller terminal updates, and
+rendered 65.6 app frames/second versus August's 6.0.
+The current local release skipped R8 optimization. These workload, rendering,
+and build differences prevent attributing the comparison to a single change.
+No ordinary native resize dispatches were recorded, versus 278 in August.
+The historical input-to-visible table above has not been remeasured; this
+passive comparison covers returned terminal frames only. See the
+[60 FPS comparison report](docs/android-60fps-august-comparison-2026-09-17.md)
+for capture conditions, deadline misses, and raw-evidence locations.
 
 ## Architecture
 
