@@ -30,14 +30,9 @@ import {
 } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import Animated, {
-  cancelAnimation,
-  Easing,
   useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSequence,
-  withTiming,
 } from 'react-native-reanimated';
+import { useDecorativeProgress } from '../hooks/useDecorativeProgress';
 
 import type {
   AgentChatState,
@@ -151,17 +146,7 @@ function ChatBoundarySpacer({ height }: { height: number }) {
 
 function ThinkingIndicator() {
   const reduceMotion = useReducedMotion();
-  const progress = useSharedValue(0);
-  useEffect(() => {
-    cancelAnimation(progress);
-    progress.value = 0;
-    if (reduceMotion) return;
-    progress.value = withRepeat(withSequence(
-      withTiming(1, { duration: 800, easing: Easing.inOut(Easing.quad) }),
-      withTiming(0, { duration: 800, easing: Easing.inOut(Easing.quad) }),
-    ), -1);
-    return () => cancelAnimation(progress);
-  }, [progress, reduceMotion]);
+  const progress = useDecorativeProgress(!reduceMotion, 800);
   const style = useAnimatedStyle(() => ({ opacity: reduceMotion ? 1 : 0.48 + (progress.value * 0.52) }), [reduceMotion]);
   return (
     <View accessibilityLiveRegion="polite" className="mt-3 min-h-5 flex-row items-center">

@@ -46,6 +46,7 @@ jest.mock('react-native', () => ({
   View: 'View',
 }));
 jest.mock('react-native-reanimated', () => ({
+  useFrameCallback: () => ({ setActive: jest.fn() }),
   __esModule: true,
   default: { View: 'AnimatedView' },
   cancelAnimation: jest.fn(),
