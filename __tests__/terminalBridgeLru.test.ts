@@ -316,7 +316,32 @@ describe('terminal bridge channels', () => {
     );
   });
 
-  test('debounces host-state reconciliation after remote resize and scroll activity', async () => {
+  test('remote resizes do not trigger host-state reconciliation', async () => {
+    jest.useFakeTimers();
+    const native = bridgeClient();
+    connectWithPassword.mockResolvedValue(native);
+    const client = new HerdrClient();
+    try {
+      await client.connect(profile);
+      await client.terminal.openTerminal('term-1', jest.fn());
+      // Let the initial attachment refresh finish before measuring resize work.
+      await jest.advanceTimersByTimeAsync(120);
+      jest.mocked(native.requestHerdrApi).mockClear();
+
+      await client.terminal.resizeTerminal('term-1', 100, 30, 8, 16);
+      await client.terminal.resizeTerminal('term-1', 100, 30, 8, 16);
+      await client.terminal.resizeTerminal('term-1', 100, 35, 8, 16);
+      await jest.advanceTimersByTimeAsync(120);
+
+      expect(native.herdrBridgeResize).toHaveBeenCalledTimes(2);
+      expect(native.requestHerdrApi).not.toHaveBeenCalled();
+    } finally {
+      await client.disconnect();
+      jest.useRealTimers();
+    }
+  });
+
+  test('debounces host-state reconciliation after remote scroll activity', async () => {
     jest.useFakeTimers();
     const native = bridgeClient();
     connectWithPassword.mockResolvedValue(native);

@@ -27,7 +27,6 @@ import { arrayBufferToBase64 } from '../lib/base64';
 import {
   isOfflineTerminalNavigationInput,
   TerminalRendererContentState,
-  terminalResizeForcesNativeDispatch,
   terminalScrollbackMode,
   type TerminalRenderTarget,
   type TerminalVisualViewport,
@@ -143,6 +142,7 @@ interface RendererEntry {
   target: TerminalRenderTarget;
   rendererReady: boolean;
   sizeReady: boolean;
+  pendingResize: TerminalDimensions | null;
   controllerAttached: boolean;
   controllerAttachment: Promise<TerminalAttachmentId> | null;
   connecting: boolean;
@@ -727,6 +727,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         target,
         rendererReady: false,
         sizeReady: false,
+        pendingResize: null,
         controllerAttached: false,
         controllerAttachment: null,
         connecting: false,
@@ -1006,10 +1007,10 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     pruneEntries(new Set(activeTarget?.key ? [activeTarget.key] : []));
   }, [activeTarget, configureEntry, disposeEntry, ensureEntry, pruneEntries, targets]);
 
-  const activeTranscriptKey = activeTarget?.key || '';
+  const activeTargetKey = activeTarget?.key || '';
   useEffect(() => {
-    if (!hostReady.current || !activeTranscriptKey) return;
-    const entry = entries.current.get(activeTranscriptKey);
+    if (!hostReady.current || !activeTargetKey) return;
+    const entry = entries.current.get(activeTargetKey);
     if (!entry) return;
     syncOfflineTranscript(
       entry,
@@ -1017,7 +1018,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       offlineScrollRef.current,
     );
   }, [
-    activeTranscriptKey,
+    activeTargetKey,
     offlineTranscript,
     syncOfflineTranscript,
   ]);
@@ -1064,15 +1065,15 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
 
   useEffect(() => {
     if (!hostReady.current) return;
-    if (!activeTarget) return;
+    if (!activeTargetKey) return;
     if (!visible) {
       // Keep only the selected terminal presented and composited behind the
       // foreground app screen. Other cached xterm sessions remain hidden.
-      inject(`window.herdrActivate(${JSON.stringify(activeTarget.key)}); window.herdrBlur(${JSON.stringify(activeTarget.key)});`);
+      inject(`window.herdrActivate(${JSON.stringify(activeTargetKey)}); window.herdrBlur(${JSON.stringify(activeTargetKey)});`);
       return;
     }
-    inject(`window.herdrActivate(${JSON.stringify(activeTarget.key)});`);
-  }, [activeTarget, inject, visible]);
+    inject(`window.herdrActivate(${JSON.stringify(activeTargetKey)});`);
+  }, [activeTargetKey, inject, visible]);
 
   useEffect(() => {
     let previous = AppState.currentState;
@@ -1214,6 +1215,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         if (reloaded) {
           entry.rendererReady = false;
           entry.sizeReady = false;
+          entry.pendingResize = null;
           entry.resetOnNextFrame = true;
           entry.contentState = new TerminalRendererContentState();
           entry.frameSequence.reset();
@@ -1274,6 +1276,26 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     }
     const entry = typeof message.key === 'string' ? entries.current.get(message.key) : null;
     if (!entry) return;
+    if (message.type === 'fit-complete') {
+      if (appState.current !== 'active' || !entry.arbitration.shouldSendResize()) return;
+      const resume = resumeScrolls.current.get(entry.target.key);
+      const pending = entry.pendingResize;
+      if (pending) {
+        // A fit can be unchanged locally while its last resize was deferred
+        // in the background or failed to reach the native bridge.
+        await entry.target.client.terminal.resizeTerminal(
+          entry.target.session.terminalId,
+          pending.columns,
+          pending.rows,
+          pending.cellWidthPx,
+          pending.cellHeightPx,
+        );
+        if (entry.pendingResize === pending) entry.pendingResize = null;
+        connectEntry(entry);
+      }
+      settleResumeResize(entry, resume);
+      return;
+    }
     if (message.type === 'terminal-ready') {
       entry.rendererReady = true;
       terminalRendererBecameReady(entry.readinessTrace);
@@ -1366,6 +1388,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
           cellHeightPx: message.cellHeightPx,
         };
         entry.arbitration.cacheDimensions(dimensions);
+        entry.pendingResize = dimensions;
         entry.sizeReady = true;
         terminalRendererSizeBecameReady(entry.readinessTrace);
         if (!entry.arbitration.shouldSendResize()) {
@@ -1389,10 +1412,8 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
           dimensions.cellWidthPx,
           dimensions.cellHeightPx,
           resizeTrace,
-          // A fit is also a redraw/reflow signal after presenting a terminal,
-          // even when its geometry tuple matches the last native resize.
-          terminalResizeForcesNativeDispatch(source),
         );
+        if (entry.pendingResize === dimensions) entry.pendingResize = null;
         settleResumeResize(entry, resume);
         connectEntry(entry);
       } finally {

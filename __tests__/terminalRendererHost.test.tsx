@@ -322,6 +322,62 @@ describe('TerminalRendererHost lifecycle', () => {
     }
   });
 
+  test('metadata updates do not reactivate the selected terminal; tab changes do', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 100, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll, 'term-2': scroll });
+    const first = createTarget('term-1', client, scroll);
+    const second = createTarget('term-2', client, scroll);
+    const { activateTarget, injected } = await mountReadyHost(first, [first, second]);
+    injected.length = 0;
+
+    await activateTarget({
+      ...first,
+      session: { ...first.session, title: 'updated shell' },
+      scroll: { ...scroll, max_offset_from_bottom: 200 },
+    });
+    expect(injected.filter(script => script.includes('window.herdrActivate('))).toEqual([]);
+
+    await activateTarget(second);
+    expect(injected).toContain(`window.herdrActivate(${JSON.stringify(second.key)}); true;`);
+    injected.length = 0;
+    await activateTarget(first);
+    expect(injected).toContain(`window.herdrActivate(${JSON.stringify(first.key)}); true;`);
+  });
+
+  test('ordinary fit resize requests use native geometry deduplication', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll });
+    const target = createTarget('term-1', client, scroll);
+    const { webView } = await mountReadyHost(target);
+    client.resizeTerminal.mockClear();
+
+    await sendRendererMessage(webView, {
+      type: 'resize', source: 'fit', key: target.key,
+      cols: 90, rows: 30, cellWidthPx: 8, cellHeightPx: 16,
+    });
+    expect(client.resizeTerminal).toHaveBeenCalledTimes(1);
+    expect(client.resizeTerminal).toHaveBeenCalledWith('term-1', 90, 30, 8, 16, null);
+  });
+
+  test('an unchanged fit retries a failed resize and then stops dispatching', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll });
+    const target = createTarget('term-1', client, scroll);
+    const { webView } = await mountReadyHost(target);
+    client.resizeTerminal.mockClear();
+    client.resizeTerminal.mockRejectedValueOnce(new Error('resize failed'));
+
+    await expect(sendRendererMessage(webView, {
+      type: 'resize', source: 'fit', key: target.key,
+      cols: 90, rows: 30, cellWidthPx: 8, cellHeightPx: 16,
+    })).rejects.toThrow('resize failed');
+    await sendRendererMessage(webView, { type: 'fit-complete', key: target.key });
+    expect(client.resizeTerminal).toHaveBeenCalledTimes(2);
+    expect(client.resizeTerminal).toHaveBeenLastCalledWith('term-1', 90, 30, 8, 16);
+    await sendRendererMessage(webView, { type: 'fit-complete', key: target.key });
+    expect(client.resizeTerminal).toHaveBeenCalledTimes(2);
+  });
+
   test('copies terminal text and pastes clipboard text through the maintained native module', async () => {
     const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
     const client = createClient({ 'term-1': scroll });
@@ -770,25 +826,23 @@ describe('TerminalRendererHost lifecycle', () => {
       expected: ['up', 300] as const,
     },
   ])(
-    '$name after foreground and final fit',
+    '$name after foreground and an unchanged final fit',
     async ({ checkpoint, current, expected }) => {
       const client = createClient({ 'term-1': current });
       const target = createTarget('term-1', client, checkpoint);
       const { webView } = await mountReadyHost(target);
+      const resizeCount = client.resizeTerminal.mock.calls.length;
 
       await emitAppState('background');
       await emitAppState('active');
       expect(client.snapshot).not.toHaveBeenCalled();
       expect(client.scrollTerminal).not.toHaveBeenCalled();
       await sendRendererMessage(webView, {
-        type: 'resize',
-        source: 'fit',
+        type: 'fit-complete',
         key: target.key,
-        cols: 80,
-        rows: 24,
-        cellWidthPx: 8,
-        cellHeightPx: 16,
       });
+
+      expect(client.resizeTerminal).toHaveBeenCalledTimes(resizeCount);
 
       expect(client.releaseTerminal).toHaveBeenCalledWith(
         'term-1', expect.objectContaining({ testAttachmentId: 1 }),
@@ -881,6 +935,11 @@ describe('TerminalRendererHost lifecycle', () => {
     });
     expect(client.resizeTerminal).toHaveBeenCalledTimes(pauseResizeInBackground ? 0 : 1);
     await emitAppState('active');
+    await sendRendererMessage(webView, { type: 'fit-complete', key: target.key });
+    expect(client.resizeTerminal).toHaveBeenCalledTimes(1);
+    expect(client.resizeTerminal.mock.calls[0].slice(0, 5)).toEqual(['term-1', 90, 30, 8, 16]);
+    await sendRendererMessage(webView, { type: 'fit-complete', key: target.key });
+    expect(client.resizeTerminal).toHaveBeenCalledTimes(1);
 
     expect(client.releaseTerminal).not.toHaveBeenCalled();
     expect(client.detachTerminal).not.toHaveBeenCalled();

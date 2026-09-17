@@ -112,7 +112,7 @@ async function runtime(asset: string, userAgent: string) {
   await Promise.resolve();
   await Promise.resolve();
   const resizeReports = () => report.mock.calls.filter(([value]) => value.type === 'resize');
-  return { api, window, terminal, geometry, padding, classNames, fitSpy, resizeReports };
+  return { api, window, terminal, geometry, padding, classNames, fitSpy, resizeReports, report };
 }
 
 describe.each([
@@ -189,16 +189,29 @@ describe.each([
     expect(state.fitSpy).toHaveBeenCalledTimes(4);
   });
 
-  test('manual, font-size and configuration requests refit unchanged containers', async () => {
+  test('unchanged explicit fits and configuration acknowledge completion without resizing', async () => {
+    const state = await setup();
+    state.report.mockClear();
+    state.api.herdrFit();
+    state.api.herdrFit();
+    state.api.herdrConfigure({ fontSize: 8 });
+    jest.runOnlyPendingTimers();
+    expect(state.fitSpy).toHaveBeenCalledTimes(1);
+    expect(state.terminal.resize).toHaveBeenCalledTimes(1);
+    expect(state.resizeReports()).toHaveLength(0);
+    expect(state.report.mock.calls.filter(([value]) => value.type === 'fit-complete')).toHaveLength(3);
+  });
+
+  test('font-size changes refit unchanged containers', async () => {
     const state = await setup();
     state.api.herdrFit();
     state.api.herdrChangeFontSize(2);
     state.api.herdrConfigure({ fontSize: 12 });
     jest.runOnlyPendingTimers();
     state.window.dispatch('resize');
-    expect(state.fitSpy).toHaveBeenCalledTimes(4);
+    expect(state.fitSpy).toHaveBeenCalledTimes(3);
     expect(state.terminal.options.fontSize).toBe(12);
-    expect(state.resizeReports()).toHaveLength(4);
+    expect(state.resizeReports()).toHaveLength(3);
   });
 
   test('hidden and unmeasurable sessions do not consume geometry changes', async () => {
@@ -231,6 +244,7 @@ describe.each([
 
   test('a failed explicit refit invalidates the previous successful geometry', async () => {
     const state = await setup();
+    state.geometry.width = 500;
     state.fitSpy.mockImplementationOnce(() => { throw new Error('fit failed'); });
     expect(() => state.api.herdrFit()).toThrow('fit failed');
     state.window.dispatch('resize');

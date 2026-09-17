@@ -208,7 +208,6 @@ export class TerminalBridgeController {
     }
     if (outcome === 'dispatched') {
       if (!expectedDispatch) terminalResizeNativeDispatchStarted(performanceTrace);
-      if (!sshShell) this.scheduleStateRefresh();
       terminalResizeNativeDispatchEnded(performanceTrace, true);
       return;
     }

@@ -1062,14 +1062,18 @@ const terminalSessionHtml = `<!doctype html>
         signature: [
           width - pixels(elementStyle, 'padding-left') - pixels(elementStyle, 'padding-right'),
           height - pixels(elementStyle, 'padding-top') - pixels(elementStyle, 'padding-bottom'),
-          cell.width, cell.height, view.devicePixelRatio || 1,
+          cell.width, cell.height, view.devicePixelRatio || 1, terminal.options.fontSize,
           proposed.cols, proposed.rows,
         ].join(':'),
       };
     };
-    // Explicit requests (configuration, font changes, activation, herdrFit)
-    // still refit and report even when the container dimensions are unchanged.
     const resize = (geometry = measureEffectiveTerminalGeometry()) => {
+      if (geometry && geometry.signature === lastFitGeometry
+        && terminal.cols === geometry.cols && terminal.rows === geometry.rows) {
+        // Foreground scroll restoration still needs to know fitting settled.
+        send({ type: 'fit-complete' });
+        return;
+      }
       const fitStartedAt = performance.now();
       lastFitGeometry = null;
       fitResizeInProgress = true;
