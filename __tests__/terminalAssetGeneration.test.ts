@@ -1,3 +1,4 @@
+import { deepStrictEqual } from 'node:assert';
 import {
   cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync,
   symlinkSync, writeFileSync,
@@ -68,7 +69,10 @@ test('recreates both complete asset directories from source inputs alone', () =>
       [...Object.keys(copies), html, 'mermaid-preview.html'].sort(),
     );
     for (const [destination, source] of Object.entries(copies)) {
-      expect(readFileSync(join(fixture, directory, destination)).equals(readFileSync(join(root, source)))).toBe(true);
+      deepStrictEqual(
+        readFileSync(join(fixture, directory, destination)),
+        readFileSync(join(root, source)),
+      );
     }
   }
   expect(() => generate('--check')).not.toThrow();

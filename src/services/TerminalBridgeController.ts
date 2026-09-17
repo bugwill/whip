@@ -133,7 +133,7 @@ export class TerminalBridgeController {
         const buffer = bytes.buffer.slice(
           bytes.byteOffset,
           bytes.byteOffset + bytes.byteLength,
-        ) as ArrayBuffer;
+        );
         runtime.sshShellInput(terminalId, buffer);
         terminalNativeWriteQueued(inputTrace, true);
         return '';
