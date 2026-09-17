@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile as writeAsset } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,6 +41,17 @@ const {
 } = terminalLinkExtraction;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// Validate generated HTML without rewriting assets or copying vendor bundles.
+const checkOnly = process.argv.includes('--check');
+const writeFile = async (path, content, encoding) => {
+  if (checkOnly) {
+    if (await readFile(path, encoding) !== content) {
+      throw new Error('Generated asset is stale: ' + path);
+    }
+    return;
+  }
+  await writeAsset(path, content, encoding);
+};
 const assets = resolve(root, 'android/app/src/main/assets');
 const iosAssets = resolve(
   root,
@@ -79,9 +90,11 @@ const terminalFontFamily = fallback => [
 ].map(family => family.endsWith('monospace') ? family : `"${family}"`).join(', ');
 const androidTerminalFontFamily = terminalFontFamily(fontManifest.fallback.android);
 const iosTerminalFontFamily = terminalFontFamily(fontManifest.fallback.ios);
-await mkdir(assets, { recursive: true });
-await mkdir(iosAssets, { recursive: true });
-const copyTerminalAsset = (source, bundledName) => Promise.all([
+if (!checkOnly) {
+  await mkdir(assets, { recursive: true });
+  await mkdir(iosAssets, { recursive: true });
+}
+const copyTerminalAsset = (source, bundledName) => checkOnly ? Promise.resolve() : Promise.all([
   copyFile(source, resolve(assets, bundledName)),
   copyFile(source, resolve(iosAssets, bundledName)),
 ]);
@@ -1018,11 +1031,46 @@ const terminalSessionHtml = `<!doctype html>
         links: mergeTerminalLinks(terminalRows(), terminal.cols, osc8Links),
       });
     };
-    const resize = () => {
+    let lastFitGeometry = null;
+    const measureEffectiveTerminalGeometry = () => {
+      const element = terminal.element;
+      const parent = element?.parentElement;
+      const cell = terminal.dimensions?.css.cell;
+      if (!parent || !cell || cell.width <= 0 || cell.height <= 0) return null;
+      const view = element.ownerDocument.defaultView || window;
+      const parentStyle = view.getComputedStyle(parent);
+      const elementStyle = view.getComputedStyle(element);
+      // Match FitAddon.proposeDimensions: integer computed CSS pixels, not
+      // transformed bounding rectangles or the WebView's window dimensions.
+      const pixels = (style, property) => parseInt(style.getPropertyValue(property), 10) || 0;
+      const width = Math.max(0, pixels(parentStyle, 'width'));
+      const height = Math.max(0, pixels(parentStyle, 'height'));
+      if (!width || !height) return null;
+      const proposed = fit.proposeDimensions();
+      if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return null;
+      return {
+        ...proposed,
+        signature: [
+          width - pixels(elementStyle, 'padding-left') - pixels(elementStyle, 'padding-right'),
+          height - pixels(elementStyle, 'padding-top') - pixels(elementStyle, 'padding-bottom'),
+          cell.width, cell.height, view.devicePixelRatio || 1,
+          proposed.cols, proposed.rows,
+        ].join(':'),
+      };
+    };
+    // Explicit requests (configuration, font changes, activation, herdrFit)
+    // still refit and report even when the container dimensions are unchanged.
+    const resize = (geometry = measureEffectiveTerminalGeometry()) => {
       const fitStartedAt = performance.now();
+      lastFitGeometry = null;
       fitResizeInProgress = true;
       try {
         fit.fit();
+        // FitAddon can return without fitting when cell measurements are not
+        // ready. Only remember geometry that was successfully applied.
+        if (geometry && terminal.cols === geometry.cols && terminal.rows === geometry.rows) {
+          lastFitGeometry = geometry.signature;
+        }
       } finally {
         fitResizeInProgress = false;
       }
@@ -1415,7 +1463,10 @@ const terminalSessionHtml = `<!doctype html>
       return !sessionRoot || sessionRoot.classList.contains('presented');
     };
     const resizePresentedTerminal = () => {
-      if (terminalIsPresented()) resize();
+      if (!terminalIsPresented()) return;
+      const geometry = measureEffectiveTerminalGeometry();
+      if (!geometry || geometry.signature === lastFitGeometry) return;
+      resize(geometry);
     };
     const usesNativeWindowImeResize = /Android/i.test(navigator.userAgent);
     window.addEventListener('resize', resizePresentedTerminal);
