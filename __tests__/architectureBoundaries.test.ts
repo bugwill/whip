@@ -7,7 +7,9 @@ const FILE_READING_TESTS = new Set([
   '__tests__/androidBackupConfig.test.ts',
   '__tests__/architectureBoundaries.test.ts',
   '__tests__/licenseNotices.test.ts',
+  '__tests__/terminalAssetGeneration.test.ts',
   '__tests__/terminalAssets.test.ts',
+  '__tests__/terminalResize.test.ts',
 ]);
 
 function filesBelow(directory: string): string[] {
