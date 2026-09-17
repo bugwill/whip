@@ -4,12 +4,17 @@ import { useFrameCallback, useSharedValue, type FrameInfo } from 'react-native-r
 export const DECORATIVE_FRAMES_PER_SECOND = 30;
 
 /** Limit style updates, not animation speed. All instances share frame boundaries. */
-export function useDecorativeProgress(enabled: boolean, durationMs: number, reverse = true) {
+export function useDecorativeProgress(
+  enabled: boolean,
+  durationMs: number,
+  reverse = true,
+  framesPerSecond = DECORATIVE_FRAMES_PER_SECOND,
+) {
   const progress = useSharedValue(0);
   const timing = useSharedValue({ startedAt: -1, lastFrame: -1 });
   const callback = useFrameCallback(useCallback(({ timestamp }: FrameInfo) => {
     'worklet';
-    const frame = Math.floor(timestamp * DECORATIVE_FRAMES_PER_SECOND / 1000);
+    const frame = Math.floor(timestamp * framesPerSecond / 1000);
     if (frame === timing.value.lastFrame) return;
     const startedAt = timing.value.startedAt < 0 ? timestamp : timing.value.startedAt;
     timing.value = { startedAt, lastFrame: frame };
@@ -24,7 +29,7 @@ export function useDecorativeProgress(enabled: boolean, durationMs: number, reve
     } else {
       progress.value = phase % 1;
     }
-  }, [durationMs, progress, reverse, timing]), false);
+  }, [durationMs, framesPerSecond, progress, reverse, timing]), false);
 
   useEffect(() => {
     timing.value = { startedAt: -1, lastFrame: -1 };

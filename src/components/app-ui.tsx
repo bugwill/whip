@@ -42,6 +42,7 @@ import { reportBackgroundFailure } from '../services/backgroundOperations';
 import { GlassSurface, useAppGlassEnabled } from './GlassSurface';
 import { NativeAgentSpinner } from './NativeAgentSpinner';
 import { useDecorativeProgress } from '../hooks/useDecorativeProgress';
+import { useSpinnerFrameRate } from '../hooks/useSpinnerFrameRate';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Text } from './ui/text';
@@ -373,10 +374,12 @@ function useStatusMotion(
 ) {
   const motion = statusMotionKind(status);
   const reduceMotion = useReducedMotion();
+  const spinnerFrameRate = useSpinnerFrameRate();
   const progress = useDecorativeProgress(
     animationsEnabled && !reduceMotion && motion !== 'static' && (motion !== 'spin' || rotateSpinning),
     motion === 'spin' ? 900 : 700,
     motion !== 'spin',
+    motion === 'spin' ? spinnerFrameRate : undefined,
   );
 
   const style = useAnimatedStyle(() => {

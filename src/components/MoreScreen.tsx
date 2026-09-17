@@ -67,6 +67,7 @@ export function MoreScreen(props: Props) {
           knownHostCount={props.knownHostCount}
           appearance={props.appearance}
           fullscreenApp={props.fullscreenApp}
+          smoothSpinners={props.smoothSpinners}
           appBackgroundImageUri={props.appBackgroundImageUri}
           appBackgroundDimming={props.appBackgroundDimming}
           appGlassEnabled={props.appGlassEnabled}
@@ -101,6 +102,7 @@ export function MoreScreen(props: Props) {
           onManageKnownHosts={props.onManageKnownHosts}
           onAppearanceChange={props.onAppearanceChange}
           onFullscreenAppChange={props.onFullscreenAppChange}
+          onSmoothSpinnersChange={props.onSmoothSpinnersChange}
           onAppBackgroundImageChange={props.onAppBackgroundImageChange}
           onAppBackgroundDimmingChange={props.onAppBackgroundDimmingChange}
           onAppGlassEnabledChange={props.onAppGlassEnabledChange}

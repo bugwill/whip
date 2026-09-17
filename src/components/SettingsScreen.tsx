@@ -114,6 +114,7 @@ export interface SettingsSectionProps {
   knownHostCount: number | null;
   appearance: AppearancePreference;
   fullscreenApp: boolean;
+  smoothSpinners: boolean;
   appBackgroundImageUri: string | null;
   appBackgroundDimming: number;
   appGlassEnabled: boolean;
@@ -139,6 +140,7 @@ export interface SettingsSectionProps {
   onManageKnownHosts: () => void;
   onAppearanceChange: (value: AppearancePreference) => void;
   onFullscreenAppChange: (value: boolean) => void;
+  onSmoothSpinnersChange: (value: boolean) => void;
   onAppBackgroundImageChange: (value: string | null) => void;
   onAppBackgroundDimmingChange: (value: number) => void;
   onAppGlassEnabledChange: (value: boolean) => void;
@@ -305,6 +307,13 @@ export function SettingsSection(props: SettingsSectionProps) {
             copy={t('settings.fullscreenAppCopy')}
             value={props.fullscreenApp}
             onChange={props.onFullscreenAppChange}
+          />
+          <SettingRow
+            title={t('settings.smoothSpinners')}
+            copy={t('settings.smoothSpinnersCopy')}
+            value={props.smoothSpinners}
+            onChange={props.onSmoothSpinnersChange}
+            divided
           />
         </GlassSurface>
         <GlassSurface className="rounded-lg border border-white/30 dark:border-white/10">

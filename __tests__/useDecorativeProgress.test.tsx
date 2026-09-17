@@ -1,6 +1,12 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import type { FrameInfo } from 'react-native-reanimated';
 import { useDecorativeProgress } from '../src/hooks/useDecorativeProgress';
+import { SpinnerFrameRateProvider, useSpinnerFrameRate } from '../src/hooks/useSpinnerFrameRate';
+import { NativeAgentSpinner } from '../src/components/NativeAgentSpinner';
+
+jest.mock('expo-modules-core', () => ({
+  requireNativeViewManager: () => 'NativeSpinner',
+}));
 
 type TestFrameCallback = { run: (info: FrameInfo) => void; active: boolean };
 const mockCallbacks = new Set<TestFrameCallback>();
@@ -30,7 +36,8 @@ describe('decorative animation timing', () => {
   let renderer: ReactTestRenderer;
   let progress: ReturnType<typeof useDecorativeProgress>;
   function Harness({ enabled = true, reverse = false }) {
-    progress = useDecorativeProgress(enabled, 1000, reverse);
+    const framesPerSecond = useSpinnerFrameRate();
+    progress = useDecorativeProgress(enabled, 1000, reverse, framesPerSecond);
     return null;
   }
   function frame(timestamp: number) {
@@ -41,16 +48,43 @@ describe('decorative animation timing', () => {
   }
   afterEach(() => act(() => renderer.unmount()));
 
-  test.each([60, 90, 120])('limits style changes to 30 per second on a %s Hz display', refreshRate => {
-    act(() => { renderer = create(<Harness />); });
+  test.each([30, 60].flatMap(fps => [60, 90, 120].map(refreshRate => [fps, refreshRate])))
+  ('limits style changes to %s per second on a %s Hz display', (fps, refreshRate) => {
+    act(() => {
+      renderer = create(
+        <SpinnerFrameRateProvider smoothSpinners={fps === 60}><Harness /></SpinnerFrameRateProvider>,
+      );
+    });
     let changes = 0;
     let previous = -1;
     for (let index = 0; index < refreshRate * 2; index += 1) {
-      const value = frame(index * 1000 / refreshRate);
+      const value = frame((index + 0.1) * 1000 / refreshRate);
       if (value !== previous) changes += 1;
       previous = value;
     }
-    expect(changes).toBe(60);
+    expect(changes).toBe(fps * 2);
+  });
+
+  test('updates native and React Native spinners immediately without restarting the React Native rotation', () => {
+    const render = (smoothSpinners: boolean) => (
+      <SpinnerFrameRateProvider smoothSpinners={smoothSpinners}>
+        <Harness />
+        <NativeAgentSpinner color="#00ff00" durationMs={700} enabled size={24} />
+      </SpinnerFrameRateProvider>
+    );
+    const nativeRate = () => renderer.root.findByProps({ pointerEvents: 'none' }).props.framesPerSecond;
+    act(() => { renderer = create(render(false)); });
+    expect(nativeRate()).toBe(30);
+    frame(0);
+    frame(500);
+    expect(frame(517)).toBe(0.5);
+    act(() => { renderer.update(render(true)); });
+    expect(nativeRate()).toBe(60);
+    expect(frame(517)).toBeCloseTo(0.517);
+    act(() => { renderer.update(render(false)); });
+    expect(nativeRate()).toBe(30);
+    frame(534);
+    expect(frame(551)).toBeCloseTo(0.534);
   });
 
   test('preserves animation speed and skips directly over missed frames', () => {
