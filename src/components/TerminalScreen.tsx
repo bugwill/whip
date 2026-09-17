@@ -2059,7 +2059,6 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           </View>
         )}
         <View
-          pointerEvents={composeOpen ? 'none' : 'auto'}
           className="relative flex-1"
           style={
             terminalLayoutKeyboardInset > 0

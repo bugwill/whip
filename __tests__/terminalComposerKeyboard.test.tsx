@@ -1,5 +1,5 @@
 import { useImperativeHandle, type ComponentProps, type Ref } from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import {
   Keyboard,
   Platform,
@@ -8,7 +8,10 @@ import {
 } from 'react-native';
 
 import { TerminalScreen } from '../src/components/TerminalScreen';
+import { AgentChatView } from '../src/components/AgentChatView';
+import { emptyTranscript } from '../src/agentChat';
 import { terminalControlBarInset } from '../src/lib/floatingChrome';
+import { setTerminalComposerOverlay } from '../src/services/terminalSoftInput';
 
 jest.mock('react-native-css-interop/jsx-runtime', () =>
   jest.requireActual('react/jsx-runtime'),
@@ -19,6 +22,7 @@ jest.mock('react-native', () => ({
   Pressable: 'Pressable',
   Modal: 'Modal',
   Image: 'Image',
+  ActivityIndicator: 'ActivityIndicator',
   NativeModules: {},
   Platform: { OS: 'android' },
   StyleSheet: { absoluteFill: {}, create: (styles: unknown) => styles },
@@ -39,6 +43,13 @@ jest.mock('react-native-reanimated', () => ({
   withTiming: (value: number) => value,
 }));
 jest.mock('@rn-primitives/portal', () => ({ Portal: 'Portal' }));
+jest.mock('@shopify/flash-list', () => ({ FlashList: 'FlashList' }));
+jest.mock('react-native-code-highlighter', () => 'CodeHighlighter');
+jest.mock('react-syntax-highlighter/dist/esm/styles/hljs', () => ({
+  atomOneDarkReasonable: {},
+  atomOneLight: {},
+}));
+jest.mock('../src/components/MarkdownText', () => ({ MarkdownText: 'MarkdownText' }));
 jest.mock(
   'lucide-react-native',
   () => new Proxy({}, { get: (_target, name) => String(name) }),
@@ -101,7 +112,9 @@ const terminalHandle = {
   setKeyboardEnabled: jest.fn(),
   setForcedMouseInput: jest.fn(),
   clearSearch: jest.fn(),
+  cancelPendingResumeScroll: jest.fn(),
 };
+const chatListHandle = { scrollToEnd: jest.fn(), scrollToOffset: jest.fn() };
 const screenHeight = 800;
 const keyboardHeight = 300;
 const controlBarHeight = terminalControlBarInset(34);
@@ -185,11 +198,12 @@ function emitKeyboard(visible: boolean) {
   });
 }
 
-function mount() {
+function mount(overrides: Partial<Props> = {}) {
   act(() => {
-    renderer = create(<TerminalScreen {...props} />, {
+    renderer = create(<TerminalScreen {...props} {...overrides} />, {
       createNodeMock: element => {
         if (element.type === 'TerminalRendererHost') return terminalHandle;
+        if (element.type === 'FlashList') return chatListHandle;
         if (element.type !== 'View') return null;
         const viewProps = element.props as ComponentProps<typeof View>;
         return {
@@ -218,6 +232,24 @@ function mount() {
 
 async function press(label: string) {
   await act(async () => button(label).props.onPress());
+}
+
+// Check the rendered ancestors before dispatching callbacks: invoking a callback
+// alone would still pass when a native pointerEvents boundary blocks the gesture.
+function expectTouchEnabled(node: ReactTestInstance) {
+  expect(node.props.pointerEvents).not.toBe('box-none');
+  for (let ancestor: ReactTestInstance | null = node; ancestor; ancestor = ancestor.parent) {
+    expect(ancestor.props.pointerEvents ?? 'auto').not.toBe('none');
+    expect(ancestor.props.pointerEvents ?? 'auto').not.toBe('box-only');
+  }
+}
+
+function scrollEvent(offset: number) {
+  return { nativeEvent: {
+    contentOffset: { y: offset },
+    contentSize: { height: 1000 },
+    layoutMeasurement: { height: 400 },
+  } };
 }
 
 beforeEach(() => {
@@ -258,6 +290,108 @@ describe.each(['android', 'ios'] as const)(
   platform => {
     beforeEach(() => {
       Platform.OS = platform;
+    });
+
+    test('chat stays touch-enabled and scrolls before, during, and after composing', async () => {
+      mount({
+        chatViewEnabled: true,
+        renderViewportOverlay: (contentInsets, latestButtonBottom) => <AgentChatView
+          agent="codex"
+          agentStatus="idle"
+          contentInsets={contentInsets}
+          latestButtonBottom={latestButtonBottom}
+          onOpenFile={jest.fn()}
+          state={{ sessionId: 'chat-1', status: 'live', transcript: emptyTranscript('chat-1') }}
+        />,
+      });
+      const list = ui('FlashList');
+      act(() => {
+        list.props.onLayout({ nativeEvent: { layout: { height: 400 } } });
+        list.props.onContentSizeChange(400, 1000);
+        list.props.onScroll(scrollEvent(600));
+      });
+
+      for (const composing of [false, true, false]) {
+        if (composing) {
+          await press('compose');
+          emitKeyboard(true);
+          const composer = ui('MessageComposer');
+          expectTouchEnabled(composer);
+          expect(composer.parent?.parent?.props.pointerEvents).toBe('box-none');
+          expect(composer.props.showSoftInputOnFocus).toBe(true);
+          expect(terminalHandle.setKeyboardEnabled).toHaveBeenLastCalledWith(false);
+        } else if (renderer.root.findAllByType(MockMessageComposer).length) {
+          await act(async () => ui('MessageComposer').props.actions.onClose());
+          await act(async () => emitKeyboard(false));
+        }
+
+        expect(ui('FlashList')).toBe(list);
+        expectTouchEnabled(list);
+        act(() => {
+          list.props.onScrollBeginDrag(scrollEvent(600));
+          list.props.onScroll(scrollEvent(400));
+          list.props.onScrollEndDrag(scrollEvent(400));
+          list.props.onMomentumScrollBegin();
+          list.props.onScroll(scrollEvent(300));
+          list.props.onMomentumScrollEnd(scrollEvent(300));
+        });
+        const scrollbar = ui('OverlayScrollbar');
+        expectTouchEnabled(scrollbar);
+        act(() => {
+          scrollbar.props.onDragStart({ trackHeight: 400, thumbHeight: 160 });
+          scrollbar.props.onDrag({ dy: -40, trackHeight: 400, thumbHeight: 160 });
+          scrollbar.props.onDragEnd();
+        });
+        expect(chatListHandle.scrollToOffset).toHaveBeenLastCalledWith({ offset: 200, animated: false });
+        const latest = renderer.root.find(node => node.props.accessibilityLabel === 'Jump to latest');
+        expectTouchEnabled(latest);
+        act(() => { latest.props.onPress(); });
+        expect(chatListHandle.scrollToEnd).toHaveBeenLastCalledWith({ animated: true });
+        act(() => { list.props.onScroll(scrollEvent(600)); });
+      }
+    });
+
+    test('terminal scrollback and scrollbar stay interactive while composer owns the keyboard', async () => {
+      const scrollTerminal = jest.fn(async () => '');
+      const scrollTarget = {
+        ...target,
+        client: { terminal: { scrollTerminal } },
+        scroll: { offset_from_bottom: 0, max_offset_from_bottom: 100, viewport_rows: 24 },
+      } as unknown as Props['targets'][number];
+      mount({ activeTarget: scrollTarget, targets: [scrollTarget] });
+      await press('enableKeyboard');
+      await press('compose');
+      emitKeyboard(true);
+      act(() => jest.advanceTimersByTime(100));
+      terminalHandle.focus.mockClear();
+      mockComposerHandle.blur.mockClear();
+      jest.mocked(Keyboard.dismiss).mockClear();
+
+      const terminal = ui('TerminalRendererHost');
+      expectTouchEnabled(terminal);
+      const scrollbar = ui('OverlayScrollbar');
+      expectTouchEnabled(scrollbar);
+      const previousTop = scrollbar.props.topPercent;
+      act(() => { terminal.props.onScroll(scrollTarget, 'up', 10); });
+      expect(ui('OverlayScrollbar').props.topPercent).toBeLessThan(previousTop);
+      act(() => {
+        scrollbar.props.onDragStart({ trackHeight: 400, thumbHeight: 80 });
+        scrollbar.props.onDrag({ dy: -32, trackHeight: 400, thumbHeight: 80 });
+        scrollbar.props.onDragEnd();
+      });
+      expect(scrollTerminal).toHaveBeenCalledWith('terminal-1', 'up', 10);
+      expect(terminalHandle.setKeyboardEnabled).toHaveBeenLastCalledWith(false);
+      expect(terminalHandle.focus).not.toHaveBeenCalled();
+      expect(mockComposerHandle.blur).not.toHaveBeenCalled();
+      expect(Keyboard.dismiss).not.toHaveBeenCalled();
+      expect(setTerminalComposerOverlay).toHaveBeenLastCalledWith('terminal-1', true);
+
+      await act(async () => ui('MessageComposer').props.actions.onClose());
+      await act(async () => emitKeyboard(false));
+      expectTouchEnabled(terminal);
+      expectTouchEnabled(ui('OverlayScrollbar'));
+      expect(terminalHandle.setKeyboardEnabled).toHaveBeenLastCalledWith(true);
+      expect(setTerminalComposerOverlay).toHaveBeenLastCalledWith('terminal-1', false);
     });
 
     test.each([false, true])(

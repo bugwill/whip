@@ -261,6 +261,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   onError,
 }, forwardedRef) {
   const webView = useRef<WebViewHandle | null>(null);
+  const keyboardEnabled = useRef(false);
   const hostReady = useRef(false);
   const entries = useRef(new Map<string, RendererEntry>());
   const resumeScrolls = useRef(new Map<string, TerminalResumeScrollState>());
@@ -937,6 +938,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       [enabled],
     ),
     setKeyboardEnabled: enabled => {
+      keyboardEnabled.current = enabled;
       if (enabled) webView.current?.requestFocus();
       activeCall('herdrSetKeyboardEnabled', [enabled]);
     },
@@ -1520,8 +1522,11 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         if (!visible || !activeKey.current) return;
         const entry = entries.current.get(activeKey.current);
         if (entry) cancelResumeScroll(entry);
-        webView.current?.requestFocus();
-        activeCall('herdrFocus');
+        // Scroll gestures must not take native focus from the composer.
+        if (keyboardEnabled.current) {
+          webView.current?.requestFocus();
+          activeCall('herdrFocus');
+        }
       }}
       style={style}
       containerStyle={WEBVIEW_CONTAINER_STYLE}

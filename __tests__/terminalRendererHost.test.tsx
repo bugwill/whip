@@ -252,8 +252,11 @@ describe('TerminalRendererHost lifecycle', () => {
   ) => {
     const eventCallbacks = createCallbacks();
     const injected: string[] = [];
+    const handle = createRef<TerminalRendererHandle>();
+    const requestFocus = jest.fn();
     const renderHost = (target: TerminalRenderTarget) => (
       <TerminalRendererHost
+        ref={handle}
         {...eventCallbacks}
         activeTarget={target}
         preferences={{ ...preferences, pauseResizeInBackground, xtermCacheCapacity }}
@@ -269,7 +272,7 @@ describe('TerminalRendererHost lifecycle', () => {
             element.type === 'WebView'
               ? {
                   injectJavaScript: (script: string) => injected.push(script),
-                  requestFocus: jest.fn(),
+                  requestFocus,
                 }
               : null,
         },
@@ -298,8 +301,26 @@ describe('TerminalRendererHost lifecycle', () => {
         await Promise.resolve();
       });
     };
-    return { activateTarget, eventCallbacks, injected, webView };
+    return { activateTarget, eventCallbacks, handle, injected, requestFocus, webView };
   };
+
+  test('touches do not take WebView focus while terminal keyboard input is disabled', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 100, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll });
+    const target = createTarget('term-1', client, scroll);
+    const { handle, injected, requestFocus, webView } = await mountReadyHost(target);
+
+    for (const enabled of [true, false, true]) {
+      act(() => handle.current?.setKeyboardEnabled(enabled));
+      expect(injected.at(-1)).toContain(`herdrSetKeyboardEnabled("${target.key}", ${enabled})`);
+      requestFocus.mockClear();
+      injected.length = 0;
+      act(() => { webView.props.onTouchStart(); });
+      expect(requestFocus).toHaveBeenCalledTimes(enabled ? 1 : 0);
+      if (enabled) expect(injected.at(-1)).toContain(`herdrFocus("${target.key}")`);
+      else expect(injected).toEqual([]);
+    }
+  });
 
   test('copies terminal text and pastes clipboard text through the maintained native module', async () => {
     const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
