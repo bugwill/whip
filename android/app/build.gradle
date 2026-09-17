@@ -166,6 +166,28 @@ android {
     }
 }
 
+// Track the generator's inputs and both output directories so clean builds,
+// dependency updates, and missing generated files all trigger regeneration.
+def syncTerminalAssets = tasks.register('syncTerminalAssets', Exec) {
+    workingDir projectRoot
+    commandLine 'node', 'scripts/sync-terminal-assets.mjs'
+    inputs.files(fileTree("${projectRoot}/scripts") {
+        include 'sync-terminal-assets.mjs', 'android-ime-bridge.cjs', 'terminal-*.cjs', 'mermaid-preview-runtime.js'
+    })
+    inputs.file("${projectRoot}/src/lib/terminalBoundaryScroll.cjs")
+    inputs.dir("${projectRoot}/assets/terminal-fonts")
+    inputs.files(fileTree("${projectRoot}/node_modules") {
+        include '@xterm/*/lib/*.js', '@xterm/xterm/css/xterm.css', 'mermaid/dist/mermaid.min.js', 'mermaid/LICENSE'
+    })
+    outputs.dirs(
+        "${projectRoot}/android/app/src/main/assets",
+        "${projectRoot}/modules/whip-terminal-assets/ios/TerminalAssets",
+    )
+}
+tasks.named('preBuild').configure {
+    dependsOn syncTerminalAssets
+}
+
 // Evaluate the Android model without compiling an APK, including any future
 // flavor/build-type overrides and versionNameSuffix values.
 tasks.register('checkAppVersion') {

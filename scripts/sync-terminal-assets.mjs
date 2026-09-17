@@ -41,7 +41,7 @@ const {
 } = terminalLinkExtraction;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-// Validate generated HTML without rewriting assets or copying vendor bundles.
+// Validate every generated or copied asset without rewriting files.
 const checkOnly = process.argv.includes('--check');
 const writeFile = async (path, content, encoding) => {
   if (checkOnly) {
@@ -94,10 +94,19 @@ if (!checkOnly) {
   await mkdir(assets, { recursive: true });
   await mkdir(iosAssets, { recursive: true });
 }
-const copyTerminalAsset = (source, bundledName) => checkOnly ? Promise.resolve() : Promise.all([
-  copyFile(source, resolve(assets, bundledName)),
-  copyFile(source, resolve(iosAssets, bundledName)),
-]);
+const copyTerminalAsset = async (source, bundledName) => {
+  const expected = checkOnly ? await readFile(source) : null;
+  await Promise.all([assets, iosAssets].map(async directory => {
+    const destination = resolve(directory, bundledName);
+    if (checkOnly) {
+      if (!(await readFile(destination)).equals(expected)) {
+        throw new Error('Copied asset is stale: ' + destination);
+      }
+    } else {
+      await copyFile(source, destination);
+    }
+  }));
+};
 await Promise.all([
   copyTerminalAsset(
     resolve(root, 'node_modules/@xterm/xterm/lib/xterm.js'),

@@ -459,6 +459,29 @@ Increment `versionCode` in `android/app/build.gradle` for every Play upload, com
 gh workflow run publish-play.yml -f submit_profile=production-draft
 ```
 
+### Generated terminal assets
+
+The contents of `android/app/src/main/assets/` and
+`modules/whip-terminal-assets/ios/TerminalAssets/` are generated and ignored by
+Git. Edit `scripts/sync-terminal-assets.mjs`, its imported helpers, or the
+canonical fonts and manifest in `assets/terminal-fonts/` instead.
+
+`npm ci` regenerates these files through `postinstall`. Direct Gradle builds
+also regenerate them from declared inputs and outputs. On iOS, `pod install`
+generates files before CocoaPods discovers resources, and the resource bundle
+build phase refreshes them before packaging. Run `pod install` after updating
+the Podfile or adding/removing generated resource names.
+
+To regenerate manually, including before tests after deleting generated assets:
+
+```sh
+nix develop -c node scripts/sync-terminal-assets.mjs
+nix develop -c node scripts/sync-terminal-assets.mjs --check
+```
+
+The check verifies both rendered HTML and copied dependencies, fonts, and
+licenses without changing files.
+
 ### Validation
 
 Run the primary JavaScript and Rust validation sets before opening a pull request:

@@ -95,3 +95,7 @@ AGENTS.md
 /packages/react-native-whip-ssh/rust/target/
 .codex-*
 .codex
+
+# Outputs of scripts/sync-terminal-assets.mjs; sources live in scripts/ and assets/terminal-fonts/.
+/android/app/src/main/assets/
+/modules/whip-terminal-assets/ios/TerminalAssets/
