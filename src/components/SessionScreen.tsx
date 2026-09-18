@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -24,10 +25,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import WebView from 'react-native-webview';
-import {
-  orderByAgentStatusPriority,
-  tabAgentStateChangeSequence,
-} from '@/src/herdQueue';
 import {
   terminalControlBarInset,
   terminalSessionChromeHeight,
@@ -107,11 +104,33 @@ import type { TerminalPreferences } from '../services/devicePreferences';
 import { addTerminalVolumeKeyListener } from '../services/volumeKeys';
 import {
   sessionTabGlassStyle,
+  sessionAgentRailStyle,
   sessionTabStatusColor,
   statusColor,
   useTheme,
 } from '../theme';
+import {
+  orderSessionPanes,
+  orderSessionTabs,
+  orderSessionWorkspaces,
+  SessionFocusQueue,
+  paneAgentLabel,
+  paneLabel,
+  paneNavigationLabel,
+  createSessionSelectionMemory,
+  pruneSessionSelectionMemory,
+  rememberSessionWorkspace,
+  rememberSessionPane,
+  rememberSessionTab,
+  restoreSessionPaneId,
+  restoreSessionWorkspaceId,
+  restoreSessionTabId,
+  sessionPaneGroup,
+  sessionPaneAgentColor,
+  type SessionSelectionMemory,
+} from '../lib/sessionNavigation';
 import type { HerdrSnapshot, PaneInfo, TabInfo } from '../types';
+import { recordNetworkDiagnostic } from '../services/networkDiagnostics';
 import { AnimatedAgentStatusGlyph, hapticPress } from './app-ui';
 import { AgentIdentityWarningSheet } from './AgentIdentityWarningSheet';
 import { AppAlertPopup, type AppAlertContent } from './AppAlertPopup';
@@ -226,6 +245,14 @@ export function SessionScreen({
     focusedWorkspace?.workspace_id || '',
   );
   const [tabId, setTabId] = useState(focusedWorkspace?.active_tab_id || '');
+  const initialPane = snapshot.panes.find(
+    pane => pane.tab_id === focusedWorkspace?.active_tab_id && pane.focused,
+  ) || snapshot.panes.find(
+    pane => pane.tab_id === focusedWorkspace?.active_tab_id,
+  );
+  const [paneId, setPaneId] = useState(initialPane?.pane_id || '');
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
   const [pendingCreatedSelection, setPendingCreatedSelection] =
     useState<CreatedTabFocusResult | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode | null>(null);
@@ -270,6 +297,32 @@ export function SessionScreen({
   const tunnelPreviewRef = useRef<string | null>(null);
   const browserRequestRef = useRef(0);
   const pendingPaneFocus = useRef<string | null>(null);
+  // A local click owns selection until the server snapshot confirms the same
+  // workspace/tab/pane. This prevents an older server focus from pulling an
+  // empty tab back to the previously active terminal.
+  const localSelectionRef = useRef<{
+    workspaceId: string;
+    tabId: string;
+    paneId: string | null;
+  } | null>(null);
+  // Keep the two selection relationships independent: a workspace remembers a
+  // tab, and a tab remembers a pane. A pane must never be restored merely
+  // because it happened to be selected in another tab. The outer key also
+  // prevents identical resource ids from leaking across hosts during a fast
+  // host switch.
+  const selectionMemoryByHost = useRef(
+    new Map<string, SessionSelectionMemory>(),
+  );
+  const selectionMemory =
+    selectionMemoryByHost.current.get(hostSessionId) || (() => {
+      const memory = createSessionSelectionMemory();
+      selectionMemoryByHost.current.set(hostSessionId, memory);
+      return memory;
+    })();
+  const focusRequestSerial = useRef(0);
+  const focusRequestQueue = useRef(new SessionFocusQueue(error => {
+    recordNetworkDiagnostic('error', 'session-focus-queue', { error: String(error) });
+  }));
   const lastActivePaneId = useRef<string | null>(null);
   const pendingFocus = useRef<PendingFocus | null>(null);
   const chatViewsRef = useRef(chatViews);
@@ -312,22 +365,21 @@ export function SessionScreen({
     [showAppAlert, t],
   );
 
+  const workspaces = useMemo(() => orderSessionWorkspaces(snapshot.workspaces), [snapshot.workspaces]);
   const workspace =
-    snapshot.workspaces.find(item => item.workspace_id === workspaceId) ||
+    workspaces.find(item => item.workspace_id === workspaceId) ||
     focusedWorkspace;
-  const selectableResources = includePendingCreatedSelection(
-    snapshot,
-    pendingCreatedSelection,
-  );
-  const tabs = orderByAgentStatusPriority(
+  const selectableResources = useMemo(() => includePendingCreatedSelection(
+    snapshot, pendingCreatedSelection,
+  ), [snapshot, pendingCreatedSelection]);
+  const tabs = orderSessionTabs(
     selectableResources.tabs.filter(
       item => item.workspace_id === workspace?.workspace_id,
     ),
-    item => item.agent_status,
-    item => tabAgentStateChangeSequence(item, snapshot.agents),
   );
   const selectedTab =
     tabs.find(item => item.tab_id === tabId) ||
+    tabs.find(item => item.tab_id === workspace?.active_tab_id) ||
     tabs.find(item => item.focused) ||
     tabs[0];
   const editorTitle =
@@ -340,10 +392,10 @@ export function SessionScreen({
     editorMode === 'rename-pane'
       ? selectedTab?.label || selectedTab?.tab_id
       : workspace?.label || workspace?.workspace_id;
-  const panes = selectableResources.panes.filter(
+  const panes = orderSessionPanes(selectableResources.panes.filter(
     item => item.tab_id === selectedTab?.tab_id,
-  );
-  const sessionChromeInset = terminalSessionChromeHeight(panes.length);
+  ));
+  const sessionChromeInset = terminalSessionChromeHeight(panes.length, Boolean(workspace));
   const serverWorkspace =
     snapshot.workspaces.find(item => item.focused) || snapshot.workspaces[0];
   const serverTab =
@@ -369,22 +421,44 @@ export function SessionScreen({
       ? pendingCreatedSelection.root_pane.pane_id
       : null;
   const selectedPane =
+    panes.find(item => item.pane_id === paneId) ||
     panes.find(item => item.terminal_id === terminalState.activeTerminalId) ||
     panes.find(item => item.focused) ||
     panes[0];
-  const activeTerminalSession = terminalState.sessions.find(
+  const activeTerminalCandidate = terminalState.sessions.find(
     session => session.terminalId === terminalState.activeTerminalId,
+  );
+  const activeCandidatePane = snapshot.panes.find(
+    item => item.pane_id === activeTerminalCandidate?.paneId,
+  );
+  const activeCandidateInScope =
+    activeCandidatePane?.workspace_id === workspace?.workspace_id &&
+    activeCandidatePane?.tab_id === selectedTab?.tab_id;
+  const pendingSelectedTerminalId = pendingPaneFocus.current && selectedPane
+    ? selectedPane.terminal_id
+    : null;
+  // A global active terminal is usable only when it is in the selected
+  // workspace/tab, or when its pane is not in the delayed snapshot yet. An
+  // empty selected tab never falls back to an unrelated active terminal.
+  const selectedTerminalId = pendingSelectedTerminalId || (
+    activeTerminalCandidate && panes.length > 0 &&
+    (activeCandidateInScope || !activeCandidatePane)
+      ? activeTerminalCandidate.terminalId
+      : null
+  );
+  const activeTerminalSession = terminalState.sessions.find(
+    session => session.terminalId === selectedTerminalId,
   );
   const activePane = activePaneForTerminal(
     selectableResources.panes,
     terminalState.sessions,
-    terminalState.activeTerminalId,
+    selectedTerminalId,
   );
   const activeTarget =
-    terminalTargets.find(
+    selectedTerminalId && terminalTargets.find(
       target =>
         target.hostSessionId === hostSessionId &&
-        target.session.terminalId === activeTerminalSession?.terminalId,
+        target.session.terminalId === selectedTerminalId,
     ) || null;
   const activeChatView = activeTarget
     ? chatViews.get(activeTarget.key) || null
@@ -585,8 +659,17 @@ export function SessionScreen({
     [client],
   );
 
+  const activateRestoredPane = useEffectEvent((pane: PaneInfo) => onActivateTerminal(pane));
+
   useEffect(() => {
     pendingPaneFocus.current = null;
+    localSelectionRef.current = null;
+    focusRequestSerial.current += 1;
+    // A stalled request to the previous host must not block this host's focus.
+    focusRequestQueue.current.clear();
+    focusRequestQueue.current = new SessionFocusQueue(error => {
+      recordNetworkDiagnostic('error', 'session-focus-queue', { error: String(error) });
+    });
     lastActivePaneId.current = null;
     pendingFocus.current = null;
     setPendingCreatedSelection(null);
@@ -600,8 +683,96 @@ export function SessionScreen({
     setBrowserLoading(false);
     setAttachmentsOpen(false);
     setPasteRequest(null);
+    const nextSelectionMemory =
+      selectionMemoryByHost.current.get(hostSessionId) ||
+      createSessionSelectionMemory();
+    selectionMemoryByHost.current.set(hostSessionId, nextSelectionMemory);
+    const currentSnapshot = snapshotRef.current;
+    pruneSessionSelectionMemory(
+      nextSelectionMemory,
+      currentSnapshot.workspaces,
+      currentSnapshot.tabs,
+      currentSnapshot.panes,
+    );
+    const workspaceIds = new Set(
+      currentSnapshot.workspaces.map(item => item.workspace_id),
+    );
+    const rememberedWorkspaceId = restoreSessionWorkspaceId(
+      nextSelectionMemory,
+      workspaceIds,
+    );
+    const nextWorkspace = currentSnapshot.workspaces.find(
+      item => item.workspace_id === rememberedWorkspaceId,
+    ) || currentSnapshot.workspaces.find(item => item.focused) || currentSnapshot.workspaces[0];
+    const workspaceTabs = currentSnapshot.tabs.filter(
+      item => item.workspace_id === nextWorkspace?.workspace_id,
+    );
+    const nextTab = workspaceTabs.find(
+      item => item.workspace_id === nextWorkspace?.workspace_id && item.tab_id === nextSelectionMemory.workspaceTabs.get(nextWorkspace?.workspace_id || ''),
+    ) || currentSnapshot.tabs.find(
+      item => item.workspace_id === nextWorkspace?.workspace_id && item.tab_id === nextWorkspace?.active_tab_id,
+    ) || workspaceTabs.find(item => item.focused) || workspaceTabs[0];
+    const savedPaneId = nextTab
+      ? restoreSessionPaneId(
+        nextSelectionMemory,
+        nextTab.tab_id,
+        new Set(currentSnapshot.panes.filter(item => item.tab_id === nextTab.tab_id).map(item => item.pane_id)),
+      )
+      : null;
+    const nextPane = currentSnapshot.panes.find(
+      item => item.tab_id === nextTab?.tab_id && item.pane_id === savedPaneId,
+    ) || currentSnapshot.panes.find(
+      item => item.tab_id === nextTab?.tab_id && item.focused,
+    ) || currentSnapshot.panes.find(item => item.tab_id === nextTab?.tab_id);
+    if (nextWorkspace) {
+      setWorkspaceId(nextWorkspace.workspace_id);
+      rememberSessionWorkspace(nextSelectionMemory, nextWorkspace.workspace_id);
+      rememberSessionTab(
+        nextSelectionMemory,
+        nextWorkspace.workspace_id,
+        nextTab?.tab_id || '',
+      );
+    }
+    rememberSessionPane(nextSelectionMemory, nextTab?.tab_id || '', nextPane?.pane_id || '');
+    setTabId(nextTab?.tab_id || '');
+    setPaneId(nextPane?.pane_id || '');
+    if (rememberedWorkspaceId && nextWorkspace) {
+      localSelectionRef.current = {
+        workspaceId: nextWorkspace.workspace_id,
+        tabId: nextTab?.tab_id || '',
+        paneId: nextPane?.pane_id || null,
+      };
+      pendingPaneFocus.current = nextPane?.pane_id || null;
+      if (nextPane) activateRestoredPane(nextPane);
+    }
     reportedChatFailureGenerationsRef.current.clear();
   }, [hostSessionId]);
+
+  useEffect(() => () => {
+    focusRequestSerial.current += 1;
+    focusRequestQueue.current.clear();
+  }, []);
+
+  useEffect(() => {
+    pruneSessionSelectionMemory(
+      selectionMemory,
+      snapshot.workspaces,
+      selectableResources.tabs,
+      selectableResources.panes,
+    );
+    const local = localSelectionRef.current;
+    if (local && (
+      !snapshot.workspaces.some(item => item.workspace_id === local.workspaceId)
+      || (local.tabId && !selectableResources.tabs.some(item => item.tab_id === local.tabId))
+    )) {
+      localSelectionRef.current = null;
+      pendingPaneFocus.current = null;
+    } else if (local?.paneId && !selectableResources.panes.some(item => item.pane_id === local.paneId)) {
+      // Keep an explicitly selected empty tab, but discard its deleted pane.
+      localSelectionRef.current = { ...local, paneId: null };
+      pendingPaneFocus.current = null;
+    }
+  }, [selectableResources.panes, selectableResources.tabs, selectionMemory, snapshot.workspaces]);
 
   useEffect(() => {
     setPendingCreatedSelection(current =>
@@ -717,7 +888,11 @@ export function SessionScreen({
     // Terminal selection/rendering has already committed. Only the selected
     // resident Herdr target may establish a speculative binding; cache and
     // remote work continue independently inside the transcript service.
-    const preloadTarget = visible && appActive && activeTarget &&
+    // On E-Ink devices the transcript may be tens of MB. Restoring it just to
+    // show Terminal can multiply that history across Rust, FFI, JS and SQLite
+    // before the Chat viewport exists. Explicit Chat and saved Chat intent
+    // still activate normally; terminal startup stays independent of history.
+    const preloadTarget = !isEink && visible && appActive && activeTarget &&
       activeTarget.session.kind !== 'ssh' && chatAgentForPane(activePane) &&
       !chatRestoreIntentsRef.current.has(activeTarget.key)
       ? activeTarget : null;
@@ -750,6 +925,7 @@ export function SessionScreen({
   }, [
     // Native state may change while JS is paused without a new pane snapshot.
     appActive,
+    isEink,
     visible,
     activeTarget,
     activePane,
@@ -867,8 +1043,12 @@ export function SessionScreen({
       setWorkspaceId(workspace.workspace_id);
     if (selectedTab && selectedTab.tab_id !== tabId)
       setTabId(selectedTab.tab_id);
+    if (selectedPane && selectedPane.pane_id !== paneId)
+      setPaneId(selectedPane.pane_id);
   }, [
     pendingCreatedSelection,
+    paneId,
+    selectedPane,
     selectedTab,
     snapshot.tabs,
     snapshot.workspaces,
@@ -881,6 +1061,15 @@ export function SessionScreen({
   // Once visible, keep the selected terminal stable while startup focus events settle.
   useEffect(() => {
     if (!followServerFocus || !serverWorkspaceId) return;
+    const localSelection = localSelectionRef.current;
+    if (localSelection) {
+      const serverConfirmsSelection =
+        serverWorkspaceId === localSelection.workspaceId &&
+        serverTabId === localSelection.tabId &&
+        (!localSelection.paneId || serverPaneId === localSelection.paneId);
+      if (!serverConfirmsSelection) return;
+      localSelectionRef.current = null;
+    }
     if (!serverTabId) {
       if (pendingCreatedPaneId) return;
       pendingPaneFocus.current = null;
@@ -897,6 +1086,7 @@ export function SessionScreen({
       return;
     setWorkspaceId(serverWorkspaceId);
     setTabId(serverTabId);
+    if (serverPaneId) setPaneId(serverPaneId);
   }, [
     followServerFocus,
     pendingCreatedPaneId,
@@ -918,30 +1108,57 @@ export function SessionScreen({
     const activeSessionPane = snapshot.panes.find(
       item => item.pane_id === activeSession?.paneId,
     );
+    const localSelection = localSelectionRef.current;
     if (
-      !activeSessionPane ||
-      activeSessionPane.pane_id === lastActivePaneId.current
+      localSelection &&
+      (activeSessionPane?.workspace_id !== localSelection.workspaceId ||
+        activeSessionPane.tab_id !== localSelection.tabId ||
+        (localSelection.paneId && activeSessionPane.pane_id !== localSelection.paneId))
+    )
+      return;
+    if (
+      localSelection &&
+      activeSessionPane?.workspace_id === localSelection.workspaceId &&
+      activeSessionPane?.tab_id === localSelection.tabId &&
+      (!localSelection.paneId || activeSessionPane.pane_id === localSelection.paneId)
+    ) {
+      localSelectionRef.current = null;
+    }
+    if (
+      activeSessionPane?.workspace_id !== workspaceId ||
+      activeSessionPane?.tab_id !== selectedTab?.tab_id ||
+      activeSessionPane?.pane_id === lastActivePaneId.current
     )
       return;
     lastActivePaneId.current = activeSessionPane.pane_id;
-    pendingPaneFocus.current = activeSessionPane.pane_id;
+    setPaneId(activeSessionPane.pane_id);
     setWorkspaceId(activeSessionPane.workspace_id);
     setTabId(activeSessionPane.tab_id);
   }, [
     snapshot.panes,
     terminalState.activeTerminalId,
     terminalState.sessions,
+    selectedTab?.tab_id,
     visible,
+    workspaceId,
   ]);
 
-  const activateServerPane = useEffectEvent((paneId: string) => {
-    const pane = snapshot.panes.find(item => item.pane_id === paneId);
+  const activateServerPane = useEffectEvent((requestedPaneId: string) => {
+    const pane = snapshot.panes.find(item => item.pane_id === requestedPaneId);
     if (pane) onActivateTerminal(pane);
   });
 
   // Keep a hidden or uninitialized terminal aligned with the server-focused pane.
   useEffect(() => {
     if (!followServerFocus || !serverPaneId) return;
+    const localSelection = localSelectionRef.current;
+    if (
+      localSelection &&
+      (serverWorkspaceId !== localSelection.workspaceId ||
+        serverTabId !== localSelection.tabId ||
+        serverPaneId !== localSelection.paneId)
+    )
+      return;
     if (
       !serverFocusMatchesPendingPane(
         serverPaneId,
@@ -951,7 +1168,13 @@ export function SessionScreen({
       return;
     pendingPaneFocus.current = null;
     activateServerPane(serverPaneId);
-  }, [followServerFocus, pendingCreatedPaneId, serverPaneId]);
+  }, [
+    followServerFocus,
+    pendingCreatedPaneId,
+    serverPaneId,
+    serverTabId,
+    serverWorkspaceId,
+  ]);
 
   const run = async (action: () => Promise<unknown>): Promise<boolean> => {
     try {
@@ -969,29 +1192,120 @@ export function SessionScreen({
     }
   };
 
+  const requestSessionFocus = (
+    nextWorkspaceId: string,
+    nextTabId: string,
+    nextPaneId: string,
+  ) => {
+    const request = ++focusRequestSerial.current;
+    focusRequestQueue.current.enqueue(async () => {
+        if (request !== focusRequestSerial.current) return;
+        try {
+          // pane.focus already selects its parent tab and workspace. Sending
+          // all three exposes intermediate focus states and causes extra paints.
+          if (nextPaneId) {
+            await client.native.requestHerdrApi({
+              method: 'pane.focus',
+              params: { pane_id: nextPaneId },
+            });
+          } else if (nextTabId) {
+            await client.native.requestHerdrApi({
+              method: 'tab.focus',
+              params: { tab_id: nextTabId },
+            });
+          } else {
+            await client.native.requestHerdrApi({
+              method: 'workspace.focus',
+              params: { workspace_id: nextWorkspaceId },
+            });
+          }
+        } catch (error) {
+          if (request === focusRequestSerial.current) showHerdrError(error);
+        }
+      });
+  };
+
+  const chooseWorkspace = (item: (typeof workspaces)[number]) => {
+    if (item.workspace_id === workspaceId && activeTarget) return;
+    const workspaceTabs = orderSessionTabs(
+      selectableResources.tabs.filter(tab => tab.workspace_id === item.workspace_id),
+    );
+    const savedTabId = restoreSessionTabId(
+      selectionMemory,
+      item.workspace_id,
+      new Set(workspaceTabs.map(tab => tab.tab_id)),
+    );
+    const nextTab = workspaceTabs.find(tab => tab.tab_id === savedTabId)
+      || workspaceTabs.find(tab => tab.tab_id === item.active_tab_id)
+      || workspaceTabs.find(tab => tab.focused)
+      || workspaceTabs[0];
+    const nextPanes = selectableResources.panes.filter(
+      pane => pane.tab_id === nextTab?.tab_id,
+    );
+    const savedPaneId = nextTab
+      ? restoreSessionPaneId(
+        selectionMemory,
+        nextTab.tab_id,
+        new Set(nextPanes.map(pane => pane.pane_id)),
+      )
+      : null;
+    const nextPane = nextPanes.find(pane => pane.pane_id === savedPaneId)
+      || nextPanes.find(pane => pane.focused)
+      || nextPanes[0];
+    localSelectionRef.current = {
+      workspaceId: item.workspace_id,
+      tabId: nextTab?.tab_id || '',
+      paneId: nextPane?.pane_id || null,
+    };
+    setWorkspaceId(item.workspace_id);
+    setTabId(nextTab?.tab_id || '');
+    setPaneId(nextPane?.pane_id || '');
+    rememberSessionWorkspace(selectionMemory, item.workspace_id);
+    rememberSessionTab(selectionMemory, item.workspace_id, nextTab?.tab_id || '');
+    rememberSessionPane(selectionMemory, nextTab?.tab_id || '', nextPane?.pane_id || '');
+    pendingPaneFocus.current = nextPane?.pane_id || null;
+    if (nextPane) {
+      terminalTabSelectionStarted(nextPane.terminal_id);
+      onActivateTerminal(nextPane);
+    }
+    requestSessionFocus(
+      item.workspace_id,
+      nextTab?.tab_id || '',
+      nextPane?.pane_id || '',
+    );
+  };
+
   const chooseTab = (item: TabInfo) => {
+    if (item.tab_id === selectedTab?.tab_id && activeTarget) return;
     const nextPanes = selectableResources.panes.filter(
       pane => pane.tab_id === item.tab_id,
     );
-    const nextPane = nextPanes.find(pane => pane.focused) || nextPanes[0];
+    const savedPaneId = restoreSessionPaneId(
+      selectionMemory,
+      item.tab_id,
+      new Set(nextPanes.map(pane => pane.pane_id)),
+    );
+    const nextPane = nextPanes.find(pane => pane.pane_id === savedPaneId)
+      || nextPanes.find(pane => pane.focused)
+      || nextPanes[0];
+    localSelectionRef.current = {
+      workspaceId: item.workspace_id,
+      tabId: item.tab_id,
+      paneId: nextPane?.pane_id || null,
+    };
     if (nextPane) terminalTabSelectionStarted(nextPane.terminal_id);
     setWorkspaceId(item.workspace_id);
     setTabId(item.tab_id);
+    setPaneId(nextPane?.pane_id || '');
+    rememberSessionWorkspace(selectionMemory, item.workspace_id);
+    rememberSessionTab(selectionMemory, item.workspace_id, item.tab_id);
+    rememberSessionPane(selectionMemory, item.tab_id, nextPane?.pane_id || '');
+    pendingPaneFocus.current = nextPane?.pane_id || null;
     if (nextPane) onActivateTerminal(nextPane);
-    reportBackgroundFailure(
-      run(async () => {
-        if (item.workspace_id !== workspace?.workspace_id) {
-          await client.native.requestHerdrApi({
-            method: 'workspace.focus',
-            params: { workspace_id: item.workspace_id },
-          });
-        }
-        await client.native.requestHerdrApi({
-          method: 'tab.focus',
-          params: { tab_id: item.tab_id },
-        });
-      }),
-      'session-tab-focus',
+    requestSessionFocus(
+      item.workspace_id,
+      item.tab_id,
+      nextPane?.pane_id || '',
     );
   };
 
@@ -1028,16 +1342,25 @@ export function SessionScreen({
   }, []);
 
   const choosePane = (pane: PaneInfo) => {
+    if (pane.pane_id === activePane?.pane_id) return;
+    localSelectionRef.current = {
+      workspaceId: pane.workspace_id,
+      tabId: pane.tab_id,
+      paneId: pane.pane_id,
+    };
     terminalTabSelectionStarted(pane.terminal_id);
+    setWorkspaceId(pane.workspace_id);
+    setTabId(pane.tab_id);
+    setPaneId(pane.pane_id);
+    rememberSessionWorkspace(selectionMemory, pane.workspace_id);
+    rememberSessionTab(selectionMemory, pane.workspace_id, pane.tab_id);
+    rememberSessionPane(selectionMemory, pane.tab_id, pane.pane_id);
+    pendingPaneFocus.current = pane.pane_id;
     onActivateTerminal(pane);
-    reportBackgroundFailure(
-      run(() =>
-        client.native.requestHerdrApi({
-          method: 'pane.focus',
-          params: { pane_id: pane.pane_id },
-        }),
-      ),
-      'session-pane-focus',
+    requestSessionFocus(
+      pane.workspace_id,
+      pane.tab_id,
+      pane.pane_id,
     );
   };
 
@@ -1216,6 +1539,75 @@ export function SessionScreen({
     return chatOpen.open();
   };
 
+  const agentPanes = panes.filter(pane => sessionPaneGroup(pane) === 'agent');
+  const ordinaryPanes = panes.filter(pane => sessionPaneGroup(pane) === 'ordinary');
+  const renderPaneChip = (pane: PaneInfo) => {
+    const active = pane.pane_id === selectedPane?.pane_id;
+    const agent = paneAgentLabel(pane);
+    const label = paneLabel(pane);
+    const navigationLabel = paneNavigationLabel(pane);
+    const accent = agent
+      ? sessionPaneAgentColor(agent, colors, isEink)
+      : statusColor(pane.agent_status, colors);
+    return (
+      <View
+        key={pane.pane_id}
+        className="h-11 shrink-0 flex-row items-center rounded-full border"
+        style={agent ? sessionAgentRailStyle(active, accent, colors) : sessionTabGlassStyle(active, colors)}
+      >
+        <Button
+          accessibilityLabel={t('session.openPane', { pane: navigationLabel })}
+          className={cn(
+            'h-11 shrink-0 flex-row justify-start gap-1.5 rounded-none px-2.5 py-0',
+            isTablet && 'px-3',
+          )}
+          variant="ghost"
+          onPress={hapticPress(() => choosePane(pane))}
+          onLongPress={hapticPress(() => openRenamePane(pane))}
+        >
+          <View
+            className="size-[6px] rounded-full"
+            style={{ backgroundColor: accent }}
+          />
+          {agent && (
+            <Text
+              numberOfLines={1}
+              className={cn(
+                'shrink-0 pb-0.5 text-[10px] font-black leading-[18px]',
+                isTablet && 'text-[12px]',
+              )}
+              style={{ color: active ? colors.activeSurfaceForeground : accent }}
+            >
+              {agent}
+            </Text>
+          )}
+          <Text
+            numberOfLines={1}
+            className={cn(
+              'shrink-0 pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground',
+              isTablet && 'text-[13px]',
+              active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
+            )}
+          >
+            {label}
+          </Text>
+        </Button>
+        <Button
+          accessibilityLabel={t('session.closePane', { pane: navigationLabel })}
+          className="size-11 rounded-none px-0"
+          disabled={busy}
+          variant="ghost"
+          onPress={hapticPress(() => closePane(pane))}
+        >
+          <X
+            size={13}
+            color={active ? colors.activeSurfaceForeground : colors.textSecondary}
+          />
+        </Button>
+      </View>
+    );
+  };
+
   return (
     <View
       accessibilityElementsHidden={!visible}
@@ -1236,64 +1628,112 @@ export function SessionScreen({
         className="absolute inset-x-0 z-30"
         style={{ bottom: terminalSessionChromeBottom, backgroundColor: colors.canvas }}
       >
+        {workspace && (
+          <View
+            testID="session-workspace-row"
+            accessibilityElementsHidden={!terminalSessionChromeVisible}
+            importantForAccessibility={terminalSessionChromeVisible ? 'auto' : 'no-hide-descendants'}
+            pointerEvents={terminalSessionChromeVisible ? 'auto' : 'none'}
+            className="h-11 flex-row border-b border-border bg-transparent"
+            style={terminalSessionChromeVisible ? undefined : { display: 'none' }}
+          >
+            <Button
+              accessibilityLabel={t('session.backToHerd')}
+              className="h-11 w-11 items-center justify-center rounded-none px-0 py-0"
+              size="content"
+              variant="ghost"
+              onPress={hapticPress(onExit)}
+            >
+              <ChevronLeft size={Platform.OS === 'ios' ? 22 : 20} color={colors.text} />
+            </Button>
+            <ScrollView
+              testID="session-workspaces"
+              className="min-w-0 flex-1"
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerClassName="items-center gap-[5px] px-1.5"
+            >
+              {workspaces.map(item => {
+                const active = item.workspace_id === workspace?.workspace_id;
+                const label = item.label || item.workspace_id;
+                return (
+                  <View
+                    key={item.workspace_id}
+                    className="h-11 shrink-0 flex-row items-center rounded-full border"
+                    style={sessionTabGlassStyle(active, colors)}
+                  >
+                    <Button
+                      accessibilityLabel={t('rail.workspaceStatus', {
+                        workspace: label,
+                        status: item.agent_status,
+                      })}
+                      className="h-11 shrink-0 flex-row justify-start gap-2 rounded-full px-3 py-0"
+                      variant="ghost"
+                      onPress={hapticPress(() => chooseWorkspace(item))}
+                    >
+                      <AnimatedAgentStatusGlyph
+                        status={item.agent_status}
+                        color={statusColor(item.agent_status, colors)}
+                        size={isTablet ? 14 : 11}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        className={cn(
+                          'shrink-0 text-[11px] font-semibold text-muted-foreground',
+                          isTablet && 'text-[13px]',
+                          active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
+                        )}
+                      >
+                        {label}
+                      </Text>
+                      <Text className={cn(
+                        'font-mono text-[8px] text-muted-foreground',
+                        active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
+                      )}>
+                        {item.tab_count}
+                      </Text>
+                    </Button>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
         <View
+          testID="session-tab-row"
           accessibilityElementsHidden={!terminalSessionChromeVisible}
-          importantForAccessibility={
-            terminalSessionChromeVisible ? 'auto' : 'no-hide-descendants'
-          }
+          importantForAccessibility={terminalSessionChromeVisible ? 'auto' : 'no-hide-descendants'}
           pointerEvents={terminalSessionChromeVisible ? 'auto' : 'none'}
           className="h-[55px] flex-row border-b border-border bg-transparent"
           style={terminalSessionChromeVisible ? undefined : { display: 'none' }}
         >
-          <Button
-            accessibilityLabel={t('session.backToHerd')}
-            className={cn(
-              'h-[55px] items-center justify-center rounded-none px-0 py-0',
-              Platform.OS === 'ios' ? 'w-14' : 'w-[42px]',
-            )}
-            size="content"
-            variant="ghost"
-            onPress={hapticPress(onExit)}
-          >
-            <ChevronLeft
-              size={Platform.OS === 'ios' ? 23 : 21}
-              color={colors.text}
-            />
-          </Button>
           {workspace ? (
             <>
               <ScrollView
+                testID="session-tabs"
                 className="min-w-0 flex-1"
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerClassName="items-center px-1.5 gap-[5px]"
+                contentContainerClassName="items-center gap-[5px] px-1.5"
               >
                 {tabs.map(item => {
                   const active = item.tab_id === selectedTab?.tab_id;
-                  const itemPanes = selectableResources.panes.filter(
-                    pane => pane.tab_id === item.tab_id,
-                  );
+                  const itemPanes = selectableResources.panes.filter(pane => pane.tab_id === item.tab_id);
                   const itemSession = terminalState.sessions.find(session =>
-                    itemPanes.some(
-                      pane => pane.terminal_id === session.terminalId,
-                    ),
+                    itemPanes.some(pane => pane.terminal_id === session.terminalId),
                   );
                   const label = item.label || item.tab_id;
                   return (
                     <View
                       key={item.tab_id}
-                      className={cn(
-                        'h-11 max-w-[170px] flex-row items-center overflow-hidden rounded-full border',
-                        isTablet && 'max-w-[230px]',
-                      )}
+                      className="h-11 shrink-0 flex-row items-center rounded-full border"
                       style={sessionTabGlassStyle(active, colors)}
                     >
                       <Button
-                        accessibilityLabel={t('session.openTab', {
-                          tab: label,
-                        })}
+                        accessibilityLabel={t('session.openTab', { tab: label })}
                         className={cn(
-                          'h-11 min-w-0 flex-shrink justify-start gap-2 rounded-none px-[11px] py-0 pr-1 active:bg-transparent active:opacity-70 dark:active:bg-transparent',
+                          'h-11 shrink-0 justify-start gap-2 rounded-none px-[11px] py-0 pr-1 active:bg-transparent active:opacity-70 dark:active:bg-transparent',
                           isTablet && 'px-3',
                         )}
                         variant="ghost"
@@ -1302,48 +1742,38 @@ export function SessionScreen({
                       >
                         <AnimatedAgentStatusGlyph
                           status={item.agent_status}
-                          color={sessionTabStatusColor(
-                            item.agent_status,
-                            itemSession?.status,
-                            colors,
-                          )}
+                          color={sessionTabStatusColor(item.agent_status, itemSession?.status, colors)}
                           size={isTablet ? 16 : 12}
                         />
                         <Text
                           numberOfLines={1}
                           className={cn(
-                            'max-w-[94px] pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground',
-                            isTablet && 'max-w-[140px] text-[14px] leading-5',
+                            'shrink-0 pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground',
+                            isTablet && 'text-[14px] leading-5',
                             active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
                           )}
                         >
                           {label}
                         </Text>
                         {item.pane_count > 1 && (
-                          <Text
-                            className={cn(
-                              'font-mono text-[8px] text-muted-foreground',
-                          isTablet && 'text-[11px]',
-                              active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
-                            )}
-                          >
+                          <Text className={cn(
+                            'font-mono text-[8px] text-muted-foreground',
+                            isTablet && 'text-[11px]',
+                            active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
+                          )}>
                             {item.pane_count}
                           </Text>
                         )}
                       </Button>
                       <Button
-                        accessibilityLabel={t('session.closeTab', {
-                          tab: label,
-                        })}
+                        accessibilityLabel={t('session.closeTab', { tab: label })}
                         className="size-11 rounded-none px-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent"
                         variant="ghost"
                         onPress={hapticPress(() => closeTab(item))}
                       >
                         <X
                           size={isTablet ? 18 : 14}
-                          color={
-                            active ? colors.activeSurfaceForeground : colors.textSecondary
-                          }
+                          color={active ? colors.activeSurfaceForeground : colors.textSecondary}
                         />
                       </Button>
                     </View>
@@ -1361,14 +1791,20 @@ export function SessionScreen({
                 variant="ghost"
                 onPress={hapticPress(() => setEditorMode('tab'))}
               >
-                <Plus
-                  size={Platform.OS === 'ios' ? 23 : 16}
-                  color={colors.text}
-                />
+                <Plus size={Platform.OS === 'ios' ? 23 : 16} color={colors.text} />
               </Button>
             </>
           ) : activeTerminalSession?.kind === 'ssh' ? (
             <>
+              <Button
+                accessibilityLabel={t('session.backToHerd')}
+                className="h-[55px] w-11 items-center justify-center rounded-none px-0"
+                size="content"
+                variant="ghost"
+                onPress={hapticPress(onExit)}
+              >
+                <ChevronLeft size={20} color={colors.text} />
+              </Button>
               <Text className="flex-1 self-center px-2 font-mono text-[11px] font-semibold text-foreground">
                 {t('terminal.sshShell')}
               </Text>
@@ -1376,9 +1812,7 @@ export function SessionScreen({
                 accessibilityLabel={t('terminal.closeSession')}
                 className="h-[55px] w-11 rounded-none px-0"
                 variant="ghost"
-                onPress={hapticPress(() =>
-                  onCloseTerminal(activeTerminalSession.terminalId),
-                )}
+                onPress={hapticPress(() => onCloseTerminal(activeTerminalSession.terminalId))}
               >
                 <X size={17} color={colors.text} />
               </Button>
@@ -1426,68 +1860,20 @@ export function SessionScreen({
           </ResourceEditorField>
         </ResourceEditorSheet>
 
-        {terminalSessionChromeVisible && selectedTab && panes.length > 1 && (
-          <View className="h-11 flex-row border-b border-border bg-transparent">
+        {terminalSessionChromeVisible && workspace && (
+          <View testID="session-pane-row" className="h-11 flex-row border-b border-border bg-transparent">
             <ScrollView
+              testID="session-panes"
+              className="min-w-0 flex-1"
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerClassName="items-center px-1.5 gap-[5px]"
             >
-              {panes.map(pane => {
-                const active = pane.terminal_id === selectedPane?.terminal_id;
-                const label =
-                  pane.label || pane.display_agent || pane.agent || 'shell';
-                return (
-                  <View
-                    key={pane.pane_id}
-                    className="h-11 max-w-[174px] flex-row items-center overflow-hidden rounded-full border"
-                    style={sessionTabGlassStyle(active, colors)}
-                  >
-                    <Button
-                      accessibilityLabel={t('session.openPane', {
-                        pane: label,
-                      })}
-                      className="h-11 min-w-0 flex-shrink justify-start gap-1.5 rounded-none px-2 py-0"
-                      variant="ghost"
-                      onPress={hapticPress(() => choosePane(pane))}
-                      onLongPress={hapticPress(() => openRenamePane(pane))}
-                    >
-                      <View
-                        className="size-[5px] rounded-full"
-                        style={{
-                          backgroundColor: statusColor(
-                            pane.agent_status,
-                            colors,
-                          ),
-                        }}
-                      />
-                      <Text
-                        numberOfLines={1}
-                        className={cn(
-                          'max-w-[112px] pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground',
-                          active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
-                        )}
-                      >
-                        {label}
-                      </Text>
-                    </Button>
-                    <Button
-                      accessibilityLabel={t('session.closePane', {
-                        pane: label,
-                      })}
-                      className="size-11 rounded-none px-0"
-                      disabled={busy}
-                      variant="ghost"
-                      onPress={hapticPress(() => closePane(pane))}
-                    >
-                      <X
-                        size={13}
-                        color={active ? colors.activeSurfaceForeground : colors.textSecondary}
-                      />
-                    </Button>
-                  </View>
-                );
-              })}
+              {agentPanes.map(renderPaneChip)}
+              {agentPanes.length > 0 && ordinaryPanes.length > 0 && (
+                <View className="mx-1 h-7 w-px" style={{ backgroundColor: colors.divider }} />
+              )}
+              {ordinaryPanes.map(renderPaneChip)}
             </ScrollView>
           </View>
         )}

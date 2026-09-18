@@ -1,6 +1,13 @@
 export const MIN_XTERM_CACHE_CAPACITY = 3;
 export const DEFAULT_XTERM_CACHE_CAPACITY = 20;
 
+export function terminalRendererCacheCapacity(capacity: number, eink: boolean): number {
+  const normalized = Number.isSafeInteger(capacity) && capacity >= MIN_XTERM_CACHE_CAPACITY
+    ? capacity : DEFAULT_XTERM_CACHE_CAPACITY;
+  // Keep remote sessions intact; only bound resident WebView/xterm renderers.
+  return eink ? Math.min(normalized, MIN_XTERM_CACHE_CAPACITY) : normalized;
+}
+
 export function touchTerminalRendererEntry<T>(
   entries: Map<string, T>,
   key: string,
@@ -16,16 +23,15 @@ export function terminalRendererEvictionKeys(
   keys: readonly string[],
   capacity: number,
   protectedKeys: ReadonlySet<string>,
+  reservedSlots = 0,
 ): string[] {
-  const normalizedCapacity = Number.isSafeInteger(capacity)
-    && capacity >= MIN_XTERM_CACHE_CAPACITY
-    ? capacity
-    : DEFAULT_XTERM_CACHE_CAPACITY;
+  const normalizedCapacity = terminalRendererCacheCapacity(capacity, false);
   const protectedCount = keys.reduce(
     (count, key) => count + (protectedKeys.has(key) ? 1 : 0),
     0,
   );
-  const targetSize = Math.max(normalizedCapacity, protectedCount);
+  const reserved = Number.isSafeInteger(reservedSlots) ? Math.max(0, reservedSlots) : 0;
+  const targetSize = Math.max(normalizedCapacity - reserved, protectedCount);
   let remaining = keys.length;
   const evictions: string[] = [];
   for (const key of keys) {

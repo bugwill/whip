@@ -19,29 +19,141 @@ function handleKeyboardClosedStationaryTap({
   if (!moveCursor(point)) clearInteractiveSelection(true);
 }
 
-// Only navigate within the cursor's logical (soft-wrapped) line. Sending up/down
-// for arbitrary screen rows could recall or alter shell history instead.
-function terminalCursorTapInput(buffer, cols, target, applicationCursorKeys = false) {
+/**
+ * Validate the only safe source of a hard-newline editing range.
+ *
+ * xterm exposes rendered cells, not ownership semantics. A prompt-looking
+ * row, alternate-screen mode, or a nearby cursor is therefore not enough to
+ * distinguish an editor from scrollback, quoted output, menus, or a shell.
+ * The application must explicitly provide this range and the editor's tested
+ * vertical-column policy. The same protocol works on the primary and
+ * alternate screen.
+ */
+function terminalManualEditRange(buffer, cols, editableRegion) {
+  if (!editableRegion || cols <= 0) return null;
+  if (editableRegion.source !== 'application'
+    || editableRegion.mode !== 'line-editor-clamped') return null;
+  const start = Number(editableRegion.startRow);
+  const end = Number(editableRegion.endRow);
+  const cursorRow = buffer.baseY + buffer.cursorY;
+  const cursorCol = buffer.cursorX;
+  if (!Number.isInteger(start) || !Number.isInteger(end)
+    || start < 0 || end < start || cursorRow < start || cursorRow > end) return null;
+  if (editableRegion.cursorRow !== cursorRow || editableRegion.cursorCol !== cursorCol) return null;
+  if (!buffer.getLine(start) || !buffer.getLine(end)) return null;
+  return { start, end };
+}
+
+function terminalVisibleCellCount(line, cols, from, to) {
+  const start = Math.max(0, Math.min(cols, Math.min(from, to)));
+  const end = Math.max(0, Math.min(cols, Math.max(from, to)));
+  let count = 0;
+  for (let col = start; col < end; col += 1) {
+    if ((line?.getCell?.(col)?.getWidth?.() || 0) > 0) count += 1;
+  }
+  return count;
+}
+
+function terminalLineEndColumn(line, cols, cursorCol = 0) {
+  let end = 0;
+  for (let col = 0; col < cols; col += 1) {
+    const cell = line?.getCell?.(col);
+    if (cell?.getChars?.()) end = col + Math.max(1, cell.getWidth?.() || 1);
+  }
+  return Math.max(end, cursorCol);
+}
+
+function terminalCursorSequence(direction, count, applicationCursorKeys) {
+  if (!count) return '';
+  const suffix = direction === 'up' ? 'A' : direction === 'down' ? 'B'
+    : direction === 'left' ? 'D' : 'C';
+  return ('\u001b' + (applicationCursorKeys ? 'O' : '[') + suffix).repeat(count);
+}
+
+function terminalEditorLineColumn(line, cols, requestedCol) {
+  let col = Math.max(0, Math.min(requestedCol, terminalLineEndColumn(line, cols)));
+  while (col > 0 && line?.getCell?.(col)?.getWidth?.() === 0) col -= 1;
+  return col;
+}
+
+function terminalExplicitEditorInput(
+  buffer,
+  cols,
+  target,
+  editableRegion,
+  applicationCursorKeys,
+) {
+  const manualRange = terminalManualEditRange(buffer, cols, editableRegion);
+  if (!manualRange || target.row < manualRange.start || target.row > manualRange.end) return '';
+  const line = buffer.getLine(target.row);
+  if (!line) return '';
+  const targetCol = terminalEditorLineColumn(line, cols, target.col);
+  const cursorRow = buffer.baseY + buffer.cursorY;
+  let currentCol = buffer.cursorX;
+  let vertical = '';
+  const direction = target.row < cursorRow ? 'up' : 'down';
+  const step = target.row < cursorRow ? -1 : 1;
+  for (let row = cursorRow; row !== target.row; row += step) {
+    const nextRow = row + step;
+    const nextLine = buffer.getLine(nextRow);
+    if (!nextLine) return '';
+    currentCol = Math.min(currentCol, terminalLineEndColumn(nextLine, cols));
+    vertical += terminalCursorSequence(direction, 1, applicationCursorKeys);
+  }
+  const horizontalSteps = terminalVisibleCellCount(line, cols, currentCol, targetCol);
+  return vertical + terminalCursorSequence(
+    targetCol < currentCol ? 'left' : 'right',
+    horizontalSteps,
+    applicationCursorKeys,
+  );
+}
+
+// Navigate within the cursor's logical soft-wrapped line. For hard-newline
+// editors, vertical movement is allowed only when the application has supplied
+// a current, explicit region and a tested clamped-column policy. Never send
+// up/down for an unrecognised row: that can recall shell history or trigger an
+// application-specific command/menu action.
+function terminalCursorTapInput(buffer, cols, target, applicationCursorKeys = false, options = {}) {
   if (!target || cols <= 0) return '';
   const cursorRow = buffer.baseY + buffer.cursorY;
   let first = cursorRow;
   let last = cursorRow;
   while (first > 0 && buffer.getLine(first)?.isWrapped) first -= 1;
   while (buffer.getLine(last + 1)?.isWrapped) last += 1;
-  if (target.row < first || target.row > last) return '';
+  const manualRange = terminalManualEditRange(
+    buffer,
+    cols,
+    options.editableRegion || options.manualEditRange,
+  );
+  const softTarget = target.row >= first && target.row <= last;
+  const manualTarget = manualRange
+    && target.row >= manualRange.start
+    && target.row <= manualRange.end;
+  if (!softTarget && !manualTarget) return '';
   const line = buffer.getLine(target.row);
   if (!line) return '';
   let end = cols;
-  if (target.row === last) {
+  if (target.row === last || manualTarget) {
     end = 0;
     for (let col = 0; col < cols; col += 1) {
       const cell = line.getCell(col);
-      if (cell?.getChars()) end = col + Math.max(1, cell.getWidth());
+      if (cell?.getChars()) end = col + Math.max(1, cell.getWidth?.() || 1);
     }
     if (target.row === cursorRow) end = Math.max(end, buffer.cursorX);
   }
   let col = Math.max(0, Math.min(target.col, end));
   while (col > 0 && line.getCell(col)?.getWidth() === 0) col -= 1;
+
+  if (manualTarget) {
+    return terminalExplicitEditorInput(
+      buffer,
+      cols,
+      target,
+      options.editableRegion || options.manualEditRange,
+      applicationCursorKeys,
+    );
+  }
+
   const from = cursorRow * cols + buffer.cursorX;
   const to = target.row * cols + col;
   let steps = 0;
@@ -82,6 +194,8 @@ function setTerminalKeyboardInputEnabled(terminal, enabled) {
 }
 
 module.exports = {
+  terminalManualEditRange,
+  terminalVisibleCellCount,
   terminalCursorTapInput,
   handleKeyboardClosedStationaryTap,
   setTerminalKeyboardInputEnabled,

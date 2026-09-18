@@ -1,4 +1,4 @@
-import { AGENT_SPINNER_FRAMES, agentStatusGlyph, statusMotionKind, statusTone } from '../src/lib/statusMotion';
+import { AGENT_SPINNER_FRAMES, agentStatusGlyph, shouldMountNativeAgentSpinner, statusMotionKind, statusTone } from '../src/lib/statusMotion';
 
 test('matches the native Herdr agent status glyphs', () => {
   expect(agentStatusGlyph('blocked')).toBe('◉');
@@ -27,4 +27,12 @@ test('keeps agent state colors aligned with their semantic tone', () => {
   expect(statusTone('blocked')).toBe('destructive');
   expect(statusTone('connecting')).toBe('warning');
   expect(statusTone('idle')).toBe('muted');
+});
+
+test('does not mount native working spinners on E-Ink or with reduced motion', () => {
+  expect(shouldMountNativeAgentSpinner('working', true, false)).toBe(true);
+  expect(shouldMountNativeAgentSpinner('running', true, false)).toBe(true);
+  expect(shouldMountNativeAgentSpinner('working', true, true)).toBe(false);
+  expect(shouldMountNativeAgentSpinner('working', false, false)).toBe(false);
+  expect(shouldMountNativeAgentSpinner('done', true, false)).toBe(false);
 });

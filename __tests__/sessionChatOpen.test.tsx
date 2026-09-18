@@ -1,6 +1,7 @@
 import type { ComponentProps } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { SessionScreen } from '../src/components/SessionScreen';
+import { DisplayProfileProvider } from '../src/lib/displayProfile';
 import { agentChatCache } from '../src/services/agentChatCache';
 import { agentTranscriptService } from '../src/services/NativeTranscriptService';
 import { listenToChat } from '../src/services/chatSpeech';
@@ -73,6 +74,7 @@ jest.mock('../src/components/TerminalScreen', () => {
         element(TerminalRendererHost, {
           activeTarget: props.activeTarget, targets: props.targets,
           preferences: props.preferences, visible: props.visible,
+          setEditableRegion: noop,
           onResidencyEnd: props.onResidencyEnd,
           onInput: noop, onScroll: noop, onOfflineScroll: noop, onOfflineSnapshot: noop,
           onSearchResult: noop, onLinksScanned: noop, onOpenLink: noop, onPaste: noop,
@@ -117,6 +119,7 @@ jest.mock('../src/services/volumeKeys', () => ({
 jest.mock('../src/theme', () => ({
   useTheme: () => ({ colors: {} }),
   sessionTabGlassStyle: () => ({}),
+  sessionAgentRailStyle: () => ({}),
   sessionTabStatusColor: () => '',
   statusColor: () => '',
 }));
@@ -159,6 +162,7 @@ function setup(agent: ChatAgent) {
     tabs: [{ workspace_id: 'workspace-1', tab_id: 'tab-1', focused: true }],
   } as unknown as HerdrSnapshot;
   const native = {
+    requestHerdrApi: jest.fn(async () => ({})),
     hostState: jest.fn(() => ({
       syncStatus: 'synced',
       freshness: 'fresh',
@@ -352,7 +356,187 @@ function addCachePressure(host: ReturnType<typeof setup>) {
   ));
 }
 
+test('tab selection is interactive and an empty/deleted tab cannot retain the old terminal target', () => {
+  const host = setup('codex');
+  const firstPane = host.pane;
+  const secondPane: PaneInfo = {
+    ...firstPane,
+    pane_id: 'pane-2',
+    terminal_id: 'terminal-2',
+    tab_id: 'tab-2',
+    focused: false,
+  };
+  const secondTerminal = {
+    ...host.props.terminalState.sessions[0],
+    terminalId: 'terminal-2',
+    paneId: 'pane-2',
+  };
+  host.props.snapshot = {
+    ...host.props.snapshot,
+    workspaces: [
+      { workspace_id: 'workspace-1', active_tab_id: 'tab-1', focused: true },
+    ],
+    tabs: [
+      { workspace_id: 'workspace-1', tab_id: 'tab-1', focused: true },
+      { workspace_id: 'workspace-1', tab_id: 'tab-2', focused: false },
+    ],
+    panes: [firstPane, secondPane],
+  } as unknown as HerdrSnapshot;
+  host.props.terminalState = {
+    ...host.props.terminalState,
+    sessions: [...host.props.terminalState.sessions, secondTerminal],
+  };
+  host.props.terminalTargets = [
+    ...host.props.terminalTargets,
+    { key: 'target-2', hostSessionId: 'host-1', client: host.client, session: secondTerminal },
+  ];
+  act(() => {
+    renderer = create(<SessionScreen {...host.props} />);
+  });
+
+  const tabButtons = () => renderer.root.findAll(
+    node => node.props?.accessibilityLabel === 'session.openTab',
+  );
+  expect(ui('TerminalScreen').props.activeTarget?.key).toBe('target');
+  act(() => { tabButtons()[1].props.onPress(); });
+  expect(ui('TerminalScreen').props.activeTarget?.key).toBe('target-2');
+
+  // A delayed snapshot removes the selected tab's last pane while the old
+  // terminal session is still resident. The old target must not remain usable.
+  host.props.snapshot = {
+    ...host.props.snapshot,
+    panes: [firstPane],
+  };
+  act(() => { renderer.update(<SessionScreen {...host.props} />); });
+  expect(ui('TerminalScreen').props.activeTarget).toBeNull();
+  expect(ui('TerminalScreen').props.visible).toBe(false);
+});
+
+test.each(['workspace', 'tab'] as const)('explicit empty %s survives stale focus snapshots and deletion', async kind => {
+  const host = setup('codex');
+  const snapshot = host.props.snapshot;
+  host.props.snapshot = {
+    ...snapshot,
+    workspaces: [...snapshot.workspaces.map(item => ({ ...item, number: 1 })), { ...snapshot.workspaces[0], number: 2, workspace_id: 'empty-workspace', active_tab_id: '', focused: false }],
+    tabs: [...snapshot.tabs.map(item => ({ ...item, number: 1 })), { ...snapshot.tabs[0], number: 2, tab_id: 'empty-tab', focused: false }],
+  };
+  await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
+  const label = kind === 'workspace' ? 'rail.workspaceStatus' : 'session.openTab';
+  await act(async () => {
+    renderer.root.findAll(node => node.props.accessibilityLabel === label)[1].props.onPress();
+  });
+  expect(ui('TerminalScreen').props.activeTarget).toBeNull();
+  jest.mocked(host.props.onActivateTerminal).mockClear();
+  await act(async () => {
+    renderer.update(<SessionScreen {...host.props} snapshot={{ ...host.props.snapshot, panes: [...snapshot.panes] }} />);
+  });
+  expect(ui('TerminalScreen').props.activeTarget).toBeNull();
+  expect(host.props.onActivateTerminal).not.toHaveBeenCalled();
+  // Deletion must release local intent so an existing resource can recover.
+  await act(async () => { renderer.update(<SessionScreen {...host.props} snapshot={snapshot} />); });
+  expect(ui('TerminalScreen').props.activeTarget?.key).toBe('target');
+});
+
+test('A → B → A restores the locally selected pane despite stale server focus', async () => {
+  const host = setup('codex');
+  const secondPane = { ...host.pane, pane_id: 'pane-2', terminal_id: 'terminal-2', focused: false };
+  const secondTerminal = { ...host.props.terminalState.sessions[0], paneId: 'pane-2', terminalId: 'terminal-2' };
+  host.props.snapshot = { ...host.props.snapshot, panes: [host.pane, secondPane] };
+  host.props.terminalState = { ...host.props.terminalState, sessions: [...host.props.terminalState.sessions, secondTerminal] };
+  host.props.terminalTargets = [...host.props.terminalTargets, {
+    key: 'target-2', hostSessionId: 'host-1', client: host.client, session: secondTerminal,
+  }];
+  const other = setup('codex');
+  other.props.hostSessionId = 'host-2';
+  other.props.terminalTargets = [{ ...other.props.terminalTargets[0], key: 'other-target', hostSessionId: 'host-2' }];
+  await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
+  await act(async () => {
+    renderer.root.findAll(node => node.props.accessibilityLabel === 'session.openPane')[1].props.onPress();
+  });
+  expect(ui('TerminalScreen').props.activeTarget?.key).toBe('target-2');
+  await act(async () => { renderer.update(<SessionScreen {...other.props} />); });
+  expect(ui('TerminalScreen').props.activeTarget?.key).toBe('other-target');
+  await act(async () => { renderer.update(<SessionScreen {...host.props} />); });
+  expect(ui('TerminalScreen').props.activeTarget?.key).toBe('target-2');
+});
+
+test('a workspace change sends one pane focus, and tapping the active pane does no extra work', async () => {
+  const host = setup('codex');
+  const pane = { ...host.pane, pane_id: 'pane-2', terminal_id: 'terminal-2', tab_id: 'tab-2', workspace_id: 'workspace-2', focused: false };
+  const terminal = { ...host.props.terminalState.sessions[0], paneId: pane.pane_id, terminalId: pane.terminal_id };
+  host.props.snapshot = {
+    ...host.props.snapshot,
+    workspaces: [
+      { ...host.props.snapshot.workspaces[0], number: 1 },
+      { ...host.props.snapshot.workspaces[0], number: 2, workspace_id: 'workspace-2', active_tab_id: 'tab-2', focused: false },
+    ],
+    tabs: [...host.props.snapshot.tabs, { ...host.props.snapshot.tabs[0], tab_id: 'tab-2', workspace_id: 'workspace-2', focused: false }],
+    panes: [host.pane, pane],
+  };
+  host.props.terminalState.sessions.push(terminal);
+  host.props.terminalTargets = [...host.props.terminalTargets, { key: 'target-2', hostSessionId: 'host-1', client: host.client, session: terminal }];
+  await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
+  host.native.requestHerdrApi.mockClear();
+  jest.mocked(host.props.onActivateTerminal).mockClear();
+  await act(async () => {
+    renderer.root.findAll(node => node.props.accessibilityLabel === 'rail.workspaceStatus')[1].props.onPress();
+  });
+  expect(host.native.requestHerdrApi.mock.calls).toEqual([[{ method: 'pane.focus', params: { pane_id: 'pane-2' } }]]);
+  expect(host.props.onActivateTerminal).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    renderer.root.findAll(node => node.props.accessibilityLabel === 'session.openPane')[0].props.onPress();
+  });
+  expect(host.native.requestHerdrApi).toHaveBeenCalledTimes(1);
+  expect(host.props.onActivateTerminal).toHaveBeenCalledTimes(1);
+});
+
+test('all three rails retain full original names and content-sized buttons in horizontal scroll views', () => {
+  const host = setup('codex');
+  const workspaceName = '原始 Workspace 名称 '.repeat(15);
+  const tabName = '原始 Tab 名称 '.repeat(15);
+  const paneName = '原始 Pane 名称 '.repeat(15).trim();
+  host.props.snapshot.workspaces[0].label = workspaceName;
+  host.props.snapshot.tabs[0].label = tabName;
+  Object.assign(host.pane, { label: paneName, display_agent: 'Original Agent Name' });
+  act(() => { renderer = create(<SessionScreen {...host.props} />); });
+  for (const [railId, label, names] of [
+    ['session-workspaces', 'rail.workspaceStatus', [workspaceName]],
+    ['session-tabs', 'session.openTab', [tabName]],
+    ['session-panes', 'session.openPane', [paneName, 'Original Agent Name']],
+  ] as const) {
+    const rail = renderer.root.findByProps({ testID: railId });
+    expect(rail.props.horizontal).toBe(true);
+    const button = rail.find(node => node.props.accessibilityLabel === label);
+    expect(button.props.className.split(/\s+/)).toContain('shrink-0');
+    expect(button.props.className.split(/\s+/)).not.toContain('flex-1');
+    expect(button.parent?.props.className).not.toMatch(/max-w-|overflow-hidden/);
+    for (const name of names) {
+      const text = button.find(node => String(node.type) === 'Text' && node.props.children === name);
+      expect(text.props.className).not.toContain('max-w-');
+      expect(text.props.className).toContain('shrink-0');
+    }
+  }
+});
+
 describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
+  test('E-Ink terminal startup leaves large Chat history dormant until Chat is pressed', async () => {
+    const host = setup(agent);
+    bindChat(host, agent);
+    await act(async () => {
+      renderer = create(
+        <DisplayProfileProvider preference="eink">
+          <SessionScreen {...host.props} />
+        </DisplayProfileProvider>,
+      );
+    });
+    expect(ui('TerminalScreen').props.activeTarget).not.toBeNull();
+    expect(host.native.openAgentChat).not.toHaveBeenCalled();
+    expect(agentChatCache.loadNative).not.toHaveBeenCalled();
+    await act(async () => { control().onPress(); });
+    expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
+    expect(agentChatCache.loadNative).toHaveBeenCalledTimes(1);
+  });
+
   test.each(['hidden', 'background', 'ssh', 'shell', 'no-target'] as const)('does not preload an ineligible %s terminal', async reason => {
     const host = setup(agent);
     bindChat(host, agent);

@@ -20,11 +20,23 @@ describe('terminal offline cache scheduler', () => {
     expect(serialize).not.toHaveBeenCalled();
     jest.advanceTimersByTime(1);
     expect(serialize).toHaveBeenCalledTimes(1);
+    expect(serialize).toHaveBeenCalledWith({ scrollback: 500 });
     cache.markDirty();
     cache.snapshot('eviction');
     expect(serialize).toHaveBeenCalledTimes(2);
     jest.runOnlyPendingTimers();
     expect(serialize).toHaveBeenCalledTimes(2);
+  });
+
+  test('limits E-Ink serialization before building a large transcript', () => {
+    const serialize = jest.fn(() => 'bounded state');
+    const cache = createTerminalOfflineCache({ serialize, send: jest.fn() });
+    cache.configure({ enabled: true, scrollback: 20000, eink: true });
+    cache.snapshot('background', true);
+    expect(serialize).toHaveBeenCalledWith({ scrollback: 500 });
+    cache.configure({ enabled: true, scrollback: 20000, eink: false });
+    cache.snapshot('background', true);
+    expect(serialize).toHaveBeenLastCalledWith({ scrollback: 5000 });
   });
 
   test('serializes once after an output burst instead of on every frame', () => {

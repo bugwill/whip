@@ -113,6 +113,7 @@ const terminalHandle = {
   blur: jest.fn(),
   setKeyboardEnabled: jest.fn(),
   setForcedMouseInput: jest.fn(),
+  setEditableRegion: jest.fn(),
   clearSearch: jest.fn(),
   cancelPendingResumeScroll: jest.fn(),
 };
@@ -296,6 +297,22 @@ test('direction pad is the same height as controls and outside the horizontal sc
   }
   expect(pad.props.onStartShouldSetPanResponderCapture()).toBe(true);
   expect(pad.props.onShouldBlockNativeResponder()).toBe(true);
+});
+
+test('fixed keys stay outside the scrolling rail when usage changes', () => {
+  mount();
+  const fixed = renderer.root.findByProps({ testID: 'terminal-fixed-controls' });
+  const rail = renderer.root.findByProps({ testID: 'terminal-scrollable-controls' });
+  const fixedButtons = () => fixed.findAll(node => String(node.type) === 'Button').map(node => node.props.accessibilityLabel);
+  const original = fixedButtons();
+  expect(original).toHaveLength(5);
+  expect(fixed.findAll(node => node.props.accessibilityLabel === '按住并向上下左右滑动以移动光标').length).toBeGreaterThan(0);
+  expect(rail.props.horizontal).toBe(true);
+  expect(rail.findAll(node => String(node.type) === 'Button').some(node => node.props.accessibilityLabel && original.includes(node.props.accessibilityLabel))).toBe(false);
+  expect(fixed.findAll(node => String(node.type) === 'Text').map(node => node.props.children)).toEqual(['HOME', 'TAB', 'ESC']);
+  act(() => renderer.update(<TerminalScreen {...props} controlUsage={{ paste: 50, home: 999, mouse: 100 }} />));
+  expect(fixedButtons()).toEqual(original);
+  expect(rail.findAll(node => String(node.type) === 'Button')[0].props.accessibilityLabel).toBe('terminal.enableForcedMouseInput');
 });
 
 test('direction drags reach the terminal input bridge as arrow escape sequences', () => {

@@ -14,6 +14,7 @@ import {
 import type { TerminalFrame } from '../src/lib/terminalBridge';
 import type { TerminalRenderTarget } from '../src/lib/terminalRenderer';
 import { MIN_XTERM_CACHE_CAPACITY } from '../src/lib/terminalRendererLru';
+import { DisplayProfileProvider } from '../src/lib/displayProfile';
 import type { TerminalPreferences } from '../src/services/devicePreferences';
 
 jest.mock('expo/virtual/env', () => ({ env: {} }));
@@ -250,12 +251,14 @@ describe('TerminalRendererHost lifecycle', () => {
     targets: TerminalRenderTarget[] = [activeTarget],
     pauseResizeInBackground = true,
     xtermCacheCapacity = preferences.xtermCacheCapacity,
+    eink = false,
   ) => {
     const eventCallbacks = createCallbacks();
     const injected: string[] = [];
     const handle = createRef<TerminalRendererHandle>();
     const requestFocus = jest.fn();
     const renderHost = (target: TerminalRenderTarget) => (
+      <DisplayProfileProvider preference={eink ? 'eink' : 'normal'}>
       <TerminalRendererHost
         ref={handle}
         {...eventCallbacks}
@@ -264,6 +267,7 @@ describe('TerminalRendererHost lifecycle', () => {
         targets={targets}
         visible
       />
+      </DisplayProfileProvider>
     );
     await act(async () => {
       renderer = create(
@@ -304,6 +308,21 @@ describe('TerminalRendererHost lifecycle', () => {
     };
     return { activateTarget, eventCallbacks, handle, injected, requestFocus, webView };
   };
+
+  test('E-Ink releases the oldest renderer before allocating a fourth despite preference 20', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({});
+    const targets = Array.from({ length: 4 }, (_, index) => createTarget(`term-${index}`, client, scroll));
+    const { activateTarget, injected } = await mountReadyHost(targets[0], targets, true, 20, true);
+    for (const target of targets.slice(1, 3)) await activateTarget(target);
+    injected.length = 0;
+    await activateTarget(targets[3]);
+    const removal = injected.findIndex(script => script.includes(`herdrRemove(${JSON.stringify(targets[0].key)})`));
+    const allocation = injected.findIndex(script => script.includes(`herdrCreate(${JSON.stringify(targets[3].key)})`));
+    expect(removal).toBeGreaterThanOrEqual(0);
+    expect(allocation).toBeGreaterThan(removal);
+    expect(client.closeTerminalBridge).not.toHaveBeenCalled();
+  });
 
   test('only the active pane can request the software keyboard', async () => {
     const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 100, viewport_rows: 24 };

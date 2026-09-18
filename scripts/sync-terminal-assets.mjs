@@ -13,6 +13,8 @@ const { installAndroidImeBridge, terminalInputDelta } = androidImeBridge;
 const { createTerminalPasteBridge } = terminalClipboardPaste;
 const { createTerminalOfflineCache } = terminalOfflineCache;
 const {
+  terminalManualEditRange,
+  terminalVisibleCellCount,
   terminalCursorTapInput,
   handleKeyboardClosedStationaryTap,
   setTerminalKeyboardInputEnabled,
@@ -279,6 +281,8 @@ const terminalSessionHtml = `<!doctype html>
     ${installAndroidImeBridge.toString()}
     ${createTerminalPasteBridge.toString()}
     ${createTerminalOfflineCache.toString()}
+    ${terminalManualEditRange.toString()}
+    ${terminalVisibleCellCount.toString()}
     ${handleKeyboardClosedStationaryTap.toString()}
     ${terminalCursorTapInput.toString()}
     ${setTerminalKeyboardInputEnabled.toString()}
@@ -401,6 +405,10 @@ const terminalSessionHtml = `<!doctype html>
     let lastTap = null;
     let doubleTapAction = 'tab';
     let keyboardEnabled = false;
+    // Hard-newline editor navigation is opt-in. xterm cannot identify an
+    // application's editable region from rendered text without risking shell
+    // history/menu input, so a producer must explicitly publish this state.
+    let terminalEditableRegion = null;
     let forcedMouseInput = false;
     let localScrollback = false;
     let offlineScrollback = false;
@@ -782,6 +790,7 @@ const terminalSessionHtml = `<!doctype html>
       offlineTranscriptChunks = [];
       offlineTranscriptVisible = false;
       lastReportedOfflineScroll = '';
+      terminalEditableRegion = null;
       clearOsc8Links();
       terminal.reset();
       clearInteractiveSelection(false);
@@ -821,7 +830,13 @@ const terminalSessionHtml = `<!doctype html>
     window.herdrConfigure = options => {
       einkMode = options.einkMode === true;
       terminal.options.fontSize = Math.max(einkMode ? 12 : 8, Math.min(24, Number(options.fontSize) || (einkMode ? 12 : 8)));
-      terminal.options.scrollback = Math.max(1000, Math.min(20000, Number(options.scrollback) || 5000));
+      // Herdr owns connected-pane history remotely. Do not keep a second
+      // 5,000-line copy in xterm on memory-constrained E-Ink devices. Direct
+      // SSH shells still use the requested local scrollback.
+      const requestedScrollback = Math.max(1000, Math.min(20000, Number(options.scrollback) || 5000));
+      terminal.options.scrollback = einkMode && options.localScrollback !== true
+        ? Math.min(1000, requestedScrollback)
+        : requestedScrollback;
       terminal.options.cursorBlink = !einkMode && options.cursorBlink !== false;
       terminal.options.allowTransparency = !einkMode;
       terminal.options.minimumContrastRatio = einkMode ? 21 : 1;
@@ -1191,6 +1206,14 @@ const terminalSessionHtml = `<!doctype html>
       keyboardEnabled = setTerminalKeyboardInputEnabled(terminal, enabled);
       clearInteractiveSelection(true);
     };
+    window.herdrSetEditableRegion = region => {
+      terminalEditableRegion = region && typeof region === 'object'
+        ? { ...region }
+        : null;
+    };
+    window.herdrClearEditableRegion = () => {
+      terminalEditableRegion = null;
+    };
     window.herdrFit = resize;
     const toolbar = document.getElementById('selection-toolbar');
     const hideToolbar = () => { toolbar.style.display = 'none'; };
@@ -1224,7 +1247,8 @@ const terminalSessionHtml = `<!doctype html>
     const moveCursorAtPoint = point => {
       if (offlineScrollback) return false;
       const data = terminalCursorTapInput(terminal.buffer.active, terminal.cols,
-        bufferCellAt(point.clientX, point.clientY), terminal.modes.applicationCursorKeysMode);
+        bufferCellAt(point.clientX, point.clientY), terminal.modes.applicationCursorKeysMode,
+        { editableRegion: terminalEditableRegion });
       if (!data) return false;
       send({ type: 'input', data });
       return true;
@@ -1339,6 +1363,7 @@ const terminalSessionHtml = `<!doctype html>
     });
     terminal.buffer.onBufferChange(buffer => {
       clearInteractiveSelection(true);
+      terminalEditableRegion = null;
       searchState = { query: '', caseSensitive: false, regex: false, matches: [], index: -1 };
       applyTerminalVisualInsets();
       send({ type: 'buffer-mode', alternate: buffer.type === 'alternate' });
@@ -1521,7 +1546,9 @@ const terminalSessionHtml = `<!doctype html>
         const buffer = terminal.buffer.active;
         if (!offlineScrollback && !urlAtPoint(point.clientX, point.clientY)
           && tappedCell && (tappedCell.row === buffer.baseY + buffer.cursorY
-            || terminalCursorTapInput(buffer, terminal.cols, tappedCell))) {
+            || terminalCursorTapInput(buffer, terminal.cols, tappedCell,
+              terminal.modes.applicationCursorKeysMode,
+              { editableRegion: terminalEditableRegion }))) {
           send({ type: 'keyboard-request' });
         }
         event.preventDefault();
@@ -1816,6 +1843,8 @@ const terminalHtml = `<!doctype html>
     window.herdrFocus = key => call(key, 'herdrFocus');
     window.herdrBlur = key => call(key, 'herdrBlur');
     window.herdrSetKeyboardEnabled = (key, enabled) => call(key, 'herdrSetKeyboardEnabled', [enabled]);
+    window.herdrSetEditableRegion = (key, region) => call(key, 'herdrSetEditableRegion', [region]);
+    window.herdrClearEditableRegion = key => call(key, 'herdrClearEditableRegion');
     window.herdrSetForcedMouseInput = (key, enabled) => call(key, 'herdrSetForcedMouseInput', [enabled]);
     window.herdrSetRenderDrop = (key, enabled) => call(key, 'herdrSetRenderDrop', [enabled]);
     window.herdrSnapshot = (key, reason) => call(key, 'herdrSnapshot', [reason]);

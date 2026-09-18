@@ -219,6 +219,20 @@ export function sessionTabGlassStyle(active: boolean, palette: ThemeColors) {
   };
 }
 
+export function sessionAgentRailStyle(
+  active: boolean,
+  accent: string,
+  palette: ThemeColors,
+) {
+  return {
+    backgroundColor: colorWithAlpha(
+      active ? palette.activeSurface : palette.surface,
+      active ? palette.activeSurfaceAlpha : 'B8',
+    ),
+    borderColor: colorWithAlpha(active ? palette.activeSurfaceForeground : accent, active ? '70' : '65'),
+  };
+}
+
 export function appGlassControlStyle(active: boolean, palette: ThemeColors) {
   return {
     backgroundColor: 'transparent',

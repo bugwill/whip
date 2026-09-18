@@ -40,6 +40,7 @@ import { terminalSubmissionWrites } from '../lib/terminalSubmission';
 import { isUnknownRecord, stringArray } from '../lib/unknown';
 import {
   terminalRendererEvictionKeys,
+  terminalRendererCacheCapacity,
   touchTerminalRendererEntry,
 } from '../lib/terminalRendererLru';
 import { useDisplayProfile } from '../lib/displayProfile';
@@ -190,12 +191,28 @@ export interface TerminalRendererHandle {
   scrollToVisualBottom: () => void;
   search: (query: string, caseSensitive: boolean, regex: boolean, direction: number) => void;
   setForcedMouseInput: (enabled: boolean) => void;
+  /**
+   * Publish an application-owned hard-newline editor region. This is
+   * deliberately not inferred from terminal text; without it, taps outside a
+   * soft-wrapped line remain input-safe and do not become history/menu keys.
+   */
+  setEditableRegion: (region: TerminalEditableRegion | null) => void;
   setKeyboardEnabled: (enabled: boolean) => void;
   submitPastes: (
     target: TerminalRenderTarget,
     parts: readonly string[],
     newUserInput?: boolean,
   ) => Promise<void>;
+}
+
+export interface TerminalEditableRegion {
+  source: 'application';
+  mode: 'line-editor-clamped';
+  startRow: number;
+  endRow: number;
+  cursorRow: number;
+  cursorCol: number;
+  revision?: string | number;
 }
 
 interface Props {
@@ -367,17 +384,18 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     }
   }, [inject, relinquishController]);
 
-  const pruneEntries = useCallback((protectedKeys: ReadonlySet<string>) => {
+  const pruneEntries = useCallback((protectedKeys: ReadonlySet<string>, reservedSlots = 0) => {
     const evictions = terminalRendererEvictionKeys(
       [...entries.current.keys()],
-      preferences.xtermCacheCapacity,
+      terminalRendererCacheCapacity(preferences.xtermCacheCapacity, isEink),
       protectedKeys,
+      reservedSlots,
     );
     for (const key of evictions) {
       const entry = entries.current.get(key);
       if (entry) disposeEntry(key, entry, false);
     }
-  }, [disposeEntry, preferences.xtermCacheCapacity]);
+  }, [disposeEntry, isEink, preferences.xtermCacheCapacity]);
 
   const configureEntry = useCallback((entry: RendererEntry) => {
     const scrollbackMode = terminalScrollbackMode(entry.target.session);
@@ -947,6 +965,10 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       'herdrSetForcedMouseInput',
       [enabled],
     ),
+    setEditableRegion: region => activeCall(
+      region ? 'herdrSetEditableRegion' : 'herdrClearEditableRegion',
+      region ? [region] : [],
+    ),
     setKeyboardEnabled: enabled => {
       keyboardEnabled.current = enabled;
       if (enabled) webView.current?.requestFocus();
@@ -1012,8 +1034,10 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       }
       disposeEntry(key, entry, true);
     }
+    const protectedKeys = new Set(activeTarget?.key ? [activeTarget.key] : []);
+    // Evict before allocation, avoiding a capacity+1 renderer memory peak.
+    pruneEntries(protectedKeys, activeTarget && !entries.current.has(activeTarget.key) ? 1 : 0);
     ensureEntry(activeTarget);
-    pruneEntries(new Set(activeTarget?.key ? [activeTarget.key] : []));
   }, [activeTarget, configureEntry, disposeEntry, ensureEntry, pruneEntries, targets]);
 
   const activeTargetKey = activeTarget?.key || '';
@@ -1550,6 +1574,18 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       javaScriptEnabled
       textZoom={100}
       onMessage={handleMessage}
+      onRenderProcessGone={event => {
+        recordNetworkDiagnostic('error', 'terminal-renderer-process-gone', {
+          didCrash: event.nativeEvent.didCrash,
+          residentRenderers: entries.current.size,
+          eink: isEink,
+        });
+      }}
+      onContentProcessDidTerminate={() => {
+        recordNetworkDiagnostic('error', 'terminal-content-process-terminated', {
+          residentRenderers: entries.current.size,
+        });
+      }}
       onTouchStart={() => {
         if (!visible || !activeKey.current) return;
         const entry = entries.current.get(activeKey.current);

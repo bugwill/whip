@@ -6,10 +6,12 @@ const ROOT = resolve(__dirname, '..');
 const FILE_READING_TESTS = new Set([
   '__tests__/androidBackupConfig.test.ts',
   '__tests__/architectureBoundaries.test.ts',
+  '__tests__/appStartupConcurrency.test.tsx',
   '__tests__/licenseNotices.test.ts',
   '__tests__/terminalAssetGeneration.test.ts',
   '__tests__/terminalAssets.test.ts',
   '__tests__/terminalResize.test.ts',
+  '__tests__/terminalEinkStream.test.ts',
 ]);
 
 function filesBelow(directory: string): string[] {

@@ -66,7 +66,11 @@ function createTerminalOfflineCache({
     configure(options) {
       delayMs = options?.eink ? Math.max(3000, normalDelayMs) : normalDelayMs;
       enabled = options?.enabled === true;
-      scrollback = Math.max(1, Math.min(5000, Math.round(Number(options?.scrollback)) || 5000));
+      // serialize() builds the entire ANSI string before safeSerialization can
+      // clip it. Keep the synchronous work and WebView bridge payload bounded
+      // on E-Ink, where a large restored session can otherwise stall rendering.
+      const maximumScrollback = options?.eink ? 500 : 5000;
+      scrollback = Math.max(1, Math.min(maximumScrollback, Math.round(Number(options?.scrollback)) || maximumScrollback));
       if (!enabled) {
         dirty = false;
         clearTimer();

@@ -11,12 +11,17 @@ export interface TerminalViewportLayout {
 }
 
 export const TERMINAL_CONTROL_BAR_BASE_HEIGHT = 50;
+export const SESSION_WORKSPACE_BAR_HEIGHT = 44;
 export const SESSION_TAB_BAR_HEIGHT = 55;
 export const SESSION_PANE_BAR_HEIGHT = 44;
 export const TERMINAL_FLOATING_ACTION_GAP = 12;
 
-export function terminalSessionChromeHeight(paneCount: number): number {
-  return SESSION_TAB_BAR_HEIGHT + (paneCount > 1 ? SESSION_PANE_BAR_HEIGHT : 0);
+export function terminalSessionChromeHeight(
+  _paneCount: number,
+  workspaceVisible = true,
+): number {
+  if (!workspaceVisible) return SESSION_TAB_BAR_HEIGHT;
+  return SESSION_WORKSPACE_BAR_HEIGHT + SESSION_TAB_BAR_HEIGHT + SESSION_PANE_BAR_HEIGHT;
 }
 
 export function terminalLatestButtonBottom({

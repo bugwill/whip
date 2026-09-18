@@ -791,24 +791,100 @@ impl AgentSessionManager {
     }
 
     pub(crate) fn confirm_cache(&self, token: &str) -> bool {
-        let mut state = self.inner.state.lock();
-        let Some(checkpoint) = state.checkpoints.remove(token) else {
-            return false;
+        let (confirmed, followup) = {
+            let mut state = self.inner.state.lock();
+            let Some(checkpoint) = state.checkpoints.remove(token) else {
+                return false;
+            };
+            let (confirmed, candidate) = {
+                let Some(session) = state.sessions.get_mut(&checkpoint.session_key) else {
+                    return false;
+                };
+                let confirmed = session
+                    .core
+                    .confirm_cache(checkpoint.source_generation, checkpoint.offset);
+                if confirmed
+                    && session
+                        .pending_cache_offset
+                        .is_some_and(|offset| offset <= checkpoint.offset)
+                {
+                    session.pending_cache_offset = None;
+                }
+                // Only one full-history blob may cross the native event bridge
+                // at once. After SQLite confirms, save the latest idle cursor.
+                let candidate =
+                    if confirmed && session.pending_cache_offset.is_none() && !session.closed {
+                        match &session.core {
+                            AgentSessionCore::Codex(core)
+                                if core.committable_offset() > core.committed_offset() =>
+                            {
+                                core.cache_blob().ok().map(|blob| {
+                                    (
+                                        core.source_generation(),
+                                        core.committable_offset(),
+                                        core.revision(),
+                                        blob,
+                                    )
+                                })
+                            }
+                            AgentSessionCore::OpenCode(core)
+                                if core.cursor().is_some_and(|cursor| {
+                                    cursor > core.committed_cursor().unwrap_or(0)
+                                }) =>
+                            {
+                                core.cache_blob().ok().map(|blob| {
+                                    (
+                                        core.source_generation(),
+                                        core.cursor().unwrap_or(0),
+                                        core.revision(),
+                                        blob,
+                                    )
+                                })
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                let candidate = candidate.map(|(generation, offset, revision, blob)| {
+                    session.pending_cache_offset = Some(offset);
+                    (session.operation_epoch, generation, offset, revision, blob)
+                });
+                (confirmed, candidate)
+            };
+            let followup = candidate.map(|(epoch, generation, offset, revision, blob)| {
+                let key = checkpoint.session_key.clone();
+                let next = state.next_checkpoint;
+                state.next_checkpoint = state.next_checkpoint.saturating_add(1);
+                let confirmation_token = format!("checkpoint-{next}");
+                state.checkpoints.insert(
+                    confirmation_token.clone(),
+                    PendingCheckpoint {
+                        session_key: key.clone(),
+                        source_generation: generation,
+                        offset,
+                    },
+                );
+                (
+                    key.clone(),
+                    epoch,
+                    AgentTranscriptUpdate {
+                        revision,
+                        deltas: Vec::new(),
+                    },
+                    AgentTranscriptCacheWrite {
+                        namespace: self.inner.runtime_id.clone(),
+                        key,
+                        blob,
+                        confirmation_token,
+                    },
+                )
+            });
+            (confirmed, followup)
         };
-        let Some(session) = state.sessions.get_mut(&checkpoint.session_key) else {
-            return false;
-        };
-        let confirmed = session
-            .core
-            .confirm_cache(checkpoint.source_generation, checkpoint.offset);
-        if confirmed
-            && session
-                .pending_cache_offset
-                .is_some_and(|offset| offset <= checkpoint.offset)
-        {
-            session.pending_cache_offset = None;
+        if let Some((key, epoch, update, cache_write)) = followup {
+            emit(&self.inner, key, epoch, update, Some(cache_write));
         }
-        drop(state);
         confirmed
     }
 
@@ -1159,8 +1235,9 @@ impl AgentSessionManager {
                     || checkpoint_base.is_none_or(|base| {
                         cursor.saturating_sub(base) >= OPENCODE_CHECKPOINT_EVENTS
                     });
-                let new_checkpoint =
-                    checkpoint_due && (full || checkpoint_base.is_none_or(|base| cursor > base));
+                let new_checkpoint = checkpoint_due
+                    && session.pending_cache_offset.is_none()
+                    && (full || checkpoint_base.is_none_or(|base| cursor > base));
                 let cache = new_checkpoint
                     .then(|| core.cache_blob().ok())
                     .flatten()
@@ -1410,8 +1487,9 @@ fn stream_data(context: u64, bytes: Vec<u8>) {
                     let checkpoint_due = update.as_ref().is_some_and(completes_turn)
                         || result.committable_offset.saturating_sub(checkpoint_base)
                             >= CODEX_CHECKPOINT_BYTES;
-                    let new_checkpoint =
-                        checkpoint_due && result.committable_offset > checkpoint_base;
+                    let new_checkpoint = checkpoint_due
+                        && session.pending_cache_offset.is_none()
+                        && result.committable_offset > checkpoint_base;
                     let cache = new_checkpoint
                         .then(|| core.cache_blob().ok())
                         .flatten()
@@ -2133,6 +2211,57 @@ mod tests {
             manager.start_bound(&first.binding_token, None),
             Ok(AgentChatStartResult::StaleBinding)
         ));
+    }
+
+    #[test]
+    fn confirming_an_in_flight_checkpoint_flushes_the_latest_idle_codex_cursor() {
+        let manager = test_manager("host");
+        let binding = manager
+            .bind_codex("terminal".into(), SESSION.into())
+            .unwrap();
+        let bytes = include_bytes!("../test-fixtures/codex/paginated-rollout.jsonl");
+        let split = bytes.iter().position(|byte| *byte == b'\n').unwrap() + 1;
+        let (generation, first_offset) = {
+            let mut state = manager.inner.state.lock();
+            let session = state.sessions.get_mut(&binding.transcript_key).unwrap();
+            let AgentSessionCore::Codex(core) = &mut session.core else {
+                unreachable!()
+            };
+            let source = core.bind_source("/rollout".into(), "1:2".into(), bytes.len() as u64);
+            core.ingest(source.source_generation, &bytes[..split])
+                .unwrap();
+            let first_offset = core.committable_offset();
+            core.ingest(source.source_generation, &bytes[split..])
+                .unwrap();
+            session.pending_cache_offset = Some(first_offset);
+            (source.source_generation, first_offset)
+        };
+        {
+            let mut state = manager.inner.state.lock();
+            state.checkpoints.insert(
+                "first".into(),
+                PendingCheckpoint {
+                    session_key: binding.transcript_key.clone(),
+                    source_generation: generation,
+                    offset: first_offset,
+                },
+            );
+        }
+        assert!(manager.confirm_cache("first"));
+        let next_token = {
+            let state = manager.inner.state.lock();
+            let session = &state.sessions[&binding.transcript_key];
+            assert_eq!(session.pending_cache_offset, Some(bytes.len() as u64));
+            assert_eq!(state.checkpoints.len(), 1);
+            state.checkpoints.keys().next().unwrap().clone()
+        };
+        assert!(manager.confirm_cache(&next_token));
+        let state = manager.inner.state.lock();
+        assert_eq!(
+            state.sessions[&binding.transcript_key].pending_cache_offset,
+            None
+        );
+        assert!(state.checkpoints.is_empty());
     }
 
     #[test]

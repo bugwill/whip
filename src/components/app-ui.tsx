@@ -31,6 +31,7 @@ import { useDisplayProfile } from '@/src/lib/displayProfile';
 import { bundledAsset } from '@/src/lib/bundledAsset';
 import {
   agentStatusGlyph,
+  shouldMountNativeAgentSpinner,
   statusMotionKind,
   statusTone,
 } from '@/src/lib/statusMotion';
@@ -245,16 +246,15 @@ export function AnimatedAgentStatusGlyph({
 }) {
   const reduceMotion = useReducedMotion();
   const animationsEnabled = useContext(AgentStatusAnimationContext);
-  const spins = status === 'working' || status === 'running';
   const { style } = useStatusMotion(status, false, false, animationsEnabled);
   const glyphBoxSize = size + 4;
   return (
     <Animated.View className="items-center justify-center" style={[{ width: glyphBoxSize, height: glyphBoxSize }, style]}>
-      {spins ? (
+      {shouldMountNativeAgentSpinner(status, animationsEnabled, reduceMotion) ? (
         <NativeAgentSpinner
           color={color}
           durationMs={AGENT_SPINNER_ROTATION_MS}
-          enabled={animationsEnabled && !reduceMotion}
+          enabled
           size={size}
         />
       ) : status === 'blocked' ? (

@@ -16,6 +16,16 @@ export function agentStatusGlyph(status: string, spinnerFrame = 0): string {
   return '○';
 }
 
+export function shouldMountNativeAgentSpinner(
+  status: string,
+  animationsEnabled: boolean,
+  reduceMotion: boolean,
+): boolean {
+  return (status === 'working' || status === 'running')
+    && animationsEnabled
+    && !reduceMotion;
+}
+
 export function statusMotionKind(status: string): StatusMotionKind {
   if (SPINNING_STATUSES.has(status)) return 'spin';
   if (PULSING_STATUSES.has(status)) return 'pulse';

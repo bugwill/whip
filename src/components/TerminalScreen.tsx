@@ -75,9 +75,8 @@ import { cn } from '@/src/lib/utils';
 import { retryDelay } from '../lib/retryDelay';
 import {
   claimTerminalMouseWarning,
-  orderTerminalControls,
-  swapTerminalArrowControls,
-  terminalArrowControlCanSwap,
+  fixedTerminalControls,
+  scrollableTerminalControls,
   terminalControlIsVisible,
   TERMINAL_CONTROL_HIT_SLOP,
   TERMINAL_ICON_CONTROL_CLASS,
@@ -123,6 +122,7 @@ import type { TerminalSessionStatus } from '../terminalSessions';
 import { appGlassControlStyle, useTheme } from '../theme';
 import {
   TerminalRendererHost,
+  type TerminalEditableRegion,
   type TerminalRendererHandle,
 } from './TerminalRendererHost';
 import { ComposerInput, MessageComposer } from './MessageComposer';
@@ -149,6 +149,8 @@ interface Props {
   targets: readonly TerminalRenderTarget[];
   visible: boolean;
   preferences: TerminalPreferences;
+  /** Application-owned hard-newline editor state; null keeps navigation safe. */
+  editableRegion?: TerminalEditableRegion | null;
   controlUsage: TerminalControlUsage;
   historyEntries: readonly string[];
   compact?: boolean;
@@ -213,6 +215,7 @@ export interface TerminalScreenHandle {
     text: string,
     attachmentPaths: readonly string[],
   ) => boolean;
+  setEditableRegion: (region: TerminalEditableRegion | null) => void;
 }
 
 type TerminalKeyDefinition = readonly [
@@ -401,6 +404,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       targets,
       visible,
       preferences,
+      editableRegion = null,
       controlUsage,
       historyEntries,
       compact = false,
@@ -551,9 +555,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       targetKey: string;
       scroll: TerminalRenderTarget['scroll'];
     } | null>(null);
-    const [controlOrder, setControlOrder] = useState(() =>
-      orderTerminalControls(controlUsage),
-    );
+    const controlOrder = useMemo(() => scrollableTerminalControls(controlUsage), [controlUsage]);
     const scrollThumb = alternateScreen
       ? null
       : terminalScrollThumb(scrollPosition);
@@ -657,9 +659,14 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       () => ({
         enqueueComposerMessage: (text, attachmentPaths) =>
           enqueueComposerMessageRef.current(text, attachmentPaths),
+        setEditableRegion: region => renderer.current?.setEditableRegion(region),
       }),
       [],
     );
+
+    useEffect(() => {
+      renderer.current?.setEditableRegion(editableRegion);
+    }, [editableRegion]);
 
     useEffect(() => {
       const nextComposeText = terminalId ? getComposerDraft(terminalId) : '';
@@ -1531,10 +1538,6 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       if (terminalId) onComposerDraftChange(terminalId, value);
     };
 
-    const swapArrowControls = (control: TerminalControlId) => {
-      setControlOrder(order => swapTerminalArrowControls(order, control));
-    };
-
     const renderTerminalControl = (control: TerminalControlId) => {
       if (control === 'left' || control === 'right' || control === 'down' || control === 'up') return null;
       const key = TERMINAL_KEYS[control];
@@ -1558,11 +1561,6 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                 : undefined
             }
             symbolic={!icon && (useIconicKey || key[2] === 'symbol')}
-            onLongPress={
-              terminalArrowControlCanSwap(control)
-                ? () => swapArrowControls(control)
-                : undefined
-            }
             onPress={() => {
               onControlUse(control);
               reportBackgroundFailure(
@@ -2389,17 +2387,21 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           }}
         >
           <View className="flex-row items-start">
-          <View style={{ paddingLeft: 6, paddingTop: 7, paddingBottom: 7 + bottomSafeAreaInset }}>
+          <View testID="terminal-fixed-controls" style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 0, gap: 5,
+            paddingLeft: 6, paddingRight: 6, paddingTop: 7, paddingBottom: 7 + bottomSafeAreaInset,
+            borderRightWidth: 1, borderRightColor: appColors.divider }}>
+            {fixedTerminalControls.map(renderTerminalControl)}
             <TerminalDirectionPad onDirection={direction => {
               onControlUse('up');
               reportBackgroundFailure(sendInput(TERMINAL_KEYS[direction]![1]), TERMINAL_INPUT_CONTEXT);
             }} />
           </View>
           <ScrollView
+            testID="terminal-scrollable-controls"
             horizontal
             keyboardShouldPersistTaps="always"
             showsHorizontalScrollIndicator={false}
-            className="flex-1"
+            className="min-w-0 flex-1"
             contentContainerClassName="items-center gap-[5px] px-1.5 pt-[7px]"
             contentContainerStyle={{ paddingBottom: 7 + bottomSafeAreaInset }}
           >

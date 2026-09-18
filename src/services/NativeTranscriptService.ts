@@ -30,6 +30,7 @@ export type NativeTranscriptTransport = Pick<
 >;
 
 type Listener = (state: AgentChatState | null, baseline?: boolean) => void;
+type NativeCacheWrite = NonNullable<NativeAgentTranscriptUpdate['cacheWrite']>;
 
 function activatingState(state: AgentChatState): AgentChatState {
   return state.status === 'unavailable' || state.status === 'error'
@@ -56,6 +57,11 @@ interface TranscriptEntry {
   listeners: Map<string, Set<Listener>>;
   state: AgentChatState;
   deleted: boolean;
+  cacheWriteActive: boolean;
+  pendingCacheWrite?: {
+    checkpoint: NativeCacheWrite;
+    supersededTokens: string[];
+  };
 }
 
 export type AgentChatProjection =
@@ -188,6 +194,7 @@ export class NativeTranscriptService {
         listeners: new Map(),
         state: activationState,
         deleted: false,
+        cacheWriteActive: false,
       };
       this.entries.set(entryKey, entry);
     } else {
@@ -266,6 +273,8 @@ export class NativeTranscriptService {
     for (const entry of this.entries.values()) {
       for (const listeners of entry.listeners.values()) listeners.clear();
       entry.bindings.clear();
+      entry.deleted = true;
+      entry.pendingCacheWrite = undefined;
     }
     this.entries.clear();
     this.terminalBindings.clear();
@@ -291,6 +300,7 @@ export class NativeTranscriptService {
         continue;
       }
       entry.deleted = true;
+      entry.pendingCacheWrite = undefined;
       for (const token of [...entry.bindings.keys()]) this.forgetBindingToken(token);
     }
     return this.cache.retainNative(retention.namespace, retention.retainedKeys);
@@ -375,6 +385,8 @@ export class NativeTranscriptService {
       .at(-1);
     recordAgentChatDiagnostic('native-update-received', {
       bindingCount: entry.bindings.size,
+      cacheWriteBytes: event.cacheWrite?.blob.byteLength ?? 0,
+      cacheWriteQueued: entry.cacheWriteActive,
       deltas: event.deltas.map(delta => delta.type).join(','),
       error: status?.error,
       revision: event.revision,
@@ -395,15 +407,43 @@ export class NativeTranscriptService {
       this.publish(entry, next, event.deltas.some(delta => delta.type === 'reset'));
     }
     if (!event.cacheWrite) return;
-    const checkpoint = event.cacheWrite;
-    // Admit the write immediately to the cache's namespace queue. A deferred
-    // per-entry chain could otherwise enqueue it after authoritative deletion.
-    this.cache.saveNative(checkpoint)
+    this.queueCacheWrite(entry, event.cacheWrite);
+  }
+
+  private queueCacheWrite(entry: TranscriptEntry, checkpoint: NativeCacheWrite): void {
+    if (entry.cacheWriteActive) {
+      // A checkpoint serializes the entire transcript. Keeping every queued
+      // blob can consume gigabytes while SQLite is slower than live updates.
+      // The newest checkpoint supersedes earlier ones for the same entry.
+      const previous = entry.pendingCacheWrite;
+      entry.pendingCacheWrite = {
+        checkpoint,
+        supersededTokens: previous
+          ? [...previous.supersededTokens, previous.checkpoint.confirmationToken]
+          : [],
+      };
+      return;
+    }
+    this.persistCacheWrite(entry, { checkpoint, supersededTokens: [] });
+  }
+
+  private persistCacheWrite(
+    entry: TranscriptEntry,
+    pending: NonNullable<TranscriptEntry['pendingCacheWrite']>,
+  ): void {
+    entry.cacheWriteActive = true;
+    // Admit immediately: authoritative retention must be ordered after any
+    // in-flight write. Only one additional latest blob stays in memory.
+    this.cache.saveNative(pending.checkpoint)
       .then(() => {
         if (entry.deleted) return;
-        entry.transport.confirmAgentTranscriptCache(
-          checkpoint.confirmationToken,
-        );
+        entry.transport.confirmAgentTranscriptCache(pending.checkpoint.confirmationToken);
+        // Retire superseded native tokens only after the durable newest offset
+        // has advanced. Older confirmations may be rejected, which is fine:
+        // their checkpoint bookkeeping is still released.
+        for (const token of pending.supersededTokens) {
+          entry.transport.confirmAgentTranscriptCache(token);
+        }
       })
       .catch(error => {
         if (entry.deleted) return;
@@ -412,6 +452,12 @@ export class NativeTranscriptService {
           status: 'stale',
           error: `Could not persist ${entry.agent} history: ${String(error)}`,
         });
+      })
+      .finally(() => {
+        entry.cacheWriteActive = false;
+        const next = entry.pendingCacheWrite;
+        entry.pendingCacheWrite = undefined;
+        if (!entry.deleted && next) this.persistCacheWrite(entry, next);
       });
   }
 
@@ -452,6 +498,7 @@ export class NativeTranscriptService {
     }
     if (entry.bindings.size === 0) {
       entry.deleted = true;
+      entry.pendingCacheWrite = undefined;
       // Pending native/cache callbacks may still own this entry. Drop their
       // transcript projection immediately as well as removing the map entry.
       entry.state = {

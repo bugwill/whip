@@ -237,6 +237,37 @@ describe('Rust-owned agent Chat projection', () => {
     expect(remote.value.confirmAgentTranscriptCache).not.toHaveBeenCalled();
   });
 
+  test('coalesces full-history checkpoints while persistence is slow', async () => {
+    const cache = new MemoryAgentChatCache();
+    const save = jest.spyOn(cache, 'saveNative');
+    let finishFirst!: () => void;
+    save.mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve; }));
+    const remote = fakeTransport();
+    const service = new NativeTranscriptService(cache);
+    openedToken(service, remote.value);
+    await flush();
+    const blob = new Uint8Array(1024 * 1024).buffer;
+    for (let revision = 2; revision <= 50; revision += 1) {
+      remote.emit({
+        revision,
+        deltas: [],
+        cacheWrite: {
+          namespace: 'profile', key: transcriptKey, blob,
+          confirmationToken: `checkpoint-${revision}`,
+        },
+      });
+    }
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(remote.value.confirmAgentTranscriptCache).not.toHaveBeenCalled();
+    finishFirst();
+    await flush();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ confirmationToken: 'checkpoint-50' }));
+    await flush();
+    expect(remote.value.confirmAgentTranscriptCache).toHaveBeenCalledTimes(49);
+    expect(remote.value.confirmAgentTranscriptCache).toHaveBeenCalledWith('checkpoint-50');
+  });
+
   test('stale snapshots and old runtime callbacks cannot delete current history', async () => {
     const cache = new MemoryAgentChatCache();
     const service = new NativeTranscriptService(cache);

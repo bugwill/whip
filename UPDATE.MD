@@ -6,6 +6,65 @@
 
 ## 已完成的修改
 
+### 1.6 Ubuntu 首次进入即被系统 LOW_MEMORY 杀进程：后台 Chat 预载与 checkpoint 防护（诊断候选 build 236）
+
+- 用户的 Android `ApplicationExitInfo`、`lowmemorykiller` 和 `dumpsys meminfo` 已确认旧包被系统以 `LOW_MEMORY` 杀死，退出前 PSS/RSS 约 2.5 GB、native heap 约 2.1 GB；SSH 已连接成功，没有证据支持 Java FATAL、SIGSEGV 或 ANR 是本次退出原因。用户没有切换任何 Pane：导航栏先显示，终端内容稍后显示，随后进程被杀。因此切换请求不是必要触发条件，也不能把此前 build 234/235 当作已验证修复。
+- 2026-09-18 用户进一步确认两次测试的**实际安装版本都是 235**：分别以 `LOW_MEMORY` 退出，PSS/RSS 约 3.4 GB 与 2.5 GB。本次 12:12:08 自动加载了 `69,292,165` bytes Agent 缓存，约 20 秒内 revision 由 976 升至 1027，`viewportMounted=false`，12:12:28 被 LMK 杀掉。build 235 **不包含**本节的懒加载/JS 合并/Rust checkpoint 背压，因此不能以这份反馈判断这些新改动是否有效。
+- `SessionScreen` 原先在可见 Agent pane 上自动调用 `agentTranscriptService.preload`，即便 Chat viewport 未挂载也会读取完整 SQLite 缓存并同步 Rust transcript。旧日志中约 62 MB 缓存和大量 `message-upserted`/`turn-upserted` 更新与这一路径一致。现在 E-Ink 模式进入 Terminal 不再自动预载 Chat；用户主动打开 Chat 或已有显式 Chat 恢复意图时仍按原逻辑启动。这牺牲了 E-Ink 上 Chat 的后台预热速度，换取首次进入主机时不加载大历史；普通显示模式保持原行为。
+- 同一 transcript 的完整 checkpoint 写入由无界待写副本改为最多一份正在写入和一份最新待写 blob；新 checkpoint 覆盖旧待写 blob，确认只在最新 blob 持久化之后进行，删除/分离仍清理待写引用。此项缓解 SQLite 慢于 Agent 更新时的内存放大，但不限制单次显式 Chat 恢复 62 MB 历史的峰值，也不证明三行导航是唯一诱因。
+- 原生 Rust 的 Codex/OpenCode 处理现在同一会话最多只生成一份未确认的完整历史 checkpoint；收到 SQLite 持久化确认后，如果当前游标已经推进，会补发最新 checkpoint，避免最后一轮恰好停在等待期间而丢失持久化进度。`native-update-received` 日志补充 `cacheWriteBytes` 与 `cacheWriteQueued`，下次可直接看到完整 blob 是否仍密集生成。持久化失败仍将 Chat 标为 stale；不要错误确认尚未落盘的数据。
+- 已通过 `sessionChatOpen` 和 `nativeTranscriptService` 相关测试（118 项）、Rust `agent_sessions` 25 项及 TypeScript/`cargo fmt --check`；尚未做 Bigme 真机 `dumpsys meminfo` 对比。不要标注“完全修复”或发布为已验证稳定版。下次在真机对比首次进入 Ubuntu 后的 native heap/PSS 与 5–10 分钟趋势，并测试用户主动打开 Chat 后的峰值；如仍增长，继续检查 Rust 缓存恢复/FFI 全量状态拷贝。此前 build 235 不包含本节改动。
+- **编译注意**：本节改了 `packages/react-native-whip-ssh/rust/src/agent_sessions.rs`，生成 Android APK 时必须重新编译并打包 ARM64 Rust 库；仅替换 Metro JS bundle 或复用 build 235 的 `.so` 无法验证原生背压。版本号也必须高于 235，安装后先核对 `versionCode`，避免重复测试旧 APK。
+- 本机缺少 `clang-format`，UniFFI 的 `ubrn generate` 会改写已跟踪的 C++/TS 生成文件并产生大量纯格式差异；生成的绑定已成功编译到 build 236，C++ 尾随空白已机械清理。下次不要把生成文件的格式噪声误判为手写协议变更，也不要在 Rust 源码变动后复用旧 `.so`。
+- 已重新编译 ARM64 Rust 库、UniFFI 绑定和 JS bundle，Gradle 8.13 `:app:assembleRelease` 成功。**诊断候选 APK**：[app-release-236.apk](android/app/build/outputs/apk/release/app-release-236.apk)，`versionCode=236` / `versionName=1.7.0` / `arm64-v8a` / minSdk 24，`106,753,291` bytes，SHA-256 `fe1a0aadc80300c7bca5c86adaddca2b7671773caeed2ed38c9cde1f1454e72f`。已通过 ZIP CRC、APK v2 签名、zipalign、aapt2 Manifest 检查；使用预览签名与跳过 R8，不是正式上架包。`app-release.apk` 的旧路径仍指向旧包，测试时务必选文件名带 `236` 的 APK。
+- 设备验收仍未完成：先确认安装的实际 `versionCode=236`，进入 Hosts→Ubuntu，不打开 Chat，观察 5–10 分钟 PSS/native heap；然后主动打开 Chat，再记录 69 MB 历史恢复后的峰值、`cacheWriteBytes` 和 `cacheWriteQueued`。若首次进入不再加载缓存却仍被 LMK 杀，说明还有独立的终端/导航原生内存路径，不能把修复标为完成。
+
+### 1.5 三行导航新增原生视图的 E-Ink 减负（build 235）
+
+- 用户指出退出问题始于三行 Workspace/Tab/Pane 导航；原版已有离线缓存而未出现同样问题。检查发现各行的工作中 Agent 状态图标在 E-Ink 模式虽然禁用了动画，仍实际装载 `NativeAgentSpinner` 原生视图。多个 Pane/Tab/Workspace 同时出现时，这些视图会与终端 WebView 一起创建。
+- 工作中/运行中的状态在 E-Ink 或减少动态效果时改为静态符号，不再创建原生 spinner 视图；普通显示模式保留旋转动画。此项专门减少三行导航增加的原生视图成本，仍不能在没有 Android crash stack 的情况下证明它是唯一根因。
+- build 234 保留为仅终端缓存缩小的 A/B 候选；build 235 叠加此导航图标修正。用户可优先安装 build 235 验证；若仍回到桌面，必须获取设备 logcat/系统 bug report 才能区分 OOM、ANR、JS Fatal 和原生崩溃。
+
+### 1.4 Ubuntu 会话打开后卡顿/退出的针对性处理（build 234）
+
+- 用户提供的 App 日志显示 SSH 连接成功：Ubuntu 从 `host-connect-requested` 到 `host-connect-ready` 约 1.5 秒，含 8 个 Pane；随后后台另一台主机也成功连接。日志没有 Android `FATAL EXCEPTION`、`OutOfMemoryError`、`ANR` 或进程结束记录，不能据此断言崩溃根因。
+- 进一步复现描述是：Hosts 中点 Ubuntu 后导航列表先出现，终端内容较慢才出现，再过一会整个 App 退出。重点检查了终端/WebView 加载路径。发现 E-Ink 的离线预览在输出停止 3 秒后会同步序列化最多 5000 行；原 100 万字符截断在序列化之后，无法限制这一步的瞬时内存/主线程耗时。
+- E-Ink 离线预览改为在序列化前最多取 500 行；连接中的 Herdr 终端在 E-Ink 上把 xterm 本地冗余 scrollback 限为 1000 行（远端历史仍由 Herdr 管理），直接 SSH Shell 仍按用户设置保留本地历史。非 E-Ink 行为不变。此变更降低已确认的内存/同步工作风险，但真机闪退是否消除仍待验证。
+- 用户补充：此前版本同样使用离线预览，却没有这个退出问题；异常是在加入三行 Workspace/Tab/Pane 导航后出现。因此不能把快照序列化认定为回归根因。build 234 是缩小内存峰值的诊断候选版；如果它仍退出，优先对比三行导航启用/关闭时的原生崩溃栈、WebView 几何和 SessionScreen 状态更新，不要继续仅凭时间顺序调缓存参数。
+- 已补 500 行上限与普通模式保持 5000 行的回归测试；生成终端资产后需运行 `node scripts/sync-terminal-assets.mjs --check`。如 build 234 仍退出，请提供 Android logcat/系统 bug report 的 `FATAL EXCEPTION`、`OutOfMemoryError`、`ANR` 或 `lowmemorykiller` 条目及时间，不要只给 App 日志；App 日志在进程被杀时无法记录原生原因。
+
+### 1.3 切换卡顿与内存风险处理（build 233）
+
+- 用户报告切换 Space/Tab/Pane/Agent 卡顿，并退出到安卓桌面。ADB 当前无设备，未取得原生崩溃栈或 OOM 记录，不能认定闪退根因已证实或真机问题已全部解决。
+- 有目标 Pane 时只请求一次 pane.focus（原生 host_state 的 focus_pane 已同步其父 Tab/Workspace），不再串行请求 workspace.focus/tab.focus/pane.focus 产生中间选择状态和多次重绘。空 Tab/Workspace 仍请求各自焦点。点击已激活项目不重复激活。
+- 用 SessionFocusQueue 替换无限增长的 Promise 链：最多一个执行中请求和一个可替换的待执行选择；快速连点只保留最后一个，切换 host/卸载清除待执行任务，旧请求失败不覆盖新选择。已有本地即时选择行为保留。
+- E-Ink 模式的驻留 xterm 渲染缓存最多 3 个，普通模式保留用户设置（默认 20）。先驱逐旧渲染器再创建新渲染器，降低瞬间内存峰值。仅回收本地渲染器并分离桥接控制器，不关闭远端 Pane/Agent/任务；返回更早的 Pane 需要重新渲染。此前缓存偏好值仍保留，E-Ink 实际执行上限为 3。
+- 选择记忆清理由嵌套过滤改为线性 Map 索引，缓存排序及 pending 资源计算。新增 WebView 渲染进程退出诊断事件，仅记录崩溃标志、驻留数量及 E-Ink 标志，不记录终端文本；这些日志不能捕获整个 Android 进程被杀死的所有情况。
+- 增加 1 万次快速选择/请求失败/清理队列、单次焦点请求/重复点击、E-Ink 容量与先回收再分配的组件回归测试。方向键及三行原名称横向滚动代码未改变。真机切换性能和退出问题仍需使用验证。
+- 本轮全量 Jest 146 套件/1108 项通过，TypeScript、修改文件 ESLint、资产一致性和 diff 空白检查通过；这不是内存峰值或 Android 原生崩溃实测。
+
+### 1.2 三行原名称显示与横向滚动（build 232）
+
+- 修复 Space 与 Pane/Agent 标签的布局：无固定宽度的横向 ScrollView 子项不能用 `flex-1` 挤占“剩余宽度”，否则名称可能被压缩。改成按内容测量、`shrink-0`，移除三行标签及文字的最大宽度/裁切；保留单行，超长名称通过整行横向滑动查看。
+- Space 按钮与外框统一 44dp，避免 36dp 外框裁切原生按钮的 44dp 最小高度。Pane 行明确占用剩余宽度，使其内容溢出时由 ScrollView 滚动。
+- 继续直接使用服务器 Workspace/Tab 的 label、Pane 的 label/title；Agent 优先使用 display_agent，未命名 Pane 最后回退 pane_id，不再把所有无名称 Pane 都显示为 shell。
+- 本次没有修改方向 pad、固定功能键顺序或其事件响应器。新增长中文/英文名称和三行内容宽度约束回归测试；测试不等同 Bigme 真机布局验证。构建/校验结果见下方当前 APK 信息。
+- 验证：全量 146 套件/1102 项通过，TypeScript、修改文件 ESLint、生成资产一致性通过。注意不要重新给横向标签按钮加 `flex-1`，也不要给其文字设置最大宽度后用 overflow-hidden 裁掉原名称。
+
+### 1.1 三级导航与选择状态修复（build 231，按用户要求先行交付）
+
+验收状态：用户明确要求“先发布，我先使用”，由主线程编译交付 build 231，不是全部需求已完成。Luna/Astra 已停止。主线程补充真实组件交互测试并修复跨 host 返回时输入目标未恢复、旧 host 请求阻塞和删除后的选择意图残留；空 Workspace/Tab 不会被旧焦点拉回。此前三组全量测试失败已解决。真实 Codex 尚无编辑区域 producer，硬换行点击仍未修复；不得将协议夹具测试通过等同真实 Codex 功能完成。详见 REVIEW.MD。
+
+主线程最终回归检查：覆盖主动选择空 Workspace/Tab、旧 snapshot、删除后恢复和 A→B→A 的输入目标恢复；全量 Jest 146 套件/1100 项通过（`--runInBand --silent --no-cache --watchman=false`，扫描排除密钥路径），TypeScript、本轮修改文件 ESLint、终端生成资产一致性及 diff 空白检查通过。未连接 Bigme 真机。未来启用真实 Codex 输入定位前仍须接通 producer 并核查预留 API 的 target/generation/revision 生命周期；本次部分发布不代表该项验收通过。
+
+- `SessionScreen` 底部会常驻三层选择栏：Workspace、当前 Workspace 的 Tab、当前 Tab 的 Pane。Workspace 选择栏没有关闭按钮；Tab 仍保留切换/关闭/新建；Pane 即使只有一个也保持可见。每层使用独立横向滚动区，键盘、composer 和输入法占用空间由 `terminalSessionChromeHeight` 统一计入，正文不会覆盖导航栏。
+- Workspace 和 Tab 使用服务器编号排序，避免 Agent 状态变化导致标签跳动；组件按 host 隔离缓存两个独立关系：Workspace → 最近 Tab、Tab → 最近 Pane。切换时先本地选中并激活对应 Pane，再按 Workspace → Tab → Pane 顺序发送 focus 请求；删除资源、空 Workspace/Tab、延迟 snapshot、异步 server focus 和 host 快速切换不会复用其它 host 的选择。
+- Pane 行按 Agent Pane 优先、普通 Pane 后置分组，使用分隔线且每个 Pane 只出现一次。普通显示模式按 Agent 名称稳定分配不同强调色；E-Ink 使用深灰点标识和黑色/深灰文字，不使用浅灰字或彩色依赖。Agent Pane 标签同时显示 Agent 名和 Pane 名。
+- `terminal-touch-behavior.cjs` 不再从 alternate/primary、提示符字符或最近 12 行推断编辑区。软换行仍可在当前逻辑行内左右定位；鼠标跟踪/强制鼠标仍交给 TUI；硬换行上下定位只有在应用明确提供 `source: application`、`mode: line-editor-clamped`、完整 `startRow/endRow` 和与 xterm 当前光标一致的状态时才启用。该协议在 primary/alternate 都适用，缓冲区切换、reset 会清除状态。
+- `TerminalRendererHost`/WebView 增加 `setEditableRegion`、`herdrSetEditableRegion` 和 `herdrClearEditableRegion` 接口，供未来的 Codex 应用适配层发布可验证区域。垂直移动按每个实际渲染行的有效列模拟短行裁剪，再以宽字符单元修正水平位置；支持首/中/末行、空行、上下双向及超过 12 行。没有应用协议时点击硬换行区域安全地不注入方向键，因此不会误触 shell 历史、引用输出或菜单。
+- 新增的 `test-fixtures/codexTerminalReplay.fixture.ts` 是 synthetic、无凭据的协议夹具，不是实际 Codex 录制。它覆盖 primary/alternate、引用样式输出、鼠标协议关闭时的安全拒绝；真实 Codex 要实现硬换行点击，还必须由 Codex/适配层在编辑状态变化时调用上述接口。当前仓库没有发现可直接证明 Codex 编辑区边界的既有远端协议，不能把通用终端的安全拒绝称为真实 Codex 已完全支持。
+- 本阶段新增/调整测试覆盖：交互式 Tab 选择及空/删除 Pane 的 activeTarget 清空、Workspace→Tab→Pane 分层缓存、host 同 ID 隔离、延迟 focus、稳定 Workspace/Tab 顺序、Agent/普通 Pane 分组与 E-Ink 颜色、三行导航高度、软换行、显式硬换行、中文/宽字符、空行/双向/长范围和鼠标输入路径。用户允许先行使用后，versionCode 递增为 231 并生成本地 APK，未推送代码或创建远程 Release。
+
 ### 1. E-Ink 显示配置
 
 - 新增 `src/lib/displayProfile.tsx`，提供 `auto`、`normal`、`eink` 三种显示配置。
@@ -44,6 +103,14 @@
 - `packages/react-native-whip-ssh/rust/build-android.sh` 增加 Android SDK/NDK 自动发现，并兼容版本化的 ARM64 clang/ar/ranlib 路径。
 
 ## 构建结果
+
+### 固定主按键与右侧滚动工具栏（build 230）
+
+- 左侧固定顺序：Home → 键盘开关 → 文本输入框（compose）→ Tab → Esc → 方向 pad。固定区不在 ScrollView 内，flexShrink=0，右侧细分隔线区分两个区域；方向 pad 保留 build 229 的普通 View/显式 style，不能改回 active 类。
+- 其它按键在右侧独立水平 ScrollView 中。`scrollableTerminalControls` 排除所有固定键和已合并的四个箭头，根据持久化使用次数降序排序，同次数保持默认稳定顺序；鼠标按钮不再被固定到键盘后。
+- 改为从最新 controlUsage useMemo 计算滚动区顺序，避免旧代码只在组件首次挂载时读取频率。固定键即使计数很高也不会进入滚动区或改变自身顺序；仍兼容原有使用次数存储。
+- 新增纯函数与组件布局测试：固定顺序/无重复、方向按钮不属于滚动区、使用次数变化时右侧重新排序但左侧不变。面向 10.3 英寸平板，不缩小固定键来塞入极窄窗口；非常窄的分屏下右侧剩余空间会受限。
+- 8 个相关测试套件共 85 项通过，包含真实样式 interop、方向手势、固定/滚动分区、终端输入、renderer 和键盘几何；TypeScript、修改文件 ESLint、生成资产一致性与 diff 空白检查通过。真机触屏布局仍未实测。
 
 ### 方向控制无效的样式响应器冲突（build 229）
 
@@ -103,12 +170,18 @@
 
 已生成并验证：
 
-- APK：[android/app/build/outputs/apk/release/app-release.apk](android/app/build/outputs/apk/release/app-release.apk)
+- 最新诊断 APK：[app-release-235.apk](android/app/build/outputs/apk/release/app-release-235.apk)；兼容原路径 [app-release.apk](android/app/build/outputs/apk/release/app-release.apk)，两份内容相同。`1.7.0` / versionCode `235` / `arm64-v8a` / minSdk 24；`106,762,971` bytes；SHA-256 `ce95d39949dc7dcf117714af244f3828a6a7b733355c965f881fdb5aba0ecff7`。全量 Jest 146 套件/1110 项、TypeScript、修改的 TS/TSX ESLint、终端资产检查、Gradle 8.13 assembleRelease、ZIP CRC、apksigner v2、zipalign、aapt2 通过；未连接 Bigme、闪退仍待真机确认。仅使用预览签名/跳过 R8，正式上架需正式签名并重新构建。
+- A/B 候选 APK：[app-release-234.apk](android/app/build/outputs/apk/release/app-release-234.apk)，`1.7.0` / versionCode `234` / ARM64；`106,762,187` bytes；SHA-256 `22ed779c1fbcb955f74a0aab5566a54450a4051fcbad0df1a52174f344760aa9`。仅缩小终端缓存，未减少导航 spinner 原生视图；它通过 146 套件/1109 项及 APK 校验，未真机验证。
+- 旧版：[app-release-233.apk](android/app/build/outputs/apk/release/app-release-233.apk)；便于和诊断版对比，不再是兼容原路径。
 - 包名：`io.github.kaminarios.whip`
-- 版本：`1.7.0`，versionCode `229`
+- 版本：`1.7.0`，最新 versionCode `235`
 - ABI：`arm64-v8a`，适合 Bigme B1051C
-- 文件大小：`106,746,171` bytes
-- SHA-256：`92a3e5d451071bede6d22583b1004a516adea400795cea0350ff35aebe2a6466`
+- 旧版 build 233 文件大小：`106,761,875` bytes
+- 旧版 build 233 SHA-256：`1ab3cbfde4d7199360b74972817d25f1a2d14f14faa0235cbacf6c5d8c096e25`
+- build 233：Gradle 8.13 assembleRelease 成功；最终版本化 APK 通过 ZIP CRC、apksigner v2、zipalign、aapt2（1.7.0 / 233 / arm64-v8a / minSdk 24）。签名与上一版一致。沿用仅 :app 输出到 tmpfs、previewSigning=true、skipR8=true、ARM64；未修改 Rust，跳过 buildRustArm64。临时 init script 已清理。全量 146 套件/1108 测试通过，未连接设备、未证明原生闪退已消除。
+- build 232：Gradle 8.13 assembleRelease 成功；最终版本化下载文件通过 ZIP CRC、apksigner v2、zipalign、aapt2（1.7.0 / 232 / arm64-v8a / minSdk 24）。与 build 231 使用同一 Android 预览签名。构建参数沿用仅 :app 输出到 tmpfs、previewSigning=true、skipR8=true、ARM64；未改 Rust，跳过 buildRustArm64。临时 init script 已删除。未做 Bigme 真机视觉验证；Codex 跨硬换行点击仍是已知未完成项。
+- build 231：Gradle 8.13 assembleRelease 成功，最终复制回仓库的 APK 通过 ZIP CRC、apksigner v2、zipalign、aapt2（1.7.0 / 231 / arm64-v8a / minSdk 24）；确认打包脚本含三行导航标识。Android 预览签名证书与 build 230 相同。沿用仅 :app 输出到 tmpfs、previewSigning=true、skipR8=true、ARM64；未改 Rust，跳过 buildRustArm64。临时 init script 已清理。跨行点击仍未完成，未做平板真机验证。
+- build 230：Release 构建、最终 APK ZIP CRC、签名、zipalign 和 aapt2（versionCode=230）均通过；预览签名与 ARM64 构建参数同前。
 - build 228：22 个相关测试套件累计 179 项通过；TypeScript、修改的 TS/TSX/Metro 文件 ESLint、资产一致性、git diff --check 通过。Gradle 8.13 assembleRelease 成功；最终复制到上述路径的 APK 通过 ZIP CRC、apksigner v2、aapt2 Manifest 和 zipalign 校验。缓存脚本以 ES2022/browser 环境检查无错误，原有 ANSI 控制字符正则仍有 1 个 no-control-regex 警告；不是全仓库 lint 零告警。未测真机启动时长/耗电比例。
 - build 227：累计 47 项相关测试通过；新增前后台 pane 键盘请求隔离测试。Release 构建和 ZIP CRC、签名、Manifest、对齐检查通过。手势及 IME 实际效果未在 Bigme 真机验证。
 - build 226：相关文件 ESLint、Release 构建及 ZIP CRC、签名、Manifest 和对齐校验通过。

@@ -33,6 +33,16 @@ export const defaultTerminalControlOrder = [
 export type TerminalControlId = typeof defaultTerminalControlOrder[number];
 export type TerminalControlUsage = Partial<Record<TerminalControlId, number>>;
 
+export const fixedTerminalControls = ['home', 'keyboard', 'compose', 'tab', 'esc'] as const;
+
+/** The four arrows are represented by the fixed direction pad, not rail keys. */
+export function scrollableTerminalControls(usage: TerminalControlUsage): TerminalControlId[] {
+  const fixed = new Set<TerminalControlId>([...fixedTerminalControls, 'up', 'down', 'left', 'right']);
+  return defaultTerminalControlOrder.filter(control => !fixed.has(control))
+    .sort((left, right) => (usage[right] || 0) - (usage[left] || 0)
+      || defaultTerminalControlOrder.indexOf(left) - defaultTerminalControlOrder.indexOf(right));
+}
+
 export const TERMINAL_CONTROL_HIT_SLOP = { top: 4, bottom: 4 } as const;
 export const TERMINAL_ICON_CONTROL_CLASS =
   `h-9 min-h-0 w-11 items-center justify-center rounded-sm border border-border p-0 ${APP_GLASS_FLOATING_CONTROL_CLASS}`;

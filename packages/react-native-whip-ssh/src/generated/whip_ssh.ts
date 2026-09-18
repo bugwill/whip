@@ -2896,11 +2896,7 @@ export const AgentTranscriptPart = (() => {
 })();
 export type AgentTranscriptPart = InstanceType<
   (typeof AgentTranscriptPart)[
-    | 'Text'
-    | 'Reasoning'
-    | 'Tool'
-    | 'Plan'
-    | 'Notice']
+    'Text' | 'Reasoning' | 'Tool' | 'Plan' | 'Notice']
 >;
 
 // FfiConverter for enum AgentTranscriptPart
@@ -14409,9 +14405,7 @@ export const HerdrEventError = (() => {
 })();
 export type HerdrEventError = InstanceType<
   (typeof HerdrEventError)[
-    | 'UnsupportedProtocol'
-    | 'TransportDisconnected'
-    | 'SubscriptionUnavailable']
+    'UnsupportedProtocol' | 'TransportDisconnected' | 'SubscriptionUnavailable']
 >;
 
 // FfiConverter for enum HerdrEventError
@@ -20445,32 +20439,32 @@ export interface HostRuntimeLike {
   agentIntegrationStatus(
     kind: HerdrAgentKind,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<AgentIntegrationStatus>;
-  agentTranscript(key: string): /*throws*/ AgentTranscriptState;
+  ) /*throws*/ : Promise<AgentIntegrationStatus>;
+  agentTranscript(key: string) /*throws*/ : AgentTranscriptState;
   awaitTransfer(
     transferId: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<TransferResult>;
+  ) /*throws*/ : Promise<TransferResult>;
   cancelTransfer(transferId: string): boolean;
   closeAllTerminals(): void;
   closeSshShell(terminalId: string): void;
   closeTerminal(terminalId: string): void;
   confirmAgentTranscriptCache(confirmationToken: string): boolean;
-  connect(asyncOpts_?: { signal: AbortSignal }): /*throws*/ Promise<void>;
+  connect(asyncOpts_?: { signal: AbortSignal }) /*throws*/ : Promise<void>;
   controlRequest(
     request: HerdrControlRequest,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<HerdrControlResult>;
+  ) /*throws*/ : Promise<HerdrControlResult>;
   createRemoteDirectory(
     path: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<void>;
+  ) /*throws*/ : Promise<void>;
   createTabWithLaunch(
     workspaceId: string,
     label: string,
     launch: HerdrTabLaunch,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<HerdrTabLaunchResult>;
+  ) /*throws*/ : Promise<HerdrTabLaunchResult>;
   /**
    * Return the current Rust-owned binding without creating or reopening it.
    * Presentation reconciliation must use this projection rather than the
@@ -20479,41 +20473,41 @@ export interface HostRuntimeLike {
   currentAgentChat(terminalId: string): AgentChatBinding | undefined;
   detachAgentChat(
     terminalId: string,
-  ): /*throws*/ AgentTranscriptArchive | undefined;
-  disconnect(asyncOpts_?: { signal: AbortSignal }): /*throws*/ Promise<void>;
+  ) /*throws*/ : AgentTranscriptArchive | undefined;
+  disconnect(asyncOpts_?: { signal: AbortSignal }) /*throws*/ : Promise<void>;
   discoverGitRepository(
     path: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<GitRepository | undefined>;
+  ) /*throws*/ : Promise<GitRepository | undefined>;
   execute(
     command: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<string>;
+  ) /*throws*/ : Promise<string>;
   gitDiff(
     repository: GitRepository,
     status: GitStatusEntry,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<GitDiff>;
+  ) /*throws*/ : Promise<GitDiff>;
   gitStatus(
     root: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<Array<GitStatusEntry>>;
+  ) /*throws*/ : Promise<Array<GitStatusEntry>>;
   hasSshShell(terminalId: string): boolean;
   hasTerminal(terminalId: string): boolean;
   hostState(): HostStateSnapshot;
   installAgentIntegration(
     kind: HerdrAgentKind,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<HerdrIntegrationInstallResult>;
+  ) /*throws*/ : Promise<HerdrIntegrationInstallResult>;
   isTerminalOpening(terminalId: string): boolean;
   listDirectory(
     path: string | undefined,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<RemoteDirectoryListing>;
+  ) /*throws*/ : Promise<RemoteDirectoryListing>;
   measureHostLatency(asyncOpts_?: {
     signal: AbortSignal;
-  }): /*throws*/ Promise<HostLatencyMeasurement>;
-  openAgentChat(terminalId: string): /*throws*/ AgentChatOpenResult;
+  }) /*throws*/ : Promise<HostLatencyMeasurement>;
+  openAgentChat(terminalId: string) /*throws*/ : AgentChatOpenResult;
   openSshShell(
     terminalId: string,
     columns: number,
@@ -20521,7 +20515,7 @@ export interface HostRuntimeLike {
     cellWidthPx: number,
     cellHeightPx: number,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<void>;
+  ) /*throws*/ : Promise<void>;
   openTerminal(
     terminalId: string,
     takeover: boolean,
@@ -20530,31 +20524,31 @@ export interface HostRuntimeLike {
     cellWidthPx: number,
     cellHeightPx: number,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<void>;
+  ) /*throws*/ : Promise<void>;
   readRemoteText(
     path: string,
     maxBytes: bigint | undefined,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<string>;
+  ) /*throws*/ : Promise<string>;
   recover(
     immediate: boolean,
     reason: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<void>;
+  ) /*throws*/ : Promise<void>;
   refreshState(asyncOpts_?: {
     signal: AbortSignal;
-  }): /*throws*/ Promise<HostStateSnapshot>;
-  remoteHome(asyncOpts_?: { signal: AbortSignal }): /*throws*/ Promise<string>;
+  }) /*throws*/ : Promise<HostStateSnapshot>;
+  remoteHome(asyncOpts_?: { signal: AbortSignal }) /*throws*/ : Promise<string>;
   removeRemotePath(
     path: string,
     directory: boolean,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<void>;
+  ) /*throws*/ : Promise<void>;
   renameRemotePath(
     from: string,
     to: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<void>;
+  ) /*throws*/ : Promise<void>;
   resizeSshShell(
     terminalId: string,
     columns: number,
@@ -20562,7 +20556,7 @@ export interface HostRuntimeLike {
     cellWidthPx: number,
     cellHeightPx: number,
     forceDispatch: boolean,
-  ): /*throws*/ HostTerminalResizeOutcome;
+  ) /*throws*/ : HostTerminalResizeOutcome;
   resizeTerminal(
     terminalId: string,
     columns: number,
@@ -20570,10 +20564,10 @@ export interface HostRuntimeLike {
     cellWidthPx: number,
     cellHeightPx: number,
     forceDispatch: boolean,
-  ): /*throws*/ HostTerminalResizeOutcome;
+  ) /*throws*/ : HostTerminalResizeOutcome;
   resolveControlSocket(asyncOpts_?: {
     signal: AbortSignal;
-  }): /*throws*/ Promise<string>;
+  }) /*throws*/ : Promise<string>;
   resolvedSocketPath(): string | undefined;
   runtimeId(): string;
   runtimeIncarnation(): bigint;
@@ -20584,56 +20578,56 @@ export interface HostRuntimeLike {
     column: number | undefined,
     row: number | undefined,
     modifiers: number,
-  ): /*throws*/ void;
+  ) /*throws*/ : void;
   setMonitoringState(
     appActive: boolean,
     hostsVisible: boolean,
     accessLocked: boolean,
   ): void;
   sshShellGeometry(terminalId: string): HostTerminalGeometry | undefined;
-  sshShellInput(terminalId: string, bytes: ArrayBuffer): /*throws*/ void;
+  sshShellInput(terminalId: string, bytes: ArrayBuffer) /*throws*/ : void;
   startAgentChat(
     bindingToken: string,
     cacheBlob: ArrayBuffer | undefined,
-  ): /*throws*/ AgentChatStartResult;
-  startAttachmentUpload(localPath: string): /*throws*/ string;
-  startDownload(remotePath: string, localDirectory: string): /*throws*/ string;
+  ) /*throws*/ : AgentChatStartResult;
+  startAttachmentUpload(localPath: string) /*throws*/ : string;
+  startDownload(remotePath: string, localDirectory: string) /*throws*/ : string;
   startHerdrServer(asyncOpts_?: {
     signal: AbortSignal;
-  }): /*throws*/ Promise<void>;
+  }) /*throws*/ : Promise<void>;
   startHtmlPreview(
     remotePath: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<PreviewInfo>;
+  ) /*throws*/ : Promise<PreviewInfo>;
   startRemoteFilePreview(
     remotePath: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<PreviewInfo>;
-  startUpload(localPath: string, remoteDirectory: string): /*throws*/ string;
+  ) /*throws*/ : Promise<PreviewInfo>;
+  startUpload(localPath: string, remoteDirectory: string) /*throws*/ : string;
   startWebPreview(
     remoteUrl: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<PreviewInfo>;
+  ) /*throws*/ : Promise<PreviewInfo>;
   statRemotePath(
     path: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<RemoteFileEntry>;
+  ) /*throws*/ : Promise<RemoteFileEntry>;
   status(): HostRuntimeStatus;
   stopPreview(
     previewId: string,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<void>;
+  ) /*throws*/ : Promise<void>;
   submitPastes(
     paneId: string,
     parts: Array<string>,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<void>;
+  ) /*throws*/ : Promise<void>;
   subscribeEvents(
     paneIds: Array<string>,
     asyncOpts_?: { signal: AbortSignal },
-  ): /*throws*/ Promise<void>;
+  ) /*throws*/ : Promise<void>;
   terminalGeometry(terminalId: string): HostTerminalGeometry | undefined;
-  terminalInput(terminalId: string, text: string): /*throws*/ void;
+  terminalInput(terminalId: string, text: string) /*throws*/ : void;
   terminalKittyKeyboardReportAll(terminalId: string): boolean;
   transferProgress(transferId: string): TransferProgress | undefined;
   unsubscribeEvents(): void;
@@ -24122,28 +24116,28 @@ const uniffiCallbackInterfaceHerdrTerminalEventSink: {
 };
 
 export interface HostProfileStoreLike {
-  hydrate(persisted: string | undefined): /*throws*/ HostProfileStoreView;
-  jumpCandidates(profileId: string): /*throws*/ Array<HostProfileRecord>;
-  markDisconnected(id: string, now: string): /*throws*/ HostProfileStoreView;
+  hydrate(persisted: string | undefined) /*throws*/ : HostProfileStoreView;
+  jumpCandidates(profileId: string) /*throws*/ : Array<HostProfileRecord>;
+  markDisconnected(id: string, now: string) /*throws*/ : HostProfileStoreView;
   migrateLegacy(
     persisted: string,
     now: string,
-  ): /*throws*/ HostProfileRecord | undefined;
+  ) /*throws*/ : HostProfileRecord | undefined;
   normalizeProfile(
     profile: HostProfileRecord,
     previousCreatedAt: string | undefined,
     now: string,
-  ): /*throws*/ HostProfileRecord;
-  remove(id: string, now: string): /*throws*/ HostProfileStoreView;
+  ) /*throws*/ : HostProfileRecord;
+  remove(id: string, now: string) /*throws*/ : HostProfileStoreView;
   resolveJumpChain(
     profileId: string,
     jumpHostId: string | undefined,
-  ): /*throws*/ Array<HostProfileRecord>;
+  ) /*throws*/ : Array<HostProfileRecord>;
   upsert(
     profile: HostProfileRecord,
     now: string,
-  ): /*throws*/ HostProfileStoreView;
-  view(): /*throws*/ HostProfileStoreView;
+  ) /*throws*/ : HostProfileStoreView;
+  view() /*throws*/ : HostProfileStoreView;
 }
 /**
  * @deprecated Use `HostProfileStoreLike` instead.
@@ -24680,16 +24674,16 @@ const uniffiCallbackInterfaceHostRuntimeEventSink: {
 };
 
 export interface KnownHostStoreLike {
-  commit(token: bigint): /*throws*/ KnownHostStoreView;
-  hydrate(persisted: string | undefined): /*throws*/ KnownHostStoreView;
+  commit(token: bigint) /*throws*/ : KnownHostStoreView;
+  hydrate(persisted: string | undefined) /*throws*/ : KnownHostStoreView;
   prepareAdd(
     challenge: HostKeyChallenge,
     id: string,
     createdAt: string,
-  ): /*throws*/ KnownHostMutation;
-  prepareRemove(id: string): /*throws*/ KnownHostMutation;
-  rollback(token: bigint): /*throws*/ KnownHostStoreView;
-  view(): /*throws*/ KnownHostStoreView;
+  ) /*throws*/ : KnownHostMutation;
+  prepareRemove(id: string) /*throws*/ : KnownHostMutation;
+  rollback(token: bigint) /*throws*/ : KnownHostStoreView;
+  view() /*throws*/ : KnownHostStoreView;
 }
 /**
  * @deprecated Use `KnownHostStoreLike` instead.

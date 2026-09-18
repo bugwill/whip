@@ -16,22 +16,22 @@ describe('floating chrome geometry', () => {
     const singlePaneChromeInset = terminalSessionChromeHeight(1);
     const multiPaneChromeInset = terminalSessionChromeHeight(2);
 
-    expect(singlePaneChromeInset).toBe(55);
-    expect(multiPaneChromeInset).toBe(99);
+    expect(singlePaneChromeInset).toBe(143);
+    expect(multiPaneChromeInset).toBe(143);
     expect(
       terminalBottomChromeClearance({
         sessionChromeInset: singlePaneChromeInset,
         sessionChromeVisible: true,
         terminalBottomInset,
       }),
-    ).toBe(139);
+    ).toBe(227);
     expect(
       terminalBottomChromeClearance({
         sessionChromeInset: multiPaneChromeInset,
         sessionChromeVisible: true,
         terminalBottomInset,
       }),
-    ).toBe(183);
+    ).toBe(227);
     expect(
       terminalBottomChromeClearance({
         sessionChromeInset: multiPaneChromeInset,
@@ -45,14 +45,14 @@ describe('floating chrome geometry', () => {
         sessionChromeVisible: true,
         terminalBottomInset,
       }),
-    ).toBe(151);
+    ).toBe(239);
     expect(
       terminalLatestButtonBottom({
         sessionChromeInset: multiPaneChromeInset,
         sessionChromeVisible: true,
         terminalBottomInset,
       }),
-    ).toBe(195);
+    ).toBe(239);
     expect(
       terminalLatestButtonBottom({
         sessionChromeInset: multiPaneChromeInset,
@@ -89,24 +89,24 @@ describe('floating chrome geometry', () => {
       sessionChromeInset: terminalSessionChromeHeight(2),
       sessionChromeVisible: true,
     });
-    expect(insets).toEqual({ top: 0, bottom: 183 });
+    expect(insets).toEqual({ top: 0, bottom: 227 });
     expect(insetContentPadding(insets, { top: 16, bottom: 24 })).toEqual({
       top: 16,
-      bottom: 207,
+      bottom: 251,
     });
   });
 
   test('keeps a top pull allowance without changing edge-to-edge content insets', () => {
-    const contentInsets = visualContentInsets(0, 183);
+    const contentInsets = visualContentInsets(0, 227);
 
     expect(terminalInsetsWithTopPull(contentInsets, 55)).toEqual({
       top: 55,
-      bottom: 183,
+      bottom: 227,
     });
-    expect(contentInsets).toEqual({ top: 0, bottom: 183 });
-    expect(terminalInsetsWithTopPull({ top: 92, bottom: 183 }, 55)).toEqual({
+    expect(contentInsets).toEqual({ top: 0, bottom: 227 });
+    expect(terminalInsetsWithTopPull({ top: 92, bottom: 227 }, 55)).toEqual({
       top: 92,
-      bottom: 183,
+      bottom: 227,
     });
   });
 });

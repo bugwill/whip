@@ -1,5 +1,7 @@
 import {
   claimTerminalMouseWarning,
+  fixedTerminalControls,
+  scrollableTerminalControls,
   defaultTerminalControlOrder,
   incrementTerminalControlUsage,
   orderTerminalControls,
@@ -11,6 +13,14 @@ import {
   TERMINAL_ICON_CONTROL_CLASS,
   TERMINAL_TEXT_CONTROL_CLASS,
 } from '../src/lib/terminalControls';
+
+test('fixed controls stay in requested order and never enter the scrolling rail', () => {
+  expect(fixedTerminalControls).toEqual(['home', 'keyboard', 'compose', 'tab', 'esc']);
+  const order = scrollableTerminalControls({ home: 999, keyboard: 999, paste: 8, mouse: 9, ctrl: 8 });
+  expect(order.slice(0, 3)).toEqual(['mouse', 'ctrl', 'paste']);
+  for (const fixed of [...fixedTerminalControls, 'up', 'down', 'left', 'right']) expect(order).not.toContain(fixed);
+  expect(scrollableTerminalControls({ paste: 20 })[0]).toBe('paste');
+});
 
 test('terminal controls use compact faces with 44pt native touch height', () => {
   const iconClasses = TERMINAL_ICON_CONTROL_CLASS.split(/\s+/);
