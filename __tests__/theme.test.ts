@@ -2,6 +2,7 @@ import {
   appGlassControlStyle,
   colorWithAlpha,
   darkColors,
+  einkColors,
   githubLightPalette,
   lightColors,
   resolveTheme,
@@ -55,6 +56,10 @@ describe('application theme', () => {
     expect(sessionTabGlassStyle(true, darkColors)).toEqual({
       backgroundColor: `${darkColors.primary}D6`,
       borderColor: `${darkColors.onPrimary}47`,
+    });
+    expect(sessionTabGlassStyle(true, einkColors)).toEqual({
+      backgroundColor: `${einkColors.activeSurface}FF`,
+      borderColor: `${einkColors.activeSurfaceForeground}47`,
     });
   });
 

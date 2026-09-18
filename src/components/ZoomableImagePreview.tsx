@@ -21,6 +21,7 @@ import {
   MIN_IMAGE_ZOOM,
   type ImageZoomSize,
 } from '@/src/lib/imageZoom';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 import { DEFAULT_SPRING_CONFIG } from '@/src/lib/motion';
 
 interface Props {
@@ -42,6 +43,7 @@ interface Point {
 const emptySize: ImageZoomSize = { width: 0, height: 0 };
 
 export function ZoomableImagePreview({ accessibilityLabel, uri }: Props) {
+  const { isEink } = useDisplayProfile();
   const [viewport, setViewport] = useState<ImageZoomSize>(emptySize);
   const [sourceSize, setSourceSize] = useState<ImageZoomSize | null>(null);
   const viewportRef = useRef(viewport);
@@ -94,9 +96,9 @@ export function ZoomableImagePreview({ accessibilityLabel, uri }: Props) {
         ? 0
         : clampImageTranslation(next.y, size.height, bounds.height, zoom);
     liveTransformRef.current = { scale: zoom, x, y };
-    scale.value = animate ? withSpring(zoom, DEFAULT_SPRING_CONFIG) : zoom;
-    translateX.value = animate ? withSpring(x, DEFAULT_SPRING_CONFIG) : x;
-    translateY.value = animate ? withSpring(y, DEFAULT_SPRING_CONFIG) : y;
+    scale.value = animate && !isEink ? withSpring(zoom, DEFAULT_SPRING_CONFIG) : zoom;
+    translateX.value = animate && !isEink ? withSpring(x, DEFAULT_SPRING_CONFIG) : x;
+    translateY.value = animate && !isEink ? withSpring(y, DEFAULT_SPRING_CONFIG) : y;
   };
 
   const reset = (animate: boolean) => {

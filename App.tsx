@@ -2,7 +2,6 @@ import './global.css';
 
 import { useEffect, useRef, useState } from 'react';
 import { useFonts } from 'expo-font';
-import { PortalHost } from '@rn-primitives/portal';
 import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
@@ -41,21 +40,21 @@ const guiFontAssets = {
 
 function App() {
   const [guiFontsLoaded, guiFontError] = useFonts(guiFontAssets);
+  // Start disk hydration while fonts load, not after the font gate opens.
+  const startupStorage = useStartupStorage();
   if (!guiFontsLoaded && !guiFontError) return null;
 
   return (
     <SafeAreaProvider>
       <ReducedMotionProvider>
-        <AppContent />
-        <PortalHost />
+        <AppContent startupStorage={startupStorage} />
       </ReducedMotionProvider>
     </SafeAreaProvider>
   );
 }
 
-function AppContent() {
+function AppContent({ startupStorage }: { startupStorage: ReturnType<typeof useStartupStorage> }) {
   const { t } = useTranslation();
-  const startupStorage = useStartupStorage();
   const preferences = useDevicePreferences(startupStorage);
   const preferencesLoaded = preferences.hydration.status !== 'loading';
   const membershipSimulationEnabled =

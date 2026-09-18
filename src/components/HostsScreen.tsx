@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 
 import { orderByConnectionAndAgentStatusPriority } from '@/src/herdQueue';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 import { DEFAULT_SSH_PORT, hostDisplayName } from '@/src/lib/hostProfiles';
 import type { HostRuntimeSummary } from '@/src/lib/hostRuntimeSummary';
 import { DEFAULT_SPRING_CONFIG } from '@/src/lib/motion';
@@ -237,7 +238,9 @@ function SwipeableHostRow({
   onDisconnect: () => void;
 }) {
   const { t } = useTranslation();
+  const { isEink } = useDisplayProfile();
   const translateX = useSharedValue(0);
+  const isEinkRef = useRef(isEink);
   const openRef = useRef(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const animatedStyle = useAnimatedStyle(() => ({
@@ -246,13 +249,15 @@ function SwipeableHostRow({
   const actionRevealStyle = useAnimatedStyle(() => ({
     width: Math.max(0, -translateX.value),
   }));
+  isEinkRef.current = isEink;
 
   useEffect(() => () => cancelAnimation(translateX), [translateX]);
 
   const settle = (open: boolean) => {
     openRef.current = open;
     setActionsOpen(open);
-    translateX.value = withSpring(open ? -HOST_SWIPE_ACTION_WIDTH : 0, DEFAULT_SPRING_CONFIG);
+    const target = open ? -HOST_SWIPE_ACTION_WIDTH : 0;
+    translateX.value = isEinkRef.current ? target : withSpring(target, DEFAULT_SPRING_CONFIG);
   };
 
   const panResponder = useRef(PanResponder.create({

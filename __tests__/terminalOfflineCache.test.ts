@@ -1,6 +1,6 @@
 const { createTerminalOfflineCache } = require('../scripts/terminal-offline-cache.cjs') as {
   createTerminalOfflineCache: (options: Record<string, unknown>) => {
-    configure: (options: { enabled: boolean; scrollback: number }) => void;
+    configure: (options: { enabled: boolean; scrollback: number; eink?: boolean }) => void;
     markDirty: () => void;
     snapshot: (reason: string, force?: boolean) => boolean;
     dispose: () => void;
@@ -10,6 +10,22 @@ const { createTerminalOfflineCache } = require('../scripts/terminal-offline-cach
 describe('terminal offline cache scheduler', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
+
+  test('E-Ink coalesces snapshots longer but still flushes at eviction', () => {
+    const serialize = jest.fn(() => 'latest state');
+    const cache = createTerminalOfflineCache({ serialize, send: jest.fn() });
+    cache.configure({ enabled: true, scrollback: 5000, eink: true });
+    cache.markDirty();
+    jest.advanceTimersByTime(2999);
+    expect(serialize).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(1);
+    expect(serialize).toHaveBeenCalledTimes(1);
+    cache.markDirty();
+    cache.snapshot('eviction');
+    expect(serialize).toHaveBeenCalledTimes(2);
+    jest.runOnlyPendingTimers();
+    expect(serialize).toHaveBeenCalledTimes(2);
+  });
 
   test('serializes once after an output burst instead of on every frame', () => {
     const serialize = jest.fn(() => 'cached state');

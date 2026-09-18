@@ -52,10 +52,10 @@ test('terminal preference defaults match the mobile renderer', () => {
     useModifierKeyIcons: false,
     volumeUpAction: 'none',
     volumeDownAction: 'none',
-    fontSize: 8,
+    fontSize: 12,
     scrollback: 5000,
     xtermCacheCapacity: 20,
-    cursorBlink: true,
+    cursorBlink: false,
     doubleTapAction: 'tab',
     openLinksInApp: true,
     pauseResizeInBackground: true,
@@ -67,6 +67,7 @@ test('terminal preference defaults match the mobile renderer', () => {
   expect(defaultDevicePreferences.agentAlertLevel).toBe('persistent');
   expect(defaultDevicePreferences.persistentAlertDurationSeconds).toBe(30);
   expect(defaultDevicePreferences.appearance).toBe('system');
+  expect(defaultDevicePreferences.displayProfile).toBe('auto');
   expect(defaultDevicePreferences.fullscreenApp).toBe(false);
   expect(defaultDevicePreferences.smoothSpinners).toBe(false);
   expect(defaultDevicePreferences.appBackgroundImageUri).toBeNull();
@@ -110,6 +111,7 @@ test('migrates the old 11px mobile default to the usable 8px geometry', async ()
     biometricForKeys: false,
     biometricOnResume: false,
     appearance: 'system',
+    displayProfile: 'auto',
     fullscreenApp: false,
     smoothSpinners: false,
     appBackgroundImageUri: null,
@@ -128,7 +130,7 @@ test('migrates the old 11px mobile default to the usable 8px geometry', async ()
       useModifierKeyIcons: false,
       volumeUpAction: 'none',
       volumeDownAction: 'none',
-      fontSize: 8,
+      fontSize: 12,
       scrollback: 9000,
       xtermCacheCapacity: 20,
       cursorBlink: false,

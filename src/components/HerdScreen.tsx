@@ -49,6 +49,7 @@ import {
   shouldCloseHerdTabSwipe,
 } from '@/src/lib/herdTabSwipeActions';
 import { DEFAULT_SPRING_CONFIG } from '@/src/lib/motion';
+import { useDisplayAnimationType, useDisplayProfile } from '@/src/lib/displayProfile';
 import { createWorkspaceAndSelect } from '@/src/lib/herdrCreationFlows';
 import { runWithInFlightGuard } from '@/src/lib/inFlightSubmission';
 import { terminalFontFamily } from '@/src/lib/terminalFonts';
@@ -127,6 +128,7 @@ export function HerdScreen({
   const { colors } = useTheme();
   const appGlassEnabled = useAppGlassEnabled();
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('fade');
   const { bottom } = useSafeAreaInsets();
   const resolvedHostId = selectedHostId;
   const scopedQueues = resolvedHostId
@@ -570,7 +572,7 @@ export function HerdScreen({
         }}
       />
       <Modal
-        animationType="fade"
+        animationType={animationType}
         onRequestClose={closeCommandRunner}
         statusBarTranslucent
         transparent
@@ -729,6 +731,7 @@ const AgentRow = memo(
     onOpenFiles: (hostId: string, agent: AgentInfo) => void;
   }) {
     const { colors } = useTheme();
+    const { isEink } = useDisplayProfile();
     const { t } = useTranslation();
     const { agent } = item;
     const translateX = useSharedValue(0);
@@ -736,8 +739,10 @@ const AgentRow = memo(
     const restingHeightRef = useRef(HERD_AGENT_ROW_MIN_HEIGHT);
     const rowWidthRef = useRef(0);
     const closingRef = useRef(closing);
+    const isEinkRef = useRef(isEink);
     const committingRef = useRef(false);
     closingRef.current = closing;
+    isEinkRef.current = isEink;
     const agentLabel =
       agent.display_agent || agent.name || agent.agent || 'agent';
     const primaryLabel = showSpace ? item.primaryLabel : item.tabLabel;
@@ -765,7 +770,7 @@ const AgentRow = memo(
     }, [rowHeight, translateX]);
 
     const restore = () => {
-      translateX.value = withSpring(0, DEFAULT_SPRING_CONFIG);
+      translateX.value = isEinkRef.current ? 0 : withSpring(0, DEFAULT_SPRING_CONFIG);
     };
 
     const finishClose = (finished: boolean) => {
@@ -781,6 +786,12 @@ const AgentRow = memo(
     const commitClose = hapticPress(() => {
       if (closingRef.current || committingRef.current) return;
       committingRef.current = true;
+      if (isEinkRef.current) {
+        translateX.value = -Math.max(rowWidthRef.current, HERD_TAB_MAX_DRAG);
+        rowHeight.value = 0;
+        reportBackgroundFailure(onCloseTab(item), 'herd-tab-close');
+        return;
+      }
       translateX.value = withTiming(
         -Math.max(rowWidthRef.current, HERD_TAB_MAX_DRAG),
         {

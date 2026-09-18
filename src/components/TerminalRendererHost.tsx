@@ -42,6 +42,7 @@ import {
   terminalRendererEvictionKeys,
   touchTerminalRendererEntry,
 } from '../lib/terminalRendererLru';
+import { useDisplayProfile } from '../lib/displayProfile';
 import type { TerminalPreferences } from '../services/devicePreferences';
 import { TerminalResidencyEndReason, type TerminalResidencyEnd } from '../lib/terminalResidency';
 import { bestEffortCleanup } from '../services/backgroundOperations';
@@ -209,6 +210,7 @@ interface Props {
   style?: StyleProp<ViewStyle>;
   onReady?: () => void;
   onInput: (target: TerminalRenderTarget, data: string) => void | Promise<void>;
+  onKeyboardRequested?: () => void;
   onScroll: (target: TerminalRenderTarget, direction: 'up' | 'down', lines: number) => void;
   onOfflineScroll: (target: TerminalRenderTarget, scroll: PaneScrollInfo) => void;
   onOfflineSnapshot: (targetKey: string, transcript: string) => void;
@@ -245,6 +247,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   style,
   onReady,
   onInput,
+  onKeyboardRequested,
   onScroll,
   onOfflineScroll,
   onOfflineSnapshot,
@@ -260,6 +263,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   onStatus,
   onError,
 }, forwardedRef) {
+  const { isEink } = useDisplayProfile();
   const webView = useRef<WebViewHandle | null>(null);
   const keyboardEnabled = useRef(false);
   const hostReady = useRef(false);
@@ -385,6 +389,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       ...preferences,
       fontSize: entry.fontSize,
       backgroundImageUri: null,
+      einkMode: isEink,
       ...scrollbackMode,
       offlineCache: entry.target.session.kind !== 'ssh',
     })}); window.herdrSetVisualInsets(${JSON.stringify(entry.target.key)}, ${JSON.stringify({
@@ -398,7 +403,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       scrollOffsetFromBottom: visualScroll?.offset_from_bottom,
       maxScrollOffsetFromBottom: visualScroll?.max_offset_from_bottom,
     })}); window.herdrSetRenderDrop(${JSON.stringify(entry.target.key)}, ${TERMINAL_RENDER_DROP_ENABLED});`);
-  }, [inject, preferences]);
+  }, [inject, isEink, preferences]);
 
   const syncOfflineTranscript = useCallback((
     entry: RendererEntry,
@@ -578,11 +583,15 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       }
     };
     if (frame.encoding === 'utf8') {
-      if (typeof frame.bytes !== 'string') {
-        abandonTerminalInboundTrace(inboundTraceCookie);
+      if (typeof frame.bytes === 'string') {
+        injectTracedFrame(`${resetScript}window.herdrWrite(${key}, ${JSON.stringify(frame.bytes)}, ${serializedInputTraceCookie}, ${serializedResizeTraceCookie}, ${serializedInboundTraceCookie});`);
         return;
       }
-      injectTracedFrame(`${resetScript}window.herdrWrite(${key}, ${JSON.stringify(frame.bytes)}, ${serializedInputTraceCookie}, ${serializedResizeTraceCookie}, ${serializedInboundTraceCookie});`);
+      // The direct SSH shell delivers raw UTF-8 as an ArrayBuffer. Keep the
+      // bytes intact across the React Native -> WebView boundary instead of
+      // dropping the frame when it is not already a JavaScript string.
+      const encoded = arrayBufferToBase64(frame.bytes);
+      injectTracedFrame(`${resetScript}window.herdrWriteBase64Chunk(${key}, ${frame.seq}, ${JSON.stringify(encoded)}, true, ${serializedInputTraceCookie}, ${serializedResizeTraceCookie}, ${serializedInboundTraceCookie});`);
       return;
     }
     if (typeof frame.bytes === 'string' && typeof frame.final === 'boolean') {
@@ -1324,7 +1333,9 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       connectEntry(entry);
       return;
     }
-    if (message.type === 'input') {
+    if (message.type === 'keyboard-request' && entry.target.key === activeKey.current) {
+      onKeyboardRequested?.();
+    } else if (message.type === 'input') {
       const data = message.data;
       if (typeof data !== 'string') return;
       await enqueueInput(entry, () => reportQueuedInput(entry, data));

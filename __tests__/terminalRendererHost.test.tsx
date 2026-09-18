@@ -106,6 +106,7 @@ describe('TerminalRendererHost lifecycle', () => {
   });
 
   const createCallbacks = () => ({
+    onKeyboardRequested: jest.fn(),
     onInput: jest.fn(),
     onScroll: jest.fn(),
     onOfflineScroll: jest.fn(),
@@ -303,6 +304,18 @@ describe('TerminalRendererHost lifecycle', () => {
     };
     return { activateTarget, eventCallbacks, handle, injected, requestFocus, webView };
   };
+
+  test('only the active pane can request the software keyboard', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 100, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll, 'term-2': scroll });
+    const active = createTarget('term-1', client, scroll);
+    const background = createTarget('term-2', client, scroll);
+    const { webView, eventCallbacks } = await mountReadyHost(active, [active, background]);
+    await sendRendererMessage(webView, { type: 'keyboard-request', key: background.key });
+    expect(eventCallbacks.onKeyboardRequested).not.toHaveBeenCalled();
+    await sendRendererMessage(webView, { type: 'keyboard-request', key: active.key });
+    expect(eventCallbacks.onKeyboardRequested).toHaveBeenCalledTimes(1);
+  });
 
   test('touches do not take WebView focus while terminal keyboard input is disabled', async () => {
     const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 100, viewport_rows: 24 };

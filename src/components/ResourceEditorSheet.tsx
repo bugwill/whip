@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '@/src/lib/displayProfile';
 import { useTheme } from '@/src/theme';
 import { hapticPress } from './app-ui';
 import { GlassSurface } from './GlassSurface';
@@ -39,10 +40,11 @@ export function ResourceEditorSheet({
 }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('fade');
 
   return (
     <Modal
-      animationType="fade"
+      animationType={animationType}
       onRequestClose={() => {
         if (!busy) onClose();
       }}

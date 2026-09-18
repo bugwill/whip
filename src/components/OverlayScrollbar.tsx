@@ -110,7 +110,7 @@ export function OverlayScrollbar({
 
   useEffect(() => () => cancelAnimation(active), [active]);
 
-  const glassEnabled = glass && !interacting;
+  const glassEnabled = glass && !interacting && !reduceMotion;
   const animatedThumbStyle = useAnimatedStyle(() => ({
     opacity: glassEnabled
       ? GLASS_OPACITY

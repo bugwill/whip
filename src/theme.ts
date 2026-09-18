@@ -1,5 +1,6 @@
 import { useColorScheme } from 'react-native';
 
+import { useDisplayProfile } from './lib/displayProfile';
 import type { TerminalSessionStatus } from './terminalSessions';
 
 export const githubLightPalette = {
@@ -28,6 +29,10 @@ export const lightColors = {
   textTertiary: githubLightPalette.foregroundSubtle,
   primary: githubLightPalette.accent,
   onPrimary: githubLightPalette.canvas,
+  activeSurface: githubLightPalette.accent,
+  activeSurfaceForeground: githubLightPalette.canvas,
+  activeSurfaceAlpha: 'D6',
+  controlSurface: githubLightPalette.surfaceRaised,
   disabled: githubLightPalette.foregroundDisabled,
   input: githubLightPalette.canvas,
   scrim: '#1B1F2466',
@@ -39,6 +44,41 @@ export const lightColors = {
   unknown: githubLightPalette.attention,
   warning: githubLightPalette.attention,
   error: githubLightPalette.red,
+} as const;
+
+// E-Ink displays need opaque, high-contrast surfaces. Keep semantic colors
+// monochrome, but retain several dark-gray levels so secondary information is
+// distinguishable without relying on color reproduction.
+export const einkColors = {
+  canvas: '#FFFFFF',
+  sidebar: '#FFFFFF',
+  surface: '#FFFFFF',
+  surfaceRaised: '#F0F0F0',
+  divider: '#777777',
+  text: '#000000',
+  textSecondary: '#333333',
+  textTertiary: '#555555',
+  primary: '#000000',
+  onPrimary: '#FFFFFF',
+  // Active host/workspace/pane pills use a light neutral fill rather than a
+  // solid black block on E-Ink screens.
+  activeSurface: '#D4D4D4',
+  activeSurfaceForeground: '#000000',
+  // Do not let the white E-Ink canvas wash the active tab back toward white.
+  activeSurfaceAlpha: 'FF',
+  // Composer action buttons are a little darker than active tabs.
+  controlSurface: '#CECECE',
+  disabled: '#666666',
+  input: '#FFFFFF',
+  scrim: '#FFFFFF',
+  link: '#222222',
+  working: '#333333',
+  blocked: '#222222',
+  done: '#333333',
+  idle: '#555555',
+  unknown: '#444444',
+  warning: '#333333',
+  error: '#222222',
 } as const;
 
 export const tokyoNightPalette = {
@@ -78,6 +118,10 @@ export const darkColors = {
   textTertiary: tokyoNightPalette.comment,
   primary: tokyoNightPalette.blue,
   onPrimary: tokyoNightPalette.backgroundDark,
+  activeSurface: tokyoNightPalette.blue,
+  activeSurfaceForeground: tokyoNightPalette.backgroundDark,
+  activeSurfaceAlpha: 'D6',
+  controlSurface: tokyoNightPalette.backgroundHighlight,
   disabled: tokyoNightPalette.surfaceRaised,
   input: tokyoNightPalette.surface,
   scrim: '#00000099',
@@ -132,8 +176,14 @@ export function resolveTheme(scheme: 'light' | 'dark' | 'unspecified' | null | u
 
 export function useTheme() {
   const scheme = useColorScheme();
-  const isDark = scheme !== 'light';
-  return { colors: resolveTheme(scheme), isDark, scheme: isDark ? 'dark' as const : 'light' as const };
+  const { isEink } = useDisplayProfile();
+  const isDark = !isEink && scheme !== 'light';
+  return {
+    colors: isEink ? einkColors : resolveTheme(scheme),
+    isDark,
+    scheme: isDark ? 'dark' as const : 'light' as const,
+    isEink,
+  };
 }
 
 export function statusColor(status: string, palette: ThemeColors | typeof colors = colors): string {
@@ -164,8 +214,8 @@ export function sessionTabStatusColor(
 
 export function sessionTabGlassStyle(active: boolean, palette: ThemeColors) {
   return {
-    backgroundColor: colorWithAlpha(active ? palette.primary : palette.surface, active ? 'D6' : 'B8'),
-    borderColor: colorWithAlpha(active ? palette.onPrimary : palette.text, active ? '47' : '29'),
+    backgroundColor: colorWithAlpha(active ? palette.activeSurface : palette.surface, active ? palette.activeSurfaceAlpha : 'B8'),
+    borderColor: colorWithAlpha(active ? palette.activeSurfaceForeground : palette.text, active ? '47' : '29'),
   };
 }
 

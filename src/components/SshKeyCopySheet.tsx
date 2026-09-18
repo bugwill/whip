@@ -2,6 +2,7 @@ import { Copy, KeyRound } from 'lucide-react-native';
 import { Modal, Pressable, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '@/src/lib/displayProfile';
 import { cn } from '@/src/lib/utils';
 import { appGlassControlStyle, useTheme } from '@/src/theme';
 import { hapticPress } from './app-ui';
@@ -20,10 +21,11 @@ interface Props {
 export function SshKeyCopySheet({ visible, onClose, onCopyPrivate, onCopyPublic }: Props) {
   const { t } = useTranslation();
   const { colors } = useTheme();
+  const animationType = useDisplayAnimationType('fade');
   const appGlassEnabled = useAppGlassEnabled();
 
   return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
+    <Modal animationType={animationType} transparent visible={visible} onRequestClose={onClose}>
       <View className="flex-1 justify-end">
         <Pressable accessibilityLabel={t('connection.closeKeyActions')} className="absolute inset-0 bg-black/55" onPress={onClose} />
         <GlassSurface accessibilityViewIsModal className="rounded-t-[28px] border-t border-white/30 px-4 pb-8 pt-5 dark:border-white/10">

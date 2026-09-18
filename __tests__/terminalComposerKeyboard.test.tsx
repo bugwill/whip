@@ -23,6 +23,7 @@ jest.mock('react-native', () => ({
   Modal: 'Modal',
   Image: 'Image',
   ActivityIndicator: 'ActivityIndicator',
+  PanResponder: { create: (handlers: unknown) => ({ panHandlers: handlers }) },
   NativeModules: {},
   Platform: { OS: 'android' },
   StyleSheet: { absoluteFill: {}, create: (styles: unknown) => styles },
@@ -106,6 +107,7 @@ function MockMessageComposer(composerProps: { inputRef: Ref<unknown> }) {
   return require('react/jsx-runtime').jsx('MessageComposer', composerProps);
 }
 const terminalHandle = {
+  input: jest.fn(() => true),
   fit: jest.fn(),
   focus: jest.fn(),
   blur: jest.fn(),
@@ -285,6 +287,80 @@ test('Chat mode covers the terminal while the evicted transcript has no viewport
   expect(renderer.root.findAll(node => node.props.className === 'absolute inset-0 z-10 bg-background')).toHaveLength(0);
 });
 
+test('direction pad is the same height as controls and outside the horizontal scroller', () => {
+  mount();
+  const pad = renderer.root.findByProps({ accessibilityLabel: '按住并向上下左右滑动以移动光标' });
+  expect(pad.props.style).toEqual(expect.objectContaining({ height: 36, width: 44 }));
+  for (let parent = pad.parent; parent; parent = parent.parent) {
+    expect(String(parent.type)).not.toBe('ScrollView');
+  }
+  expect(pad.props.onStartShouldSetPanResponderCapture()).toBe(true);
+  expect(pad.props.onShouldBlockNativeResponder()).toBe(true);
+});
+
+test('direction drags reach the terminal input bridge as arrow escape sequences', () => {
+  mount();
+  const pad = renderer.root.findByProps({ accessibilityLabel: '按住并向上下左右滑动以移动光标' });
+  act(() => {
+    pad.props.onPanResponderGrant();
+    pad.props.onPanResponderMove({}, { dx: 18, dy: 0 });
+    pad.props.onPanResponderMove({}, { dx: 0, dy: 0 });
+    pad.props.onPanResponderMove({}, { dx: 0, dy: -18 });
+    pad.props.onPanResponderMove({}, { dx: 0, dy: 0 });
+    pad.props.onPanResponderRelease();
+  });
+  expect(terminalHandle.input.mock.calls).toEqual([['\u001b[C'], ['\u001b[D'], ['\u001b[A'], ['\u001b[B']]);
+});
+
+test('hidden terminal does not dismiss another pane keyboard or accept keyboard requests', () => {
+  mount({ visible: false });
+  expect(Keyboard.dismiss).not.toHaveBeenCalled();
+  terminalHandle.focus.mockClear();
+  act(() => { ui('TerminalRendererHost').props.onKeyboardRequested(); });
+  expect(terminalHandle.focus).not.toHaveBeenCalled();
+});
+
+test('a delayed composer open cannot reopen after switching away', async () => {
+  mount();
+  let finish!: () => void;
+  jest.mocked(setTerminalComposerOverlay).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+  await press('compose');
+  act(() => renderer.update(<TerminalScreen {...props} visible={false} />));
+  jest.mocked(Keyboard.dismiss).mockClear();
+  await act(async () => finish());
+  expect(renderer.root.findAllByType(MockMessageComposer)).toHaveLength(0);
+  expect(Keyboard.dismiss).not.toHaveBeenCalled();
+  act(() => renderer.update(<TerminalScreen {...props} />));
+  expect(renderer.root.findAllByType(MockMessageComposer)).toHaveLength(0);
+});
+
+test('hiding an open composer never globally dismisses the new pane keyboard', async () => {
+  mount();
+  await press('compose');
+  jest.mocked(Keyboard.dismiss).mockClear();
+  act(() => renderer.update(<TerminalScreen {...props} visible={false} />));
+  expect(renderer.root.findAllByType(MockMessageComposer)).toHaveLength(0);
+  expect(Keyboard.dismiss).not.toHaveBeenCalled();
+});
+
+test('expanded composer owns a separate keyboard measurement and collapses safely', async () => {
+  mount();
+  await press('compose');
+  act(() => { ui('MessageComposer').props.actions.onExpand(); });
+  expect(renderer.root.findAllByType(MockMessageComposer)).toHaveLength(0);
+  expect(renderer.root.findAll(node => String(node.type) === 'ComposerInput')).toHaveLength(1);
+  emitKeyboard(true);
+  const expanded = renderer.root.find(node => node.props.className === 'flex-1 bg-terminal-canvas');
+  expect(expanded.props.onLayout).toEqual(expect.any(Function));
+  expect(expanded.props.style.paddingBottom).toBe(keyboardHeight);
+  await press('collapseComposer');
+  expect(renderer.root.findAllByType(MockMessageComposer)).toHaveLength(1);
+  act(() => renderer.update(<TerminalScreen {...props} visible={false} />));
+  mockComposerHandle.focus.mockClear();
+  act(() => jest.advanceTimersByTime(200));
+  expect(mockComposerHandle.focus).not.toHaveBeenCalled();
+});
+
 describe.each(['android', 'ios'] as const)(
   '%s terminal composer keyboard',
   platform => {
@@ -416,7 +492,7 @@ describe.each(['android', 'ios'] as const)(
         expect(ui('MessageComposer').parent?.props.style.bottom).toBe(
           controlBarHeight + keyboardHeight,
         );
-        expect(ui('TerminalRendererHost').parent?.props.style).toBeUndefined();
+        expect(ui('TerminalRendererHost').parent?.props.style).toEqual({ marginBottom: controlBarHeight + keyboardHeight, overflow: 'hidden' });
         expect(Keyboard.addListener).toHaveBeenCalledTimes(subscriptionCount);
         expect(terminalHandle.setKeyboardEnabled).toHaveBeenLastCalledWith(
           false,
@@ -469,7 +545,7 @@ describe.each(['android', 'ios'] as const)(
         controlBarHeight,
       );
       act(() => jest.advanceTimersByTime(100));
-      expect(terminalHandle.fit).not.toHaveBeenCalled();
+      expect(terminalHandle.fit).toHaveBeenCalledTimes(platform === 'ios' ? 1 : 0);
     });
 
     test('the direct keyboard reserves layout space until native hide completes', async () => {
@@ -477,7 +553,7 @@ describe.each(['android', 'ios'] as const)(
       await press('enableKeyboard');
       emitKeyboard(true);
       expect(ui('TerminalRendererHost').parent?.props.style).toEqual({
-        paddingBottom: keyboardHeight,
+        marginBottom: controlBarHeight + keyboardHeight, overflow: 'hidden',
       });
       act(() => jest.advanceTimersByTime(100));
       expect(terminalHandle.fit).toHaveBeenCalledTimes(
@@ -485,10 +561,10 @@ describe.each(['android', 'ios'] as const)(
       );
       await press('disableKeyboard');
       expect(ui('TerminalRendererHost').parent?.props.style).toEqual({
-        paddingBottom: keyboardHeight,
+        marginBottom: controlBarHeight + keyboardHeight, overflow: 'hidden',
       });
       emitKeyboard(false);
-      expect(ui('TerminalRendererHost').parent?.props.style).toBeUndefined();
+      expect(ui('TerminalRendererHost').parent?.props.style).toEqual({ marginBottom: controlBarHeight, overflow: 'hidden' });
       act(() => jest.advanceTimersByTime(100));
       expect(terminalHandle.fit).toHaveBeenCalledTimes(
         platform === 'ios' ? 2 : 0,

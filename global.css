@@ -25,6 +25,19 @@
     --ring: 212 92% 45%;
     --success: 137 66% 30%;
     --warning: 40 100% 30%;
+    --terminal-canvas: 235 19% 13%;
+    --terminal-panel: 240 15% 10%;
+    --terminal-surface: 230 24% 19%;
+    --terminal-raised: 229 23% 33%;
+    --terminal-divider: 228 23% 21%;
+    --terminal-text: 229 73% 86%;
+    --terminal-muted: 229 35% 75%;
+    --terminal-subtle: 229 19% 41%;
+    --terminal-accent: 221 89% 72%;
+    --terminal-ink: 240 15% 10%;
+    --terminal-success: 89 51% 61%;
+    --terminal-warning: 36 66% 64%;
+    --terminal-error: 349 89% 72%;
     --radius: 1rem;
   }
 
@@ -50,5 +63,42 @@
     --ring: 221 89% 72%;
     --success: 89 51% 61%;
     --warning: 36 66% 64%;
+  }
+
+  .eink {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 97%;
+    --card-foreground: 0 0% 0%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 0%;
+    --primary: 0 0% 0%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 94%;
+    --secondary-foreground: 0 0% 0%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 32%;
+    --accent: 0 0% 92%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 0% 18%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 48%;
+    --input: 0 0% 48%;
+    --ring: 0 0% 0%;
+    --success: 0 0% 24%;
+    --warning: 0 0% 28%;
+    --terminal-canvas: 0 0% 100%;
+    --terminal-panel: 0 0% 100%;
+    --terminal-surface: 0 0% 96%;
+    --terminal-raised: 0 0% 90%;
+    --terminal-divider: 0 0% 48%;
+    --terminal-text: 0 0% 0%;
+    --terminal-muted: 0 0% 22%;
+    --terminal-subtle: 0 0% 35%;
+    --terminal-accent: 0 0% 18%;
+    --terminal-ink: 0 0% 0%;
+    --terminal-success: 0 0% 24%;
+    --terminal-warning: 0 0% 28%;
+    --terminal-error: 0 0% 18%;
   }
 }

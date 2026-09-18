@@ -17,6 +17,8 @@ import {
   terminalDoubleTapActions,
   type TerminalDoubleTapAction,
 } from '@/src/lib/terminalDoubleTap';
+import type { DisplayProfilePreference } from '@/src/lib/displayProfile';
+import { useDisplayAnimationType } from '@/src/lib/displayProfile';
 import { deviceLanguage } from '@/src/i18n';
 import { terminalFontFamily } from '@/src/lib/terminalFonts';
 import { useTheme } from '@/src/theme';
@@ -46,7 +48,7 @@ import {
 import { removeAppBackgroundImage, selectAppBackgroundImage } from '@/src/services/appBackground';
 import { openNotificationSettings } from '@/src/services/notificationSettings';
 import { removeTerminalBackgroundImage, selectTerminalBackgroundImage } from '@/src/services/terminalBackground';
-import { hapticPress, IconButton } from './app-ui';
+import { hapticPress, IconButton, useReducedMotion } from './app-ui';
 import { ConfirmationPopup } from './ConfirmationPopup';
 import { GlassSurface } from './GlassSurface';
 import { Button } from './ui/button';
@@ -113,6 +115,7 @@ export interface SettingsSectionProps {
   globalKeyCount: number;
   knownHostCount: number | null;
   appearance: AppearancePreference;
+  displayProfile: DisplayProfilePreference;
   fullscreenApp: boolean;
   smoothSpinners: boolean;
   appBackgroundImageUri: string | null;
@@ -139,6 +142,7 @@ export interface SettingsSectionProps {
   onManageGlobalKeychain: () => void;
   onManageKnownHosts: () => void;
   onAppearanceChange: (value: AppearancePreference) => void;
+  onDisplayProfileChange: (value: DisplayProfilePreference) => void;
   onFullscreenAppChange: (value: boolean) => void;
   onSmoothSpinnersChange: (value: boolean) => void;
   onAppBackgroundImageChange: (value: string | null) => void;
@@ -301,6 +305,7 @@ export function SettingsSection(props: SettingsSectionProps) {
       <Text className="mb-3 mt-7 px-1 text-sm font-semibold text-muted-foreground">{t('settings.appearance')}</Text>
       <View className="gap-3">
         <AppearanceRow value={props.appearance} onChange={props.onAppearanceChange} />
+        <DisplayProfileRow value={props.displayProfile} onChange={props.onDisplayProfileChange} />
         <GlassSurface className="rounded-lg border border-white/30 dark:border-white/10">
           <SettingRow
             title={t('settings.fullscreenApp')}
@@ -514,6 +519,12 @@ const appearanceOptions: { labelKey: string; value: AppearancePreference }[] = [
   { labelKey: 'settings.dark', value: 'dark' },
 ];
 
+const displayProfileOptions: { labelKey: string; value: DisplayProfilePreference }[] = [
+  { labelKey: 'settings.displayProfileAuto', value: 'auto' },
+  { labelKey: 'settings.displayProfileNormal', value: 'normal' },
+  { labelKey: 'settings.displayProfileEink', value: 'eink' },
+];
+
 const agentAlertLevelLabelKeys: Record<AgentAlertLevel, string> = {
   regular: 'settings.alertLevelRegular',
   persistent: 'settings.alertLevelPersistent',
@@ -630,6 +641,29 @@ function AppearanceRow({ value, onChange }: { value: AppearancePreference; onCha
   );
 }
 
+function DisplayProfileRow({ value, onChange }: { value: DisplayProfilePreference; onChange: (value: DisplayProfilePreference) => void }) {
+  const { t } = useTranslation();
+  return (
+    <GlassSurface className="rounded-lg border border-white/30 p-3.5 dark:border-white/10">
+      <DetailsTitle title={t('settings.displayProfile')} copy={t('settings.displayProfileCopy')} />
+      <View className="mt-3 flex-row gap-2">
+        {displayProfileOptions.map(option => (
+          <Button
+            key={option.value}
+            className="flex-1 rounded-full px-1"
+            variant={option.value === value ? 'default' : 'outline'}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: option.value === value }}
+            onPress={hapticPress(() => onChange(option.value))}
+          >
+            <Text className="text-xs">{t(option.labelKey)}</Text>
+          </Button>
+        ))}
+      </View>
+    </GlassSurface>
+  );
+}
+
 const languageOptions: { labelKey: string; value: LanguagePreference }[] = [
   { labelKey: 'settings.automatic', value: 'system' },
   { labelKey: 'settings.english', value: 'en' },
@@ -679,10 +713,11 @@ function LanguageRow({ value, onChange }: { value: LanguagePreference; onChange:
 function LanguageSelectionSheet({ value, visible, onClose, onSelect }: { value: LanguagePreference; visible: boolean; onClose: () => void; onSelect: (value: LanguagePreference) => void }) {
   const { bottom } = useSafeAreaInsets();
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('slide');
   const systemLanguage = deviceLanguage();
   const systemOption = languageOptions.find(option => option.value === systemLanguage) || languageOptions[1];
   return (
-    <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
+    <Modal animationType={animationType} transparent visible={visible} onRequestClose={onClose}>
       <View className="flex-1 justify-end">
         <Pressable accessibilityLabel={t('common.close')} className="absolute inset-0 bg-black/55" onPress={onClose} />
         <GlassSurface
@@ -839,6 +874,7 @@ function doubleTapActionLabelKey(action: TerminalDoubleTapAction): string {
 
 function DoubleTapActionMenu({ expanded, value, onToggle, onSelect, divided = false }: { expanded: boolean; value: TerminalDoubleTapAction; onToggle: () => void; onSelect: (action: TerminalDoubleTapAction) => void; divided?: boolean }) {
   const { t } = useTranslation();
+  const reduceMotion = useReducedMotion();
   const [contentMounted, setContentMounted] = useState(expanded);
   const [contentMeasured, setContentMeasured] = useState(false);
   const contentHeight = useSharedValue(0);
@@ -850,12 +886,14 @@ function DoubleTapActionMenu({ expanded, value, onToggle, onSelect, divided = fa
       progress.value = 0;
       return;
     }
-    progress.value = withTiming(expanded ? 1 : 0, {
-      duration: expanded ? DOUBLE_TAP_MENU_EXPAND_DURATION : DOUBLE_TAP_MENU_COLLAPSE_DURATION,
-      easing: Easing.inOut(Easing.cubic),
-    });
+    progress.value = reduceMotion
+      ? expanded ? 1 : 0
+      : withTiming(expanded ? 1 : 0, {
+          duration: expanded ? DOUBLE_TAP_MENU_EXPAND_DURATION : DOUBLE_TAP_MENU_COLLAPSE_DURATION,
+          easing: Easing.inOut(Easing.cubic),
+        });
     return () => cancelAnimation(progress);
-  }, [contentMeasured, expanded, progress]);
+  }, [contentMeasured, expanded, progress, reduceMotion]);
 
   const collapsibleStyle = useAnimatedStyle(() => ({
     height: contentHeight.value * progress.value,
@@ -918,9 +956,10 @@ function DoubleTapActionMenu({ expanded, value, onToggle, onSelect, divided = fa
 function VolumeKeyActionSheet({ keyName, value, onClose, onSelect }: { keyName: TerminalVolumeKey | null; value: TerminalVolumeKeyAction; onClose: () => void; onSelect: (action: TerminalVolumeKeyAction) => void }) {
   const { bottom } = useSafeAreaInsets();
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('slide');
   const direction = keyName || 'up';
   return (
-    <Modal animationType="slide" transparent visible={keyName !== null} onRequestClose={onClose}>
+    <Modal animationType={animationType} transparent visible={keyName !== null} onRequestClose={onClose}>
       <SettingsDetailsProvider>
         <View className="flex-1 justify-end">
           <Pressable accessibilityLabel={t('common.close')} className="absolute inset-0 bg-black/55" onPress={onClose} />
@@ -966,6 +1005,7 @@ function TerminalHistoryManager({
 }) {
   const { top, bottom } = useSafeAreaInsets();
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('slide');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteSelection, setDeleteSelection] = useState<readonly string[] | null>(null);
   const allSelected = entries.length > 0 && selected.size === entries.length;
@@ -1007,7 +1047,7 @@ function TerminalHistoryManager({
 
   return (
     <Modal
-      animationType="slide"
+      animationType={animationType}
       onRequestClose={onClose}
       statusBarTranslucent
       visible={visible}>

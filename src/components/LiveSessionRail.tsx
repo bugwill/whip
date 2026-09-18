@@ -1,5 +1,5 @@
 import { Plus, Server, ServerOff, X } from 'lucide-react-native';
-import { Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { compareAgentStatusPriority } from '@/src/herdQueue';
@@ -7,6 +7,7 @@ import { liveSessionRailIndicator } from '@/src/lib/liveSessionRail';
 import { cn } from '@/src/lib/utils';
 import { type LiveHostConnectionStatus } from '@/src/liveHostSessions';
 import { aggregateAgentStatus } from '@/src/lib/agentStatusAggregate';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 import { appGlassControlStyle, statusColor as agentStatusColor, useTheme, type ThemeColors } from '@/src/theme';
 import type { AgentStatus } from '@/src/types';
 import { AnimatedAgentStatusGlyph, AnimatedStatusIndicator, hapticPress } from './app-ui';
@@ -55,9 +56,11 @@ export function LiveSessionRail({ sessions, activeHostId, onSelect, onClose, onN
 function HostPill({ session, active, onSelect, onClose }: { session: LiveSessionRailItem; active: boolean; onSelect: () => void; onClose?: () => void }) {
   const { colors } = useTheme();
   const appGlassEnabled = useAppGlassEnabled();
-  const isIpad = Platform.OS === 'ios' && Platform.isPad;
+  const { isEink, isTablet } = useDisplayProfile();
   const activeTextClass = active
-    ? appGlassEnabled
+    ? isEink
+      ? 'text-foreground'
+      : appGlassEnabled
       ? 'text-primary'
       : 'text-primary-foreground'
     : undefined;
@@ -71,13 +74,21 @@ function HostPill({ session, active, onSelect, onClose }: { session: LiveSession
     <View
       className={cn(
         'h-11 max-w-[190px] flex-row items-center rounded-full',
-        appGlassEnabled && 'border',
+        isTablet && 'h-14 max-w-[240px]',
+        (appGlassEnabled || isEink) && 'border',
         !appGlassEnabled && 'bg-muted',
         !appGlassEnabled && !active && 'border border-border',
-        !appGlassEnabled && active && 'bg-primary',
+        !appGlassEnabled && active && !isEink && 'bg-primary',
       )}
-      style={appGlassEnabled ? appGlassControlStyle(active, colors) : undefined}>
-      <Button accessibilityLabel={t(session.hostId ? 'rail.openHost' : 'rail.showHosts', { host: session.label, status: accessibilityStatus })} accessibilityRole="radio" accessibilityState={{ selected: active }} className="h-11 min-w-0 flex-shrink justify-start gap-1.5 rounded-none px-2.5 py-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent" variant="ghost" onPress={hapticPress(onSelect)}>
+      style={isEink
+        ? {
+            backgroundColor: active ? colors.activeSurface : colors.canvas,
+            borderColor: colors.divider,
+          }
+        : appGlassEnabled
+        ? appGlassControlStyle(active, colors)
+        : undefined}>
+      <Button accessibilityLabel={t(session.hostId ? 'rail.openHost' : 'rail.showHosts', { host: session.label, status: accessibilityStatus })} accessibilityRole="radio" accessibilityState={{ selected: active }} className={cn('h-11 min-w-0 flex-shrink justify-start gap-1.5 rounded-none px-2.5 py-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent', isTablet && 'h-14 gap-2 px-3')} variant="ghost" onPress={hapticPress(onSelect)}>
         {indicator === 'progress' ? (
           <AnimatedStatusIndicator status={session.status} color={indicatorColor} size={12} />
         ) : indicator === 'offline' ? (
@@ -86,13 +97,13 @@ function HostPill({ session, active, onSelect, onClose }: { session: LiveSession
           <AnimatedAgentStatusGlyph status={session.agentStatus} color={indicatorColor} size={12} />
         )}
         {session.hostId ? (
-          <Text className={cn('max-w-[119px] pb-0.5 text-[11px] font-semibold leading-[18px] text-foreground', isIpad && 'max-w-[160px] text-[17px] leading-6', activeTextClass)} numberOfLines={1}>{session.label}</Text>
+          <Text className={cn('max-w-[119px] pb-0.5 text-[11px] font-semibold leading-[18px] text-foreground', isTablet && 'max-w-[160px] text-[17px] leading-6', activeTextClass)} numberOfLines={1}>{session.label}</Text>
         ) : (
-          <Server size={15} color={active ? (appGlassEnabled ? colors.primary : colors.onPrimary) : colors.text} />
+          <Server size={15} color={active ? (isEink ? colors.activeSurfaceForeground : appGlassEnabled ? colors.primary : colors.activeSurfaceForeground) : colors.text} />
         )}
         {session.terminalCount > 0 ? <Text className={cn('text-[10px] leading-[18px] text-muted-foreground', activeTextClass)}>{session.terminalCount}</Text> : null}
       </Button>
-      {onClose ? <Button accessibilityLabel={t('rail.disconnectHost', { host: session.label })} className="size-11 rounded-none px-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent" variant="ghost" onPress={hapticPress(onClose)}><X size={14} color={active ? (appGlassEnabled ? colors.primary : colors.onPrimary) : colors.textSecondary} /></Button> : null}
+      {onClose ? <Button accessibilityLabel={t('rail.disconnectHost', { host: session.label })} className={cn('size-11 rounded-none px-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent', isTablet && 'size-14')} variant="ghost" onPress={hapticPress(onClose)}><X size={isTablet ? 18 : 14} color={active ? (isEink ? colors.activeSurfaceForeground : appGlassEnabled ? colors.primary : colors.activeSurfaceForeground) : colors.textSecondary} /></Button> : null}
     </View>
   );
 }

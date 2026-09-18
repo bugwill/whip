@@ -8,6 +8,7 @@ import {
   type TerminalControlId,
 } from '../lib/terminalControls';
 import { resolveColorScheme } from '../lib/appearance';
+import { resolveDisplayProfile } from '../lib/displayProfile';
 import {
   defaultDevicePreferences,
   devicePreferencesFromStorage,
@@ -113,8 +114,11 @@ export function useDevicePreferences(
   }, [state]);
 
   useEffect(() => {
-    Appearance.setColorScheme(resolveColorScheme(state.value.appearance));
-  }, [state.value.appearance]);
+    const profile = resolveDisplayProfile(state.value.displayProfile);
+    Appearance.setColorScheme(
+      profile === 'eink' ? 'light' : resolveColorScheme(state.value.appearance),
+    );
+  }, [state.value.appearance, state.value.displayProfile]);
 
   const resolvedLanguage =
     state.value.language === 'system'

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Alert, Modal, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
+
+import { useDisplayAnimationType } from '@/src/lib/displayProfile';
 import { reportBackgroundFailure } from '../services/backgroundOperations';
 
 import { errorCode } from '../lib/connectionErrors';
@@ -42,6 +44,7 @@ type UploadState = 'idle' | 'uploading' | 'cancelling';
 export function AttachmentPasteSheet({ client, visible, onClose, onPaste }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('fade');
   const safeAreaInsets = useSafeAreaInsets();
   const [uploadState, setUploadState] = useState<UploadState>('idle');
   const [clipboardAvailable, setClipboardAvailable] = useState(false);
@@ -140,7 +143,7 @@ export function AttachmentPasteSheet({ client, visible, onClose, onPaste }: Prop
 
   return (
     <Modal
-      animationType="fade"
+      animationType={animationType}
       onRequestClose={close}
       statusBarTranslucent
       transparent

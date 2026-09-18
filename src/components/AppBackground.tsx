@@ -1,6 +1,7 @@
 import { Image, StyleSheet, View } from 'react-native';
 
 import { useTheme } from '@/src/theme';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 
 export function AppBackground({
   uri,
@@ -10,6 +11,7 @@ export function AppBackground({
   dimming: number;
 }) {
   const { colors } = useTheme();
+  const { isEink } = useDisplayProfile();
 
   return (
     <View
@@ -17,7 +19,7 @@ export function AppBackground({
       pointerEvents="none"
       style={[StyleSheet.absoluteFill, { backgroundColor: colors.canvas }]}
     >
-      {uri ? (
+      {uri && !isEink ? (
         <>
           <Image
             resizeMode="cover"

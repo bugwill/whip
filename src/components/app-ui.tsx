@@ -27,6 +27,7 @@ import { LocalSvg } from 'react-native-svg/css';
 import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/src/lib/utils';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 import { bundledAsset } from '@/src/lib/bundledAsset';
 import {
   agentStatusGlyph,
@@ -91,6 +92,7 @@ export function AgentStatusAnimationProvider({
   children: ReactNode;
   enabled: boolean;
 }) {
+  const { isEink } = useDisplayProfile();
   const [appActive, setAppActive] = useState(AppState.currentState === 'active');
 
   useEffect(() => {
@@ -101,7 +103,7 @@ export function AgentStatusAnimationProvider({
   }, []);
 
   return (
-    <AgentStatusAnimationContext.Provider value={enabled && appActive}>
+    <AgentStatusAnimationContext.Provider value={enabled && appActive && !isEink}>
       {children}
     </AgentStatusAnimationContext.Provider>
   );
@@ -401,7 +403,9 @@ function useStatusMotion(
 }
 
 export function useReducedMotion() {
-  return useContext(ReducedMotionContext);
+  const systemReducedMotion = useContext(ReducedMotionContext);
+  const { isEink } = useDisplayProfile();
+  return systemReducedMotion || isEink;
 }
 
 function useStatusBloom(status: string, reduceMotion: boolean, animationsEnabled: boolean) {

@@ -3,6 +3,8 @@ import type { FrameInfo } from 'react-native-reanimated';
 import { useDecorativeProgress } from '../src/hooks/useDecorativeProgress';
 import { SpinnerFrameRateProvider, useSpinnerFrameRate } from '../src/hooks/useSpinnerFrameRate';
 import { NativeAgentSpinner } from '../src/components/NativeAgentSpinner';
+import { AppState } from 'react-native';
+import { DisplayProfileProvider } from '../src/lib/displayProfile';
 
 jest.mock('expo-modules-core', () => ({
   requireNativeViewManager: () => 'NativeSpinner',
@@ -33,6 +35,10 @@ jest.mock('react-native-reanimated', () => {
 });
 
 describe('decorative animation timing', () => {
+  beforeEach(() => {
+    AppState.currentState = 'active';
+    jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() }));
+  });
   let renderer: ReactTestRenderer;
   let progress: ReturnType<typeof useDecorativeProgress>;
   function Harness({ enabled = true, reverse = false }) {
@@ -47,6 +53,28 @@ describe('decorative animation timing', () => {
     return progress.value;
   }
   afterEach(() => act(() => renderer.unmount()));
+
+  test('E-Ink disables both frame scheduling and the native spinner', () => {
+    act(() => {
+      renderer = create(<DisplayProfileProvider preference="eink">
+        <Harness /><NativeAgentSpinner color="#000000" durationMs={700} enabled size={24} />
+      </DisplayProfileProvider>);
+    });
+    expect([...mockCallbacks].every(callback => !callback.active)).toBe(true);
+    expect(renderer.root.findByProps({ pointerEvents: 'none' }).props.enabled).toBe(false);
+  });
+
+  test('backgrounding stops frame scheduling until active again', () => {
+    const subscribe = jest.spyOn(AppState, 'addEventListener');
+    subscribe.mockClear();
+    act(() => { renderer = create(<Harness />); });
+    const change = subscribe.mock.calls.find(([name]) => name === 'change')![1];
+    act(() => change('background'));
+    expect([...mockCallbacks].every(callback => !callback.active)).toBe(true);
+    act(() => change('active'));
+    expect([...mockCallbacks].every(callback => callback.active)).toBe(true);
+    subscribe.mockRestore();
+  });
 
   test.each([30, 60].flatMap(fps => [60, 90, 120].map(refreshRate => [fps, refreshRate])))
   ('limits style changes to %s per second on a %s Hz display', (fps, refreshRate) => {

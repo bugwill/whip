@@ -7,6 +7,7 @@ import { createContext, useContext, type ReactNode, type RefObject } from 'react
 import { Platform, StyleSheet, View } from 'react-native';
 
 import { cn } from '@/src/lib/utils';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 import { useTheme } from '@/src/theme';
 import { liquidGlassShapeStyle } from './glassShape';
 
@@ -34,7 +35,8 @@ export function GlassBackdrop({
 }) {
   const glass = useContext(GlassContext);
   const { colors, isDark } = useTheme();
-  const enabled = glass?.enabled === true;
+  const { isEink } = useDisplayProfile();
+  const enabled = glass?.enabled === true && !isEink;
   // Native Liquid Glass is the primary surface on supported Apple devices.
   // The app glass preference only controls the legacy blur fallback.
   const renderLiquidGlass = enabled && isLiquidGlassSupported;
@@ -85,10 +87,12 @@ export function GlassSurface({
 }: React.ComponentProps<typeof View> & { intensity?: number }) {
   const glass = useContext(GlassContext);
   const { colors } = useTheme();
+  const { isEink } = useDisplayProfile();
+  const glassEnabled = glass?.enabled === true && !isEink;
   return (
     <View
       className={cn('relative overflow-hidden', className)}
-      style={[glass?.enabled === true ? undefined : { borderColor: colors.divider }, style]}
+      style={[glassEnabled ? undefined : { backgroundColor: colors.surface, borderColor: colors.divider }, style]}
       {...props}>
       <GlassBackdrop intensity={intensity} shapeClassName={className} />
       {children}

@@ -19,6 +19,7 @@ import {
   MIN_XTERM_CACHE_CAPACITY,
 } from '../lib/terminalRendererLru';
 import type { AppTab } from '../types';
+import type { DisplayProfilePreference } from '../lib/displayProfile';
 import {
   migrateAppBackgroundImage,
   removeAppBackgroundImage,
@@ -83,6 +84,7 @@ export interface DevicePreferences {
   biometricForKeys: boolean;
   biometricOnResume: boolean;
   appearance: AppearancePreference;
+  displayProfile: DisplayProfilePreference;
   fullscreenApp: boolean;
   smoothSpinners: boolean;
   appBackgroundImageUri: string | null;
@@ -107,6 +109,7 @@ export const defaultDevicePreferences: DevicePreferences = {
   biometricForKeys: false,
   biometricOnResume: false,
   appearance: 'system',
+  displayProfile: 'auto',
   fullscreenApp: false,
   smoothSpinners: false,
   appBackgroundImageUri: null,
@@ -124,10 +127,10 @@ export const defaultDevicePreferences: DevicePreferences = {
     useModifierKeyIcons: false,
     volumeUpAction: 'none',
     volumeDownAction: 'none',
-    fontSize: 8,
+    fontSize: 12,
     scrollback: 5000,
     xtermCacheCapacity: DEFAULT_XTERM_CACHE_CAPACITY,
-    cursorBlink: true,
+    cursorBlink: false,
     doubleTapAction: 'tab',
     openLinksInApp: true,
     pauseResizeInBackground: true,
@@ -262,6 +265,9 @@ function parseDevicePreferences(
       appearance: isAppearancePreference(parsed.appearance)
         ? parsed.appearance
         : defaultDevicePreferences.appearance,
+      displayProfile: isDisplayProfilePreference(parsed.displayProfile)
+        ? parsed.displayProfile
+        : defaultDevicePreferences.displayProfile,
       fullscreenApp: parsed.fullscreenApp === true,
       smoothSpinners: parsed.smoothSpinners === true,
       appBackgroundImageUri: typeof parsed.appBackgroundImageUri === 'string' && parsed.appBackgroundImageUri
@@ -383,6 +389,10 @@ function isAppTab(value: unknown): value is AppTab {
 
 function isAppearancePreference(value: unknown): value is AppearancePreference {
   return value === 'system' || value === 'light' || value === 'dark';
+}
+
+function isDisplayProfilePreference(value: unknown): value is DisplayProfilePreference {
+  return value === 'auto' || value === 'normal' || value === 'eink';
 }
 
 function isAgentAlertLevel(value: unknown): value is AgentAlertLevel {

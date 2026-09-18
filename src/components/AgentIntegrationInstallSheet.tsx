@@ -2,6 +2,7 @@ import { SquareTerminal, TriangleAlert, Wrench } from 'lucide-react-native';
 import { Modal, Pressable, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '@/src/lib/displayProfile';
 import { chatAgentDisplayName } from '../lib/agentChatSession';
 import type {
   PendingAgentIntegration,
@@ -50,13 +51,14 @@ export function AgentIntegrationInstallSheet({
   integration,
 }: Props) {
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('fade');
   const { colors } = useTheme();
   const name = integration ? chatAgentDisplayName(integration.agent) : '';
   const copy = promptCopy(name, integration?.status);
 
   return (
     <Modal
-      animationType="fade"
+      animationType={animationType}
       onRequestClose={onCancel}
       statusBarTranslucent
       transparent

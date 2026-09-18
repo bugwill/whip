@@ -3,6 +3,7 @@ import { Modal, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '../lib/displayProfile';
 import type { UnknownHostKeyChallenge } from '../services/knownHosts';
 import { useTheme } from '../theme';
 import { hapticPress } from './app-ui';
@@ -20,13 +21,14 @@ export function TrustHostSheet({ challenge, onCancel, onTrust }: Props) {
   const { bottom } = useSafeAreaInsets();
   const { t } = useTranslation();
   const { colors } = useTheme();
+  const animationType = useDisplayAnimationType('fade');
   const displayHost = challenge?.port === 22
     ? challenge.host
     : `[${challenge?.host}]:${challenge?.port}`;
 
   return (
     <Modal
-      animationType="fade"
+      animationType={animationType}
       onRequestClose={onCancel}
       statusBarTranslucent
       transparent

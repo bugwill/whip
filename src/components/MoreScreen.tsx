@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { ScrollView } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 
 import { AboutSection } from './AboutScreen';
 import { AppLogsSection } from './AppLogsScreen';
@@ -33,6 +34,7 @@ type Props = Omit<
 
 export function MoreScreen(props: Props) {
   const { t } = useTranslation();
+  const { isTablet } = useDisplayProfile();
   const [purchaseScreenVisible, setPurchaseScreenVisible] = useState(false);
   const openRancher = () => {
     if (!props.membershipSimulationEnabled) return Promise.resolve();
@@ -41,7 +43,8 @@ export function MoreScreen(props: Props) {
   };
   return (
     <SettingsDetailsProvider>
-      <ScrollView className="flex-1">
+      <ScrollView className="flex-1" contentContainerClassName={isTablet ? 'items-center pb-8' : undefined}>
+        <View className={isTablet ? 'w-full max-w-[860px]' : 'w-full'}>
         <GlassSurface className="border-b border-white/30 px-5 py-5 dark:border-white/10">
           <Text className="text-[22px] font-semibold leading-7">
             {t('nav.more')}
@@ -66,6 +69,7 @@ export function MoreScreen(props: Props) {
           globalKeyCount={props.globalKeyCount}
           knownHostCount={props.knownHostCount}
           appearance={props.appearance}
+          displayProfile={props.displayProfile}
           fullscreenApp={props.fullscreenApp}
           smoothSpinners={props.smoothSpinners}
           appBackgroundImageUri={props.appBackgroundImageUri}
@@ -101,6 +105,7 @@ export function MoreScreen(props: Props) {
           onManageGlobalKeychain={props.onManageGlobalKeychain}
           onManageKnownHosts={props.onManageKnownHosts}
           onAppearanceChange={props.onAppearanceChange}
+          onDisplayProfileChange={props.onDisplayProfileChange}
           onFullscreenAppChange={props.onFullscreenAppChange}
           onSmoothSpinnersChange={props.onSmoothSpinnersChange}
           onAppBackgroundImageChange={props.onAppBackgroundImageChange}
@@ -121,6 +126,7 @@ export function MoreScreen(props: Props) {
           onTerminalPreferencesChange={props.onTerminalPreferencesChange}
         />
         {props.developerOptionsEnabled ? <AppLogsSection /> : null}
+        </View>
       </ScrollView>
       <RancherPurchaseSheet
         entitlements={props.entitlements}

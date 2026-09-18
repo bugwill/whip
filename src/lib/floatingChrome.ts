@@ -52,15 +52,13 @@ export function terminalBottomChromeClearance({
   );
 }
 
-export function shouldShowTerminalSessionChrome({
-  composerVisible,
-  keyboardVisible,
-}: {
+export function shouldShowTerminalSessionChrome(_state: {
   composerVisible: boolean;
   keyboardEnabled: boolean;
   keyboardVisible: boolean;
 }): boolean {
-  return composerVisible || !keyboardVisible;
+  // Keyboard/composer geometry moves the selector; it must remain available.
+  return true;
 }
 
 export function visualContentInsets(
@@ -149,28 +147,19 @@ export function terminalViewportLayout({
   keyboardInset: number;
   topInset: number;
 }): TerminalViewportLayout {
-  const layoutKeyboardInset = composerVisible ? 0 : Math.max(0, keyboardInset);
-  const floatingKeyboardInset = Math.max(
-    0,
-    keyboardInset - layoutKeyboardInset,
-  );
-  const terminalBottom = terminalBottomChromeInset({
-    composerHeight,
-    composerVisible: false,
-    controlBarHeight,
-    keyboardInset: 0,
-  });
-  const overlayBottom = terminalBottomChromeInset({
+  // Reserve actual layout space: visual scroll allowances alone let content
+  // pass behind the composer, controls and IME while manually scrolling.
+  const layoutKeyboardInset = terminalBottomChromeInset({
     composerHeight,
     composerVisible: composerVisible && !composerExpanded,
     controlBarHeight,
-    keyboardInset: floatingKeyboardInset,
+    keyboardInset,
   });
 
   return {
-    floatingKeyboardInset,
+    floatingKeyboardInset: 0,
     layoutKeyboardInset,
-    overlayInsets: visualContentInsets(topInset, overlayBottom),
-    terminalInsets: visualContentInsets(topInset, terminalBottom),
+    overlayInsets: visualContentInsets(topInset, 0),
+    terminalInsets: visualContentInsets(topInset, 0),
   };
 }

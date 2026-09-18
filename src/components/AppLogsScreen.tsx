@@ -11,6 +11,7 @@ import { Modal, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '@/src/lib/displayProfile';
 import {
   formatAppLogTime,
   formatAppLogs,
@@ -113,6 +114,7 @@ function AppLogsModal({
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latencyCopiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('slide');
   const filteredEntries = useMemo(
     () =>
       levelFilter === 'all'
@@ -184,7 +186,7 @@ function AppLogsModal({
 
   return (
     <Modal
-      animationType="slide"
+      animationType={animationType}
       presentationStyle="fullScreen"
       visible={visible}
       onRequestClose={onClose}

@@ -1,4 +1,5 @@
 import { useMemo, useRef } from 'react';
+import { PortalHost } from '@rn-primitives/portal';
 import { BlurTargetView } from 'expo-blur';
 import { Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,6 +25,7 @@ import {
 } from '../herdQueue';
 import { aggregateAgentStatus } from '../lib/agentStatusAggregate';
 import { shouldEnableAppGlass } from '../lib/appGlass';
+import { DisplayProfileProvider, resolveDisplayProfile, useDisplayProfile } from '../lib/displayProfile';
 import { hostDisplayName } from '../lib/hostProfiles';
 import { hostRuntimeSummary } from '../lib/hostRuntimeSummary';
 import { hostSessionRecoveryState } from '../lib/hostSessionRecovery';
@@ -73,6 +75,22 @@ interface AppShellProps {
 
 /** Main application presentation. State and lifecycle stay in domain controllers. */
 export function AppShell({
+  ...props
+}: AppShellProps) {
+  return (
+    <DisplayProfileProvider preference={props.preferences.value.displayProfile}>
+      {/* Native portals render at their host and do not preserve source context.
+          Keep the host inside both the display profile and NativeWind scope,
+          but outside SafeAreaView so absolute composer coordinates stay valid. */}
+      <View className={resolveDisplayProfile(props.preferences.value.displayProfile) === 'eink' ? 'eink flex-1' : 'flex-1'}>
+        <AppShellContent {...props} />
+        <PortalHost />
+      </View>
+    </DisplayProfileProvider>
+  );
+}
+
+function AppShellContent({
   preferences,
   entitlements,
   hosts,
@@ -86,6 +104,7 @@ export function AppShell({
 }: AppShellProps) {
   const { t } = useTranslation();
   const { colors: theme, isDark } = useTheme();
+  const { isEink, isTablet } = useDisplayProfile();
   const navigationBlurTargetRef = useRef<View | null>(null);
   const storedPreferences = preferences.value;
   const developerMembershipState = storedPreferences.developerOptionsEnabled
@@ -98,10 +117,24 @@ export function AppShell({
     [developerMembershipState, entitlements],
   );
   const accessTier = resolveAccessTier(developerMembershipState);
-  const effectivePreferences = useMemo(
-    () => effectiveDevicePreferences(storedPreferences, accessTier),
-    [accessTier, storedPreferences],
-  );
+  const effectivePreferences = useMemo(() => {
+    const base = effectiveDevicePreferences(storedPreferences, accessTier);
+    if (!isEink) return base;
+    return {
+      ...base,
+      appearance: 'light' as const,
+      smoothSpinners: false,
+      appBackgroundImageUri: null,
+      appGlassEnabled: false,
+      terminal: {
+        ...base.terminal,
+        fontSize: Math.max(12, base.terminal.fontSize),
+        cursorBlink: false,
+        visualHints: false,
+        backgroundImageUri: null,
+      },
+    };
+  }, [accessTier, isEink, storedPreferences]);
   const {
     alertsEnabled,
     agentAlertLevel,
@@ -195,7 +228,7 @@ export function AppShell({
         isDark={isDark}
       />
       <SafeAreaView
-        className="flex-1 bg-background"
+        className={isEink ? 'eink flex-1 bg-background' : 'flex-1 bg-background'}
         edges={fullscreenVisible ? ['left', 'right'] : ['top', 'left', 'right']}
       >
         <TerminalVolumeKeyBinding
@@ -206,9 +239,11 @@ export function AppShell({
         {keepScreenOn && activeTerminalVisible ? <TerminalKeepAwake /> : null}
         <GlassProvider
           blurTarget={navigationBlurTargetRef}
-          enabled={shouldEnableAppGlass(appGlassEnabled, appBackgroundImageUri)}
+          enabled={
+            !isEink && shouldEnableAppGlass(appGlassEnabled, appBackgroundImageUri)
+          }
         >
-          <View className="flex-1 bg-background">
+          <View className={isEink ? 'eink flex-1 bg-background' : 'flex-1 bg-background'}>
             <NavigationBlurTarget
               ref={navigationBlurTargetRef}
               style={styles.navigationBlurTarget}
@@ -222,7 +257,10 @@ export function AppShell({
                 style={
                   immersiveTerminal
                     ? styles.hiddenTab
-                    : styles.navigationForeground
+                    : [
+                        styles.navigationForeground,
+                        isTablet && styles.tabletNavigationForeground,
+                      ]
                 }
               >
                 <AppBackground
@@ -416,6 +454,7 @@ export function AppShell({
                           : null
                       }
                       appearance={appearance}
+                      displayProfile={storedPreferences.displayProfile}
                       fullscreenApp={fullscreenApp}
                       smoothSpinners={storedPreferences.smoothSpinners}
                       appBackgroundImageUri={
@@ -509,6 +548,9 @@ export function AppShell({
                       onOpenLicenses={navigation.openLicenses}
                       onAppearanceChange={value =>
                         preferences.setPreference('appearance', value)
+                      }
+                      onDisplayProfileChange={value =>
+                        preferences.setPreference('displayProfile', value)
                       }
                       onFullscreenAppChange={value =>
                         preferences.setPreference('fullscreenApp', value)
@@ -676,5 +718,6 @@ const styles = StyleSheet.create({
   navigationBlurTarget: { flex: 1 },
   tabScreen: { flex: 1 },
   navigationForeground: { flex: 1, zIndex: 1 },
+  tabletNavigationForeground: { paddingLeft: 88 },
   hiddenTab: { position: 'absolute', inset: 0, opacity: 0 },
 });

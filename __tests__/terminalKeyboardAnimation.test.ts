@@ -19,13 +19,13 @@ describe('terminal keyboard and composer geometry', () => {
 
     expect(layout).toEqual({
       floatingKeyboardInset: 0,
-      layoutKeyboardInset: 301,
-      overlayInsets: { top: 0, bottom: 84 },
-      terminalInsets: { top: 0, bottom: 84 },
+      layoutKeyboardInset: 385,
+      overlayInsets: { top: 0, bottom: 0 },
+      terminalInsets: { top: 0, bottom: 0 },
     });
   });
 
-  test('opening the floating composer preserves PTY geometry and moves overlay content', () => {
+  test('opening the composer reserves its height in addition to controls and keyboard', () => {
     const closed = terminalViewportLayout({
       composerExpanded: false,
       composerHeight: 112,
@@ -44,9 +44,9 @@ describe('terminal keyboard and composer geometry', () => {
     });
 
     expect(open.terminalInsets).toEqual(closed.terminalInsets);
-    expect(open.layoutKeyboardInset).toBe(0);
-    expect(open.floatingKeyboardInset).toBe(301);
-    expect(open.overlayInsets).toEqual({ top: 0, bottom: 497 });
+    expect(open.layoutKeyboardInset).toBe(closed.layoutKeyboardInset + 112);
+    expect(open.floatingKeyboardInset).toBe(0);
+    expect(open.overlayInsets).toEqual({ top: 0, bottom: 0 });
   });
 
   test('expanded composer content shares the keyboard inset but not floating composer height', () => {
@@ -59,8 +59,33 @@ describe('terminal keyboard and composer geometry', () => {
       topInset: 0,
     });
 
-    expect(layout.terminalInsets).toEqual({ top: 0, bottom: 84 });
-    expect(layout.overlayInsets).toEqual({ top: 0, bottom: 385 });
+    expect(layout.layoutKeyboardInset).toBe(385);
+    expect(layout.terminalInsets).toEqual({ top: 0, bottom: 0 });
+    expect(layout.overlayInsets).toEqual({ top: 0, bottom: 0 });
+  });
+
+  test('a hardware keyboard still leaves space for the composer and its changing height', () => {
+    for (const composerHeight of [112, 240]) {
+      const layout = terminalViewportLayout({
+        composerExpanded: false,
+        composerHeight,
+        composerVisible: true,
+        controlBarHeight,
+        keyboardInset: 0,
+        topInset: 0,
+      });
+      expect(layout.layoutKeyboardInset).toBe(controlBarHeight + composerHeight);
+      expect(layout.terminalInsets.bottom).toBe(0);
+    }
+    const closed = terminalViewportLayout({
+      composerExpanded: false,
+      composerHeight: 240,
+      composerVisible: false,
+      controlBarHeight,
+      keyboardInset: 0,
+      topInset: 0,
+    });
+    expect(closed.layoutKeyboardInset).toBe(controlBarHeight);
   });
 
   test.each([
@@ -80,7 +105,7 @@ describe('terminal keyboard and composer geometry', () => {
       composerVisible: false,
       keyboardEnabled: false,
       keyboardVisible: true,
-      visible: false,
+      visible: true,
     },
     {
       composerVisible: true,
@@ -95,7 +120,7 @@ describe('terminal keyboard and composer geometry', () => {
       visible: true,
     },
   ])(
-    'keeps session chrome stable until a direct keyboard is visible',
+    'keeps session chrome visible with or without the keyboard and composer',
     ({ visible, ...state }) => {
       expect(shouldShowTerminalSessionChrome(state)).toBe(visible);
     },

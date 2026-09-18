@@ -53,6 +53,20 @@ export function dominantAnsiBackground(segments: AnsiSegment[], fallback: string
   return [...weights.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] || fallback;
 }
 
+/** Map colored ANSI text to readable dark grayscale for E-Ink output. */
+export function einkAnsiForeground(color: string | undefined, fallback: string): string {
+  if (!color || !/^#[\da-f]{6}$/i.test(color)) return fallback;
+  const red = Number.parseInt(color.slice(1, 3), 16);
+  const green = Number.parseInt(color.slice(3, 5), 16);
+  const blue = Number.parseInt(color.slice(5, 7), 16);
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  if (luminance < 48) return '#000000';
+  if (luminance < 96) return '#222222';
+  if (luminance < 144) return '#333333';
+  if (luminance < 192) return '#444444';
+  return '#555555';
+}
+
 export function resolvedStyle(style: AnsiStyle): AnsiStyle {
   if (!style.reverse) return style;
   return {

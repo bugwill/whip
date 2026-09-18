@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '@/src/lib/displayProfile';
 import type { WhipEntitlementsController } from '../billing/useWhipEntitlements';
 import { bundledAsset } from '../lib/bundledAsset';
 import { hapticPress } from './app-ui';
@@ -61,6 +62,7 @@ function TierFeature({ children }: { children: string }) {
 export function RancherPurchaseSheet({ entitlements, onClose, visible }: Props) {
   const { bottom } = useSafeAreaInsets();
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('fade');
   const [busy, setBusy] = useState<PurchaseAction | null>(null);
   const rancherPrice = entitlements.localizedLifetimePrice ?? '$29.99';
 
@@ -90,7 +92,7 @@ export function RancherPurchaseSheet({ entitlements, onClose, visible }: Props) 
 
   return (
     <Modal
-      animationType="fade"
+      animationType={animationType}
       onRequestClose={busy === null ? onClose : undefined}
       statusBarTranslucent
       transparent

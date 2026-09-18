@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Script } from 'node:vm';
+import { TextDecoder } from 'node:util';
 import { FitAddon } from '@xterm/addon-fit';
 import type { Terminal } from '@xterm/xterm';
 
@@ -79,6 +80,7 @@ async function runtime(asset: string, userAgent: string) {
     parser: { registerOscHandler: jest.fn() },
     loadAddon: (addon: { activate?: (term: Terminal) => void }) => addon.activate?.(terminal as unknown as Terminal),
     open: jest.fn(),
+    refresh: jest.fn(),
     blur: jest.fn(),
     attachCustomKeyEventHandler: jest.fn(),
     onData: jest.fn(),
@@ -97,7 +99,7 @@ async function runtime(asset: string, userAgent: string) {
   const html = readFileSync(resolve(__dirname, '..', asset), 'utf8');
   const script = html.split('<script>')[1].split('</script>')[0];
   const api = new Script(`${script}\ncreateTerminalSession(root, report);`).runInNewContext({
-    root, report, window,
+    root, report, window, TextDecoder,
     document: {},
     navigator: { userAgent },
     performance: { now: () => 0 },
@@ -122,6 +124,16 @@ describe.each([
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
   const setup = () => runtime(asset, platform);
+
+  test('unrelated configuration does not repaint the entire terminal theme', async () => {
+    const state = await setup();
+    state.api.herdrConfigure({ einkMode: true, fontSize: 12 });
+    expect(state.terminal.refresh).toHaveBeenCalledTimes(1);
+    state.api.herdrConfigure({ einkMode: true, fontSize: 12, doubleTapAction: 'paste' });
+    expect(state.terminal.refresh).toHaveBeenCalledTimes(1);
+    state.api.herdrConfigure({ einkMode: false, fontSize: 12 });
+    expect(state.terminal.refresh).toHaveBeenCalledTimes(2);
+  });
 
   test('mount fits once; unchanged window and visual viewport events do not fit or trace', async () => {
     const state = await setup();

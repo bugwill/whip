@@ -3,6 +3,7 @@ import { Modal, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '../lib/displayProfile';
 import type { ChatAgent } from '../lib/agentChatSession';
 import { useTheme } from '../theme';
 import { hapticPress } from './app-ui';
@@ -25,10 +26,11 @@ export function AgentIdentityWarningSheet({ onClose, warning }: Props) {
   const { bottom } = useSafeAreaInsets();
   const { t } = useTranslation();
   const { colors } = useTheme();
+  const animationType = useDisplayAnimationType('fade');
 
   return (
     <Modal
-      animationType="fade"
+      animationType={animationType}
       onRequestClose={onClose}
       statusBarTranslucent
       transparent

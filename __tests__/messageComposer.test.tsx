@@ -76,7 +76,7 @@ describe('MessageComposer glass controls', () => {
         expect.arrayContaining(['bg-card/60', 'active:bg-card/70']),
       );
       expect(action.props.className).not.toContain('bg-terminal-surface');
-      expect(action.props.style).toEqual({ borderColor: 'passive' });
+      expect(action.props.style).toEqual([{ borderColor: 'passive' }, undefined]);
       expect(action.props.variant).toBe('ghost');
     }
     expect(send.props.className.split(/\s+/)).toContain('border');
@@ -84,7 +84,7 @@ describe('MessageComposer glass controls', () => {
       expect.arrayContaining(['bg-card/60', 'active:bg-card/70']),
     );
     expect(send.props.className).not.toContain('bg-white');
-    expect(send.props.style).toEqual({ borderColor: 'active' });
+    expect(send.props.style).toEqual([{ borderColor: 'active' }, undefined]);
     expect(send.props.variant).toBe('ghost');
     expect(
       renderer.root.find(node => String(node.type) === 'Send').props.color,
@@ -98,10 +98,10 @@ describe('MessageComposer glass controls', () => {
     const send = renderer.root.findByProps({ accessibilityLabel: 'Send' });
 
     expect(attach.props.className).toContain('bg-terminal-surface');
-    expect(attach.props.style).toBeUndefined();
+    expect(attach.props.style).toEqual([undefined, undefined]);
     expect(attach.props.variant).toBe('secondary');
     expect(send.props.className).toContain('bg-white');
-    expect(send.props.style).toBeUndefined();
+    expect(send.props.style).toEqual([undefined, undefined]);
     expect(send.props.variant).toBe('default');
     expect(
       renderer.root.find(node => String(node.type) === 'Send').props.color,

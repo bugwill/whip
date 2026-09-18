@@ -2,6 +2,7 @@ import { TriangleAlert, type LucideIcon } from 'lucide-react-native';
 import { Modal, Pressable, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '../lib/displayProfile';
 import { cn } from '../lib/utils';
 import { useTheme } from '../theme';
 import { hapticPress } from './app-ui';
@@ -36,13 +37,14 @@ export function ConfirmationPopup({
 }: Props) {
   const { t } = useTranslation();
   const { colors } = useTheme();
+  const animationType = useDisplayAnimationType('fade');
   const cancel = () => {
     if (!busy) onCancel();
   };
 
   return (
     <Modal
-      animationType="fade"
+      animationType={animationType}
       onRequestClose={cancel}
       statusBarTranslucent
       transparent

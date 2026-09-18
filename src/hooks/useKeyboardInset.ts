@@ -13,7 +13,18 @@ export function useKeyboardInset(
 ) {
   const [inset, setInset] = useState(0);
   const measurementRevision = useRef(0);
+  const keyboardTopRef = useRef<number | null>(null);
+  const remeasure = useCallback(() => {
+    const keyboardTop = keyboardTopRef.current;
+    if (!enabled || keyboardTop === null) return;
+    const revision = ++measurementRevision.current;
+    measuredViewRef.current?.measureInWindow((_x, y, _width, height) => {
+      if (revision !== measurementRevision.current) return;
+      setInset(Math.max(0, Math.ceil(y + height - keyboardTop)));
+    });
+  }, [enabled, measuredViewRef]);
   const resetInset = useCallback(() => {
+    keyboardTopRef.current = null;
     measurementRevision.current += 1;
     setInset(0);
   }, []);
@@ -29,12 +40,9 @@ export function useKeyboardInset(
     }
 
     const measure = (keyboardTop: number) => {
-      const revision = ++measurementRevision.current;
+      keyboardTopRef.current = keyboardTop;
       reportVisibility(true);
-      measuredViewRef.current?.measureInWindow((_x, y, _width, height) => {
-        if (revision !== measurementRevision.current) return;
-        setInset(Math.max(0, Math.ceil(y + height - keyboardTop)));
-      });
+      remeasure();
     };
     const show = Keyboard.addListener('keyboardDidShow', event => {
       measure(event.endCoordinates.screenY);
@@ -42,6 +50,9 @@ export function useKeyboardInset(
     const hide = Keyboard.addListener('keyboardDidHide', () => {
       resetInset();
       reportVisibility(false);
+    });
+    const frame = Keyboard.addListener('keyboardDidChangeFrame', event => {
+      if (keyboardTopRef.current !== null) measure(event.endCoordinates.screenY);
     });
 
     // The IME may have opened before subscription, with no further show event.
@@ -53,8 +64,9 @@ export function useKeyboardInset(
       measurementRevision.current += 1;
       show.remove();
       hide.remove();
+      frame.remove();
     };
-  }, [enabled, measuredViewRef, resetInset]);
+  }, [enabled, measuredViewRef, resetInset, remeasure]);
 
-  return { inset, resetInset };
+  return { inset, resetInset, remeasure };
 }

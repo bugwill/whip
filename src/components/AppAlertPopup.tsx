@@ -2,6 +2,7 @@ import { CircleAlert } from 'lucide-react-native';
 import { Modal, Pressable, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '../lib/displayProfile';
 import { useTheme } from '../theme';
 import { hapticPress } from './app-ui';
 import { GlassSurface } from './GlassSurface';
@@ -28,11 +29,12 @@ export function AppAlertPopup({
 }: AppAlertPopupProps) {
   const { t } = useTranslation();
   const { colors } = useTheme();
+  const animationType = useDisplayAnimationType('fade');
   const closeLabel = actionLabel || t('common.close');
 
   return (
     <Modal
-      animationType="fade"
+      animationType={animationType}
       onRequestClose={onClose}
       statusBarTranslucent
       transparent

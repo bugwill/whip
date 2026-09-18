@@ -32,6 +32,7 @@ import {
   terminalControlBarInset,
   terminalSessionChromeHeight,
 } from '@/src/lib/floatingChrome';
+import { useDisplayAnimationType, useDisplayProfile } from '@/src/lib/displayProfile';
 import { runWithInFlightGuard } from '@/src/lib/inFlightSubmission';
 import { cn } from '@/src/lib/utils';
 import {
@@ -214,10 +215,11 @@ export function SessionScreen({
   onExit,
 }: Props) {
   const { colors } = useTheme();
+  const { isEink, isTablet } = useDisplayProfile();
+  const animationType = useDisplayAnimationType('slide');
   const { t } = useTranslation();
   const appGlassEnabled = useAppGlassEnabled();
   const safeAreaInsets = useSafeAreaInsets();
-  const isIpad = Platform.OS === 'ios' && Platform.isPad;
   const focusedWorkspace =
     snapshot.workspaces.find(item => item.focused) || snapshot.workspaces[0];
   const [workspaceId, setWorkspaceId] = useState(
@@ -230,6 +232,9 @@ export function SessionScreen({
   const [editingPaneId, setEditingPaneId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [terminalSessionChromeBottom, setTerminalSessionChromeBottom] = useState(
+    terminalControlBarInset(safeAreaInsets.bottom),
+  );
   const [terminalSessionChromeVisible, setTerminalSessionChromeVisible] =
     useState(true);
   const [appAlert, setAppAlert] = useState<AppAlertContent | null>(null);
@@ -1229,7 +1234,7 @@ export function SessionScreen({
       <TerminalBackground preferences={terminalPreferences} />
       <View
         className="absolute inset-x-0 z-30"
-        style={{ bottom: terminalControlBarInset(safeAreaInsets.bottom) }}
+        style={{ bottom: terminalSessionChromeBottom, backgroundColor: colors.canvas }}
       >
         <View
           accessibilityElementsHidden={!terminalSessionChromeVisible}
@@ -1279,7 +1284,7 @@ export function SessionScreen({
                       key={item.tab_id}
                       className={cn(
                         'h-11 max-w-[170px] flex-row items-center overflow-hidden rounded-full border',
-                        isIpad && 'max-w-[230px]',
+                        isTablet && 'max-w-[230px]',
                       )}
                       style={sessionTabGlassStyle(active, colors)}
                     >
@@ -1289,7 +1294,7 @@ export function SessionScreen({
                         })}
                         className={cn(
                           'h-11 min-w-0 flex-shrink justify-start gap-2 rounded-none px-[11px] py-0 pr-1 active:bg-transparent active:opacity-70 dark:active:bg-transparent',
-                          isIpad && 'px-3',
+                          isTablet && 'px-3',
                         )}
                         variant="ghost"
                         onPress={hapticPress(() => chooseTab(item))}
@@ -1302,14 +1307,14 @@ export function SessionScreen({
                             itemSession?.status,
                             colors,
                           )}
-                          size={isIpad ? 16 : 12}
+                          size={isTablet ? 16 : 12}
                         />
                         <Text
                           numberOfLines={1}
                           className={cn(
                             'max-w-[94px] pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground',
-                            isIpad && 'max-w-[140px] text-[14px] leading-5',
-                            active && 'text-primary-foreground',
+                            isTablet && 'max-w-[140px] text-[14px] leading-5',
+                            active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
                           )}
                         >
                           {label}
@@ -1318,8 +1323,8 @@ export function SessionScreen({
                           <Text
                             className={cn(
                               'font-mono text-[8px] text-muted-foreground',
-                              isIpad && 'text-[11px]',
-                              active && 'text-primary-foreground',
+                          isTablet && 'text-[11px]',
+                              active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
                             )}
                           >
                             {item.pane_count}
@@ -1335,9 +1340,9 @@ export function SessionScreen({
                         onPress={hapticPress(() => closeTab(item))}
                       >
                         <X
-                          size={isIpad ? 18 : 14}
+                          size={isTablet ? 18 : 14}
                           color={
-                            active ? colors.onPrimary : colors.textSecondary
+                            active ? colors.activeSurfaceForeground : colors.textSecondary
                           }
                         />
                       </Button>
@@ -1460,7 +1465,7 @@ export function SessionScreen({
                         numberOfLines={1}
                         className={cn(
                           'max-w-[112px] pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground',
-                          active && 'text-primary-foreground',
+                          active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
                         )}
                       >
                         {label}
@@ -1477,7 +1482,7 @@ export function SessionScreen({
                     >
                       <X
                         size={13}
-                        color={active ? colors.onPrimary : colors.textSecondary}
+                        color={active ? colors.activeSurfaceForeground : colors.textSecondary}
                       />
                     </Button>
                   </View>
@@ -1500,6 +1505,7 @@ export function SessionScreen({
             compact
             sessionChromeInset={sessionChromeInset}
             onSessionChromeVisibilityChange={setTerminalSessionChromeVisible}
+            onSessionChromeBottomChange={setTerminalSessionChromeBottom}
             latencyMs={latencyMs}
             latencyWarningActive={latencyWarningActive}
             visible={visible && Boolean(activeTarget)}
@@ -1747,7 +1753,7 @@ export function SessionScreen({
           onClose={chatOpen.dismissNotice}
         />
         <Modal
-          animationType="slide"
+          animationType={animationType}
           onRequestClose={browserUrl ? leaveBrowser : dismissLinks}
           statusBarTranslucent
           visible={linksOpen}

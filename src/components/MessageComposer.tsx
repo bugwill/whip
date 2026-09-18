@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 
 import { APP_GLASS_FLOATING_CONTROL_CLASS } from '../lib/appGlass';
+import { useDisplayProfile } from '../lib/displayProfile';
 import { cn } from '../lib/utils';
 import { appGlassControlStyle, useTheme } from '../theme';
 import { GlassSurface } from './GlassSurface';
@@ -65,20 +66,32 @@ export function MessageComposer({
   ...inputProps
 }: MessageComposerProps) {
   const { colors } = useTheme();
+  const { isEink } = useDisplayProfile();
+  const { style: inputStyle, ...composerInputProps } = inputProps;
   const actionStyle = glass
     ? { borderColor: appGlassControlStyle(false, colors).borderColor }
     : undefined;
   const sendStyle = glass
     ? { borderColor: appGlassControlStyle(true, colors).borderColor }
     : undefined;
-  const actionColor = glass ? colors.text : actions.actionColor;
-  const sendColor = glass ? colors.primary : actions.sendColor;
+  const einkActionStyle = isEink
+    ? { backgroundColor: colors.controlSurface, borderColor: colors.divider }
+    : undefined;
+  const einkSurfaceStyle = isEink
+    ? { backgroundColor: colors.canvas, borderColor: colors.divider }
+    : undefined;
+  const actionColor = isEink ? colors.text : glass ? colors.text : actions.actionColor;
+  const sendColor = isEink ? colors.text : glass ? colors.primary : actions.sendColor;
   const surfaceContent = (
     <>
       {beforeInput}
       <ComposerInput
-        {...inputProps}
+        {...composerInputProps}
         ref={inputRef}
+        style={[
+          inputStyle,
+          isEink ? { backgroundColor: colors.canvas, color: colors.text } : undefined,
+        ]}
         className={cn('rounded-none border-0 bg-transparent shadow-none', inputClassName)}
       />
     </>
@@ -94,7 +107,7 @@ export function MessageComposer({
               ? cn('border', APP_GLASS_FLOATING_CONTROL_CLASS)
               : actions.actionClassName,
           )}
-          style={actionStyle}
+          style={[actionStyle, einkActionStyle]}
           variant={glass ? 'ghost' : 'secondary'}
           onPress={actions.onAttach}
         >
@@ -108,7 +121,7 @@ export function MessageComposer({
               ? cn('border', APP_GLASS_FLOATING_CONTROL_CLASS)
               : actions.actionClassName,
           )}
-          style={actionStyle}
+          style={[actionStyle, einkActionStyle]}
           variant={glass ? 'ghost' : 'secondary'}
           onPress={actions.onExpand}
         >
@@ -122,6 +135,7 @@ export function MessageComposer({
             surfaceClassName,
           )}
           intensity={44}
+          style={einkSurfaceStyle}
         >
           {surfaceContent}
         </GlassSurface>
@@ -131,6 +145,7 @@ export function MessageComposer({
             'min-w-0 flex-1 overflow-hidden rounded-[38px] border border-border bg-card',
             surfaceClassName,
           )}
+          style={einkSurfaceStyle}
         >
           {surfaceContent}
         </View>
@@ -145,7 +160,7 @@ export function MessageComposer({
               : actions.sendClassName,
           )}
           disabled={actions.sendDisabled}
-          style={sendStyle}
+          style={[sendStyle, einkActionStyle]}
           variant={glass ? 'ghost' : 'default'}
           onPress={actions.onSend}
         >
@@ -163,7 +178,7 @@ export function MessageComposer({
               ? cn('border', APP_GLASS_FLOATING_CONTROL_CLASS)
               : actions.actionClassName,
           )}
-          style={actionStyle}
+          style={[actionStyle, einkActionStyle]}
           variant={glass ? 'ghost' : 'secondary'}
           onPress={actions.onClose}
         >

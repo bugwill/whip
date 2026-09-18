@@ -30,7 +30,7 @@ const APPROXIMATE_GLYPH_WIDTH = 7.2;
 const MAX_MEASURED_COLUMNS = 240;
 
 export function RemoteGitDiffPreview({ diff, filename, onOpenFile }: Props) {
-  const { colors } = useTheme();
+  const { colors, isEink } = useTheme();
   const { t } = useTranslation();
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const contentWidth = useMemo(() => {
@@ -103,7 +103,7 @@ export function RemoteGitDiffPreview({ diff, filename, onOpenFile }: Props) {
                 <View
                   style={[
                     styles.notice,
-                    { backgroundColor: colorWithAlpha(colors.warning, '1F') },
+                    { backgroundColor: isEink ? colors.surfaceRaised : colorWithAlpha(colors.warning, '1F') },
                   ]}
                 >
                   <Text style={[styles.noticeText, { color: colors.warning }]}>
@@ -113,8 +113,8 @@ export function RemoteGitDiffPreview({ diff, filename, onOpenFile }: Props) {
               ) : null
             }
             maxToRenderPerBatch={80}
-            removeClippedSubviews={Platform.OS === 'android'}
-            renderItem={({ item }) => <DiffRow colors={colors} row={item} />}
+            removeClippedSubviews={Platform.OS === 'android' && !isEink}
+            renderItem={({ item }) => <DiffRow colors={colors} isEink={isEink} row={item} />}
             style={{ height: viewport.height, width: contentWidth }}
             updateCellsBatchingPeriod={30}
             windowSize={12}
@@ -132,13 +132,17 @@ export function RemoteGitDiffPreview({ diff, filename, onOpenFile }: Props) {
 
 function DiffRow({
   colors,
+  isEink,
   row,
 }: {
   colors: ThemeColors;
+  isEink: boolean;
   row: RemoteGitDiffRow;
 }) {
   const backgroundColor =
-    row.kind === 'addition'
+    isEink
+      ? colors.canvas
+      : row.kind === 'addition'
       ? colorWithAlpha(colors.working, '1C')
       : row.kind === 'deletion'
       ? colorWithAlpha(colors.error, '1C')
@@ -148,7 +152,17 @@ function DiffRow({
       ? colors.surface
       : colors.canvas;
   const foreground =
-    row.kind === 'addition'
+    isEink
+      ? row.kind === 'addition'
+      ? '#333333'
+      : row.kind === 'deletion'
+      ? '#222222'
+      : row.kind === 'hunk'
+      ? '#555555'
+      : row.kind === 'header' || row.kind === 'meta'
+      ? colors.textSecondary
+      : colors.text
+      : row.kind === 'addition'
       ? colors.working
       : row.kind === 'deletion'
       ? colors.error

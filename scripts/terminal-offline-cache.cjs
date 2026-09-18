@@ -18,6 +18,7 @@ function createTerminalOfflineCache({
   let dirty = false;
   let timer = null;
   let scrollback = 5000;
+  const normalDelayMs = delayMs;
 
   const clearTimer = () => {
     if (timer === null) return;
@@ -63,6 +64,7 @@ function createTerminalOfflineCache({
 
   return {
     configure(options) {
+      delayMs = options?.eink ? Math.max(3000, normalDelayMs) : normalDelayMs;
       enabled = options?.enabled === true;
       scrollback = Math.max(1, Math.min(5000, Math.round(Number(options?.scrollback)) || 5000));
       if (!enabled) {

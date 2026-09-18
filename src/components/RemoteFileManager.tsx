@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 
 import { formatRemoteFileSize, isRemoteHiddenPath, parentRemotePath, remoteEntryName, remotePreviewKind, sortRemoteEntries, type RemoteFileSortField, type RemotePreviewKind } from '@/src/lib/remoteFiles';
+import { useDisplayAnimationType, useDisplayProfile } from '@/src/lib/displayProfile';
 import { REMOTE_FILE_SWIPE_ACTION_WIDTH, remoteFileSwipeOffset, shouldClaimRemoteFileSwipe, shouldOpenRemoteFileSwipe } from '@/src/lib/remoteFileSwipeActions';
 import { DEFAULT_SPRING_CONFIG } from '@/src/lib/motion';
 import { buildRemoteGitTreeRows, isRemoteGitEntryDeleted, remoteGitStatusLabel, type RemoteGitDiff, type RemoteGitRepository, type RemoteGitStatusEntry } from '@/src/lib/remoteGit';
@@ -76,6 +77,7 @@ const remoteGitTreeIndentStyles = Array.from({ length: 16 }, (_, depth) => ({
 export function RemoteFileManager({ visible, client, hostId, initialPath, initialFilePath, initialLine, onPathChange, onClose }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('slide');
   const safeAreaInsets = useSafeAreaInsets();
   const fileViewPreferences = useRemoteFileViewPreferences();
   const {
@@ -553,7 +555,7 @@ export function RemoteFileManager({ visible, client, hostId, initialPath, initia
   } : null;
 
   return (
-    <Modal animationType="slide" onRequestClose={() => (sortMenuVisible ? setSortMenuVisible(false) : confirmDiscard(preview ? closePreviewNow : dismissNow))} statusBarTranslucent visible={visible}>
+    <Modal animationType={animationType} onRequestClose={() => (sortMenuVisible ? setSortMenuVisible(false) : confirmDiscard(preview ? closePreviewNow : dismissNow))} statusBarTranslucent visible={visible}>
       <View
         className="flex-1 bg-background"
         style={{
@@ -1010,7 +1012,9 @@ function HiddenOnlyState({ onShow }: { onShow: () => void }) {
 
 function SwipeableRemoteFileRow({ children, deleting, disabled, name, onDelete }: { children: (controls: { actionsOpen: boolean; closeActions: () => void }) => ReactNode; deleting: boolean; disabled: boolean; name: string; onDelete: () => void }) {
   const { t } = useTranslation();
+  const { isEink } = useDisplayProfile();
   const translateX = useSharedValue(0);
+  const isEinkRef = useRef(isEink);
   const openRef = useRef(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const animatedStyle = useAnimatedStyle(() => ({
@@ -1019,13 +1023,15 @@ function SwipeableRemoteFileRow({ children, deleting, disabled, name, onDelete }
   const actionRevealStyle = useAnimatedStyle(() => ({
     width: Math.max(0, -translateX.value),
   }));
+  isEinkRef.current = isEink;
 
   useEffect(() => () => cancelAnimation(translateX), [translateX]);
 
   const settle = (open: boolean) => {
     openRef.current = open;
     setActionsOpen(open);
-    translateX.value = withSpring(open ? -REMOTE_FILE_SWIPE_ACTION_WIDTH : 0, DEFAULT_SPRING_CONFIG);
+    const target = open ? -REMOTE_FILE_SWIPE_ACTION_WIDTH : 0;
+    translateX.value = isEinkRef.current ? target : withSpring(target, DEFAULT_SPRING_CONFIG);
   };
 
   const panResponder = useRef(

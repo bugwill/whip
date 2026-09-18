@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useKeyboardInset } from '@/src/hooks/useKeyboardInset';
 import { errorCode, privateKeyErrorTranslationKey } from '@/src/lib/connectionErrors';
+import { useDisplayAnimationType } from '@/src/lib/displayProfile';
 import { hostDisplayName, jumpHostCandidates } from '@/src/lib/hostProfiles';
 import { normalizePrivateKey } from '@/src/lib/privateKey';
 import {
@@ -470,6 +471,7 @@ function PrivateKeyActions({ hasKey, visible, onClose, onCopyPrivate, onCopyPubl
   onSelectFile: () => void;
 }) {
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('fade');
   const { colors } = useTheme();
   const appGlassEnabled = useAppGlassEnabled();
   if (hasKey) {
@@ -483,7 +485,7 @@ function PrivateKeyActions({ hasKey, visible, onClose, onCopyPrivate, onCopyPubl
     );
   }
   return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
+    <Modal animationType={animationType} transparent visible={visible} onRequestClose={onClose}>
       <View className="flex-1 justify-end">
         <Pressable accessibilityLabel={t('connection.closeKeyActions')} className="absolute inset-0 bg-black/55" onPress={onClose} />
         <GlassSurface accessibilityViewIsModal className="rounded-t-[28px] border-t border-white/30 px-4 pb-8 pt-5 dark:border-white/10">
@@ -515,10 +517,11 @@ function GlobalKeyPicker({ keys, visible, onClose, onSelect }: {
   onSelect: (key: GlobalSshKeyMaterial) => void;
 }) {
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('fade');
   const { colors } = useTheme();
   const appGlassEnabled = useAppGlassEnabled();
   return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
+    <Modal animationType={animationType} transparent visible={visible} onRequestClose={onClose}>
       <View className="flex-1 justify-end">
         <Pressable accessibilityLabel={t('keychain.closePicker')} className="absolute inset-0 bg-black/55" onPress={onClose} />
         <GlassSurface accessibilityViewIsModal className="max-h-[72%] rounded-t-[28px] border-t border-white/30 px-4 pb-8 pt-5 dark:border-white/10">
@@ -563,9 +566,10 @@ function JumpHostPicker({ hosts, selectedHostId, visible, onClose, onSelect }: {
   onSelect: (hostId: string | undefined) => void;
 }) {
   const { t } = useTranslation();
+  const animationType = useDisplayAnimationType('fade');
   const options: Array<HostProfile | null> = [null, ...hosts];
   return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
+    <Modal animationType={animationType} transparent visible={visible} onRequestClose={onClose}>
       <Pressable accessibilityLabel={t('connection.closeJumpHostPicker')} className="flex-1 justify-end bg-black/55" onPress={onClose}>
         <Pressable className="max-h-[72%] rounded-t-[28px] border-t border-border bg-card px-4 pb-8 pt-5" onPress={event => event.stopPropagation()}>
           <Text className="px-2 text-lg font-semibold">{t('connection.chooseJumpHost')}</Text>

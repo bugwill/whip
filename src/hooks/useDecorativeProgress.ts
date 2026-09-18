@@ -1,4 +1,6 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
+import { useDisplayProfile } from '../lib/displayProfile';
 import { useFrameCallback, useSharedValue, type FrameInfo } from 'react-native-reanimated';
 
 export const DECORATIVE_FRAMES_PER_SECOND = 30;
@@ -10,6 +12,13 @@ export function useDecorativeProgress(
   reverse = true,
   framesPerSecond = DECORATIVE_FRAMES_PER_SECOND,
 ) {
+  const { isEink } = useDisplayProfile();
+  const [foreground, setForeground] = useState(AppState.currentState === 'active');
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => setForeground(state === 'active'));
+    return () => subscription.remove();
+  }, []);
+  const animate = enabled && !isEink && foreground;
   const progress = useSharedValue(0);
   const timing = useSharedValue({ startedAt: -1, lastFrame: -1 });
   const callback = useFrameCallback(useCallback(({ timestamp }: FrameInfo) => {
@@ -34,9 +43,9 @@ export function useDecorativeProgress(
   useEffect(() => {
     timing.value = { startedAt: -1, lastFrame: -1 };
     progress.value = 0;
-    callback.setActive(enabled);
+    callback.setActive(animate);
     return () => callback.setActive(false);
-  }, [callback, durationMs, enabled, progress, reverse, timing]);
+  }, [animate, callback, durationMs, progress, reverse, timing]);
 
   return progress;
 }

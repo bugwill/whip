@@ -2,6 +2,7 @@ import { CircleCheckBig, Server } from 'lucide-react-native';
 import { Modal, Pressable, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { useDisplayAnimationType } from '../lib/displayProfile';
 import type { PairHostResult } from '../lib/sshPairing';
 import { useTheme } from '../theme';
 import { hapticPress } from './app-ui';
@@ -16,11 +17,12 @@ interface Props {
 export function PairingSuccessPopup({ onClose, result }: Props) {
   const { t } = useTranslation();
   const { colors } = useTheme();
+  const animationType = useDisplayAnimationType('fade');
   const destination = result ? `${result.sshUser}@${result.sshHost}` : '';
 
   return (
     <Modal
-      animationType="fade"
+      animationType={animationType}
       onRequestClose={onClose}
       statusBarTranslucent
       transparent

@@ -13,6 +13,7 @@ const { installAndroidImeBridge, terminalInputDelta } = androidImeBridge;
 const { createTerminalPasteBridge } = terminalClipboardPaste;
 const { createTerminalOfflineCache } = terminalOfflineCache;
 const {
+  terminalCursorTapInput,
   handleKeyboardClosedStationaryTap,
   setTerminalKeyboardInputEnabled,
   terminalMouseClickInput,
@@ -243,7 +244,9 @@ const terminalSessionHtml = `<!doctype html>
     #terminal { position: relative; box-sizing: border-box; }
     #terminal-visual-debug { position: fixed; z-index: 30; top: 104px; right: 8px; display: none; max-width: calc(100% - 16px); padding: 5px 7px; border: 1px solid #7aa2f7aa; border-radius: 7px; background: #16161ed9; color: #c0caf5; font: 700 9px/1.35 monospace; white-space: pre-wrap; pointer-events: none; }
     .xterm { height: 100%; }
-    .xterm-viewport { overflow-y: hidden !important; scrollbar-width: none !important; background-color: transparent !important; }
+    .xterm-viewport, .xterm-screen { background-color: transparent !important; }
+    html[data-display-profile='eink'], html[data-display-profile='eink'] body, html[data-display-profile='eink'] #terminals, html[data-display-profile='eink'] .terminal-session, html[data-display-profile='eink'] #terminal-geometry, html[data-display-profile='eink'] #terminal, html[data-display-profile='eink'] .xterm, html[data-display-profile='eink'] .xterm-viewport, html[data-display-profile='eink'] .xterm-screen { background-color: #ffffff !important; }
+    .xterm-viewport { overflow-y: hidden !important; scrollbar-width: none !important; }
     .xterm-viewport::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
     .xterm .scrollbar { display: none !important; }
     #selection-toolbar { position: fixed; z-index: 20; display: none; gap: 1px; padding: 3px; background: #24283b; border: 1px solid #414868; border-radius: 10px; box-shadow: 0 4px 16px #0008; }
@@ -277,6 +280,7 @@ const terminalSessionHtml = `<!doctype html>
     ${createTerminalPasteBridge.toString()}
     ${createTerminalOfflineCache.toString()}
     ${handleKeyboardClosedStationaryTap.toString()}
+    ${terminalCursorTapInput.toString()}
     ${setTerminalKeyboardInputEnabled.toString()}
     ${terminalMouseInputSequence.toString()}
     ${terminalMouseClickInput.toString()}
@@ -297,29 +301,86 @@ const terminalSessionHtml = `<!doctype html>
           document.fonts.load('400 8px "${fontManifest.cjk.cssFamily}"', '\\u4e2d'),
         ]).then(() => document.fonts.ready)
       : Promise.resolve();
+    const NORMAL_TERMINAL_THEME = {
+      background: '#1a1b26', foreground: '#c0caf5', cursor: '#c0caf5', selectionBackground: '#283457',
+      black: '#15161e', red: '#f7768e', green: '#9ece6a', yellow: '#e0af68',
+      blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#a9b1d6',
+      brightBlack: '#414868', brightRed: '#ff899d', brightGreen: '#9fe044',
+      brightYellow: '#faba4a', brightBlue: '#8db0ff', brightMagenta: '#c7a9ff',
+      brightCyan: '#a4daff', brightWhite: '#c0caf5',
+    };
+    const EINK_TERMINAL_THEME = {
+      background: '#ffffff', foreground: '#000000', cursor: '#000000', selectionBackground: '#555555', selectionForeground: '#ffffff',
+      black: '#000000', red: '#222222', green: '#333333', yellow: '#444444',
+      blue: '#555555', magenta: '#333333', cyan: '#444444', white: '#666666',
+      brightBlack: '#222222', brightRed: '#333333', brightGreen: '#444444',
+      brightYellow: '#555555', brightBlue: '#666666', brightMagenta: '#444444',
+      brightCyan: '#555555', brightWhite: '#444444',
+    };
+    let einkMode = false;
+    let pendingEinkSgr = '';
+    const normalizeEinkSgr = value => {
+      const combined = pendingEinkSgr + value;
+      pendingEinkSgr = '';
+      const incomplete = combined.match(/\\u001b\\[[0-9;:]*$/);
+      const complete = incomplete ? combined.slice(0, incomplete.index) : combined;
+      if (incomplete) pendingEinkSgr = incomplete[0];
+      if (!complete) return '';
+      return complete.replace(/\\u001b\\[([0-9;:]*)m/g, (_match, body) => {
+        // xterm accepts both the traditional semicolon SGR form and the
+        // colon form used by newer shells/apps, e.g. 38:2::r:g:b.
+        const params = body === ''
+          ? [0]
+          : body.replaceAll(':', ';').split(';').map(Number);
+        const normalized = [];
+        for (let index = 0; index < params.length; index += 1) {
+          const code = params[index];
+          if (code >= 30 && code <= 37 || code >= 90 && code <= 97 || code === 39) {
+            normalized.push(39);
+          } else if (code === 38) {
+            if (params[index + 1] === 2) index += params[index + 2] === 0 ? 5 : 4;
+            else if (params[index + 1] === 5) index += 2;
+            normalized.push(39);
+          } else if (code >= 40 && code <= 47 || code >= 100 && code <= 107 || code === 49) {
+            normalized.push(49);
+          } else if (code === 48) {
+            if (params[index + 1] === 2) index += params[index + 2] === 0 ? 5 : 4;
+            else if (params[index + 1] === 5) index += 2;
+            normalized.push(49);
+          } else if (code === 7) {
+            normalized.push(27);
+          } else {
+            normalized.push(code);
+          }
+        }
+        return '\\u001b[' + normalized.join(';') + 'm';
+      });
+    };
+    const einkDecoder = new TextDecoder();
+    const prepareTerminalWrite = value => {
+      if (!einkMode) return value;
+      // SSH frames can split a UTF-8 code point between packets.
+      const text = typeof value === 'string' ? einkDecoder.decode() + value : einkDecoder.decode(value, { stream: true });
+      return normalizeEinkSgr(text);
+    };
     const initializeTerminal = () => {
       const send = value => window.parent.postMessage({ herdrTerminalMessage: value }, '*');
       const terminal = new Terminal({
-      cursorBlink: true,
+      cursorBlink: false,
       cursorStyle: 'bar',
-      allowTransparency: true,
+      allowTransparency: false,
       linkHandler: { activate: (_event, link) => send({ type: 'open-link', link }) },
       fontFamily: terminalFontFamily,
-      fontSize: 8,
+      fontSize: 12,
       fontWeight: '400',
       fontWeightBold: '700',
+      minimumContrastRatio: 1,
+      drawBoldTextInBrightColors: true,
       lineHeight: 1.12,
       letterSpacing: 0,
       scrollback: 5000,
       scrollbar: { showScrollbar: false },
-      theme: {
-        background: 'rgba(0,0,0,0)', foreground: '#c0caf5', cursor: '#c0caf5', selectionBackground: '#283457',
-        black: '#15161e', red: '#f7768e', green: '#9ece6a', yellow: '#e0af68',
-        blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#a9b1d6',
-        brightBlack: '#414868', brightRed: '#ff899d', brightGreen: '#9fe044',
-        brightYellow: '#faba4a', brightBlue: '#8db0ff', brightMagenta: '#c7a9ff',
-        brightCyan: '#a4daff', brightWhite: '#c0caf5'
-      }
+      theme: NORMAL_TERMINAL_THEME,
     });
     const fit = new FitAddon.FitAddon();
     terminal.loadAddon(fit);
@@ -666,7 +727,7 @@ const terminalSessionHtml = `<!doctype html>
         return;
       }
       prepareLiveWrite();
-      terminal.write(data, () => {
+      terminal.write(prepareTerminalWrite(data), () => {
         offlineCache.markDirty();
         reportTracePhase('trace-xterm-written', inboundCookie);
         reportTraceRendered(inputCookie, resizeCookie, inboundCookie);
@@ -683,7 +744,7 @@ const terminalSessionHtml = `<!doctype html>
       const binary = atob(data);
       const bytes = new Uint8Array(binary.length);
       for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-      terminal.write(bytes, () => {
+      terminal.write(prepareTerminalWrite(bytes), () => {
         offlineCache.markDirty();
         reportTracePhase('trace-xterm-written', inboundCookie);
         reportTraceRendered(inputCookie, resizeCookie, inboundCookie);
@@ -756,10 +817,29 @@ const terminalSessionHtml = `<!doctype html>
       terminal.write('\u001bc');
     };
     window.herdrOfflineInput = data => handleOfflineInput(data);
+    let configuredDisplayProfile = null;
     window.herdrConfigure = options => {
-      terminal.options.fontSize = Math.max(8, Math.min(24, Number(options.fontSize) || 8));
+      einkMode = options.einkMode === true;
+      terminal.options.fontSize = Math.max(einkMode ? 12 : 8, Math.min(24, Number(options.fontSize) || (einkMode ? 12 : 8)));
       terminal.options.scrollback = Math.max(1000, Math.min(20000, Number(options.scrollback) || 5000));
-      terminal.options.cursorBlink = options.cursorBlink !== false;
+      terminal.options.cursorBlink = !einkMode && options.cursorBlink !== false;
+      terminal.options.allowTransparency = !einkMode;
+      terminal.options.minimumContrastRatio = einkMode ? 21 : 1;
+      terminal.options.drawBoldTextInBrightColors = !einkMode;
+      if (configuredDisplayProfile !== einkMode) {
+      pendingEinkSgr = '';
+      configuredDisplayProfile = einkMode;
+      terminal.options.theme = einkMode ? EINK_TERMINAL_THEME : NORMAL_TERMINAL_THEME;
+      if (document.documentElement) document.documentElement.dataset.displayProfile = einkMode ? 'eink' : 'normal';
+      const terminalBackground = einkMode ? '#ffffff' : 'transparent';
+      if (document.documentElement) document.documentElement.style.backgroundColor = terminalBackground;
+      if (document.body) document.body.style.backgroundColor = terminalBackground;
+      const terminalElements = document.querySelectorAll?.('#terminals, .terminal-session, #terminal-geometry, #terminal, .xterm, .xterm-viewport, .xterm-screen') || [];
+      for (let index = 0; index < terminalElements.length; index += 1) {
+        terminalElements[index].style.backgroundColor = terminalBackground;
+      }
+      terminal.refresh?.(0, Math.max(0, terminal.rows - 1));
+      }
       doubleTapAction = ['none', 'paste', 'tab', 'escape'].includes(options.doubleTapAction) ? options.doubleTapAction : 'tab';
       const nextOfflineScrollback = options.offlineScrollback === true;
       if (offlineScrollback && !nextOfflineScrollback) terminal.scrollToBottom();
@@ -767,11 +847,12 @@ const terminalSessionHtml = `<!doctype html>
       localScrollback = options.localScrollback === true;
       offlineScrollback = nextOfflineScrollback;
       offlineCache.configure({
+        eink: einkMode,
         enabled: options.offlineCache === true,
         scrollback: options.scrollback,
       });
       if (doubleTapAction === 'none') lastTap = null;
-      const backgroundUri = options.backgroundImageUri || '';
+      const backgroundUri = einkMode ? '' : options.backgroundImageUri || '';
       const dimming = Math.max(0, Math.min(100, Number(options.backgroundDimming) || 0)) / 100;
       const backgroundLayer = document.getElementById('terminal-background-layer');
       const backgroundImage = document.getElementById('terminal-background-image');
@@ -1140,6 +1221,14 @@ const terminalSessionHtml = `<!doctype html>
       const row = terminal.buffer.active.viewportY + viewportRow;
       return { col, row };
     };
+    const moveCursorAtPoint = point => {
+      if (offlineScrollback) return false;
+      const data = terminalCursorTapInput(terminal.buffer.active, terminal.cols,
+        bufferCellAt(point.clientX, point.clientY), terminal.modes.applicationCursorKeysMode);
+      if (!data) return false;
+      send({ type: 'input', data });
+      return true;
+    };
     const startHandle = document.getElementById('selection-start-handle');
     const endHandle = document.getElementById('selection-end-handle');
     let activeSelection = null;
@@ -1428,6 +1517,13 @@ const terminalSessionHtml = `<!doctype html>
         if (!keyboardEnabled && point) showToolbar(point.clientX, point.clientY);
       }
       if (!touch.moved && !touch.longPressed && point && !keyboardEnabled) {
+        const tappedCell = bufferCellAt(point.clientX, point.clientY);
+        const buffer = terminal.buffer.active;
+        if (!offlineScrollback && !urlAtPoint(point.clientX, point.clientY)
+          && tappedCell && (tappedCell.row === buffer.baseY + buffer.cursorY
+            || terminalCursorTapInput(buffer, terminal.cols, tappedCell))) {
+          send({ type: 'keyboard-request' });
+        }
         event.preventDefault();
         event.stopPropagation();
         handleKeyboardClosedStationaryTap({
@@ -1437,6 +1533,7 @@ const terminalSessionHtml = `<!doctype html>
           dispatchTerminalClick,
           send,
           clearInteractiveSelection,
+          moveCursor: moveCursorAtPoint,
         });
         lastTap = null;
         touch = null;
@@ -1453,6 +1550,11 @@ const terminalSessionHtml = `<!doctype html>
           lastTap = null;
         } else {
           lastTap = doubleTapAction === 'none' ? null : now;
+          if (!offlineScrollback && (terminalMouseInputEnabled()
+            ? dispatchTerminalClick(point) : moveCursorAtPoint(point))) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
         }
       }
       touch = null;

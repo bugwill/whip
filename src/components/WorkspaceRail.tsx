@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { compareAgentStatusPriority } from '@/src/herdQueue';
 import { aggregateAgentStatus } from '@/src/lib/agentStatusAggregate';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 import { cn } from '@/src/lib/utils';
 import { appGlassControlStyle, statusColor, useTheme } from '@/src/theme';
 import type { WorkspaceInfo } from '@/src/types';
@@ -103,9 +104,11 @@ function WorkspacePill({
 }) {
   const { colors } = useTheme();
   const appGlassEnabled = useAppGlassEnabled();
-  const isIpad = Platform.OS === 'ios' && Platform.isPad;
+  const { isEink, isTablet } = useDisplayProfile();
   const activeTextClass = active
-    ? appGlassEnabled
+    ? isEink
+      ? 'text-foreground'
+      : appGlassEnabled
       ? 'text-primary'
       : 'text-primary-foreground'
     : undefined;
@@ -114,23 +117,30 @@ function WorkspacePill({
     <View
       className={cn(
         'h-11 max-w-[190px] flex-row items-center rounded-full',
-        isIpad && 'max-w-[240px]',
-        appGlassEnabled && 'border',
+        isTablet && 'max-w-[240px] h-14',
+        (appGlassEnabled || isEink) && 'border',
         !appGlassEnabled && 'bg-muted',
         !appGlassEnabled && !active && 'border border-border',
-        !appGlassEnabled && active && 'bg-primary',
+        !appGlassEnabled && active && !isEink && 'bg-primary',
       )}
-      style={appGlassEnabled ? appGlassControlStyle(active, colors) : undefined}>
-      <Button accessibilityLabel={t('rail.workspaceStatus', { workspace: label, status })} accessibilityRole="radio" accessibilityState={{ selected: active }} className={cn('h-11 min-w-0 flex-shrink justify-start gap-1.5 rounded-none px-2.5 py-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent', isIpad && 'gap-2 px-3')} variant="ghost" onPress={hapticPress(onPress)} onLongPress={onLongPress ? hapticPress(onLongPress) : undefined}>
-        <AnimatedAgentStatusGlyph status={status} color={statusColor(status, colors)} size={isIpad ? 16 : 12} />
+      style={isEink
+        ? {
+            backgroundColor: active ? colors.activeSurface : colors.canvas,
+            borderColor: colors.divider,
+          }
+        : appGlassEnabled
+        ? appGlassControlStyle(active, colors)
+        : undefined}>
+      <Button accessibilityLabel={t('rail.workspaceStatus', { workspace: label, status })} accessibilityRole="radio" accessibilityState={{ selected: active }} className={cn('h-11 min-w-0 flex-shrink justify-start gap-1.5 rounded-none px-2.5 py-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent', isTablet && 'h-14 gap-2 px-3')} variant="ghost" onPress={hapticPress(onPress)} onLongPress={onLongPress ? hapticPress(onLongPress) : undefined}>
+        <AnimatedAgentStatusGlyph status={status} color={statusColor(status, colors)} size={isTablet ? 16 : 12} />
         {aggregate ? (
-          <Layers3 size={isIpad ? 19 : 15} color={active ? (appGlassEnabled ? colors.primary : colors.onPrimary) : colors.text} />
+          <Layers3 size={isTablet ? 19 : 15} color={active ? (isEink ? colors.activeSurfaceForeground : appGlassEnabled ? colors.primary : colors.activeSurfaceForeground) : colors.text} />
         ) : (
-          <Text numberOfLines={1} className={cn('max-w-[104px] pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground', isIpad && 'max-w-[160px] text-[17px] leading-6', activeTextClass)}>{label}</Text>
+          <Text numberOfLines={1} className={cn('max-w-[104px] pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground', isTablet && 'max-w-[160px] text-[17px] leading-6', activeTextClass)}>{label}</Text>
         )}
-        <Text className={cn('font-mono text-[8px] leading-[18px] text-muted-foreground', isIpad && 'text-[13px] leading-6', activeTextClass)}>{count}</Text>
+        <Text className={cn('font-mono text-[8px] leading-[18px] text-muted-foreground', isTablet && 'text-[13px] leading-6', activeTextClass)}>{count}</Text>
       </Button>
-      {onClose ? <Button accessibilityLabel={t('rail.closeWorkspace', { workspace: label })} className="size-11 rounded-none px-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent" disabled={busy} variant="ghost" onPress={hapticPress(onClose)}><X size={isIpad ? 18 : 14} color={active ? (appGlassEnabled ? colors.primary : colors.onPrimary) : colors.textSecondary} /></Button> : null}
+      {onClose ? <Button accessibilityLabel={t('rail.closeWorkspace', { workspace: label })} className={cn('size-11 rounded-none px-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent', isTablet && 'size-14')} disabled={busy} variant="ghost" onPress={hapticPress(onClose)}><X size={isTablet ? 18 : 14} color={active ? (isEink ? colors.activeSurfaceForeground : appGlassEnabled ? colors.primary : colors.activeSurfaceForeground) : colors.textSecondary} /></Button> : null}
     </View>
   );
 }

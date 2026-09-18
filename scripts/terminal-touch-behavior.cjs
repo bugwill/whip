@@ -5,6 +5,7 @@ function handleKeyboardClosedStationaryTap({
   dispatchTerminalClick,
   send,
   clearInteractiveSelection,
+  moveCursor = () => false,
 }) {
   const link = urlAtPoint(point.clientX, point.clientY);
   if (link) {
@@ -15,7 +16,39 @@ function handleKeyboardClosedStationaryTap({
     dispatchTerminalClick(point);
     return;
   }
-  clearInteractiveSelection(true);
+  if (!moveCursor(point)) clearInteractiveSelection(true);
+}
+
+// Only navigate within the cursor's logical (soft-wrapped) line. Sending up/down
+// for arbitrary screen rows could recall or alter shell history instead.
+function terminalCursorTapInput(buffer, cols, target, applicationCursorKeys = false) {
+  if (!target || cols <= 0) return '';
+  const cursorRow = buffer.baseY + buffer.cursorY;
+  let first = cursorRow;
+  let last = cursorRow;
+  while (first > 0 && buffer.getLine(first)?.isWrapped) first -= 1;
+  while (buffer.getLine(last + 1)?.isWrapped) last += 1;
+  if (target.row < first || target.row > last) return '';
+  const line = buffer.getLine(target.row);
+  if (!line) return '';
+  let end = cols;
+  if (target.row === last) {
+    end = 0;
+    for (let col = 0; col < cols; col += 1) {
+      const cell = line.getCell(col);
+      if (cell?.getChars()) end = col + Math.max(1, cell.getWidth());
+    }
+    if (target.row === cursorRow) end = Math.max(end, buffer.cursorX);
+  }
+  let col = Math.max(0, Math.min(target.col, end));
+  while (col > 0 && line.getCell(col)?.getWidth() === 0) col -= 1;
+  const from = cursorRow * cols + buffer.cursorX;
+  const to = target.row * cols + col;
+  let steps = 0;
+  for (let index = Math.min(from, to); index < Math.max(from, to); index += 1) {
+    if (buffer.getLine(Math.floor(index / cols))?.getCell(index % cols)?.getWidth() > 0) steps += 1;
+  }
+  return ('\u001b' + (applicationCursorKeys ? 'O' : '[') + (to < from ? 'D' : 'C')).repeat(steps);
 }
 
 function terminalMouseInputSequence(action, column, row) {
@@ -49,6 +82,7 @@ function setTerminalKeyboardInputEnabled(terminal, enabled) {
 }
 
 module.exports = {
+  terminalCursorTapInput,
   handleKeyboardClosedStationaryTap,
   setTerminalKeyboardInputEnabled,
   terminalMouseClickInput,

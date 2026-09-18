@@ -103,6 +103,28 @@ test('normal keyboard show and hide measure overlap and report visibility', () =
   expect(onVisibilityChange).toHaveBeenLastCalledWith(false);
 });
 
+test('layout changes remeasure after Android resizes the window', () => {
+  render();
+  show();
+  measure();
+  expect(result.inset).toBe(300);
+  act(() => result.remeasure());
+  act(() => measurements[measurements.length - 1](0, 0, 400, 500));
+  expect(result.inset).toBe(0);
+  act(() => result.remeasure());
+  act(() => measurements[measurements.length - 1](0, 0, 400, 800));
+  expect(result.inset).toBe(300);
+});
+
+test('a keyboard frame change updates overlap without a second show', () => {
+  render();
+  show();
+  measure();
+  act(() => listeners.get('keyboardDidChangeFrame')?.({ endCoordinates: { ...keyboardFrame, screenY: 450 } } as KeyboardEvent));
+  measure();
+  expect(result.inset).toBe(350);
+});
+
 test('disabled → enabled seeds an already visible IME without another show event', () => {
   render(false);
   show();

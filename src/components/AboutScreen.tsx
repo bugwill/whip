@@ -17,7 +17,7 @@ import terminalFonts from '@/assets/terminal-fonts/manifest.json';
 import { bundledAsset } from '@/src/lib/bundledAsset';
 import { isUnknownRecord } from '@/src/lib/unknown';
 import { HERDR_PROTOCOL_VERSIONS_LABEL } from '@/src/lib/herdrProtocol';
-import { hapticPress, HerdrMark, WhipMark } from './app-ui';
+import { hapticPress, HerdrMark, useReducedMotion, WhipMark } from './app-ui';
 import { GlassBackdrop, GlassSurface } from './GlassSurface';
 import { Button } from './ui/button';
 import { Icon } from './ui/icon';
@@ -35,6 +35,7 @@ export function AboutSection({ onOpenLicenses }: { onOpenLicenses: () => void })
   const [contentMounted, setContentMounted] = useState(false);
   const [contentMeasured, setContentMeasured] = useState(false);
   const { t } = useTranslation();
+  const reduceMotion = useReducedMotion();
   const fallbackFont = Platform.select({
     ios: terminalFonts.fallback.ios,
     default: terminalFonts.fallback.android,
@@ -48,12 +49,16 @@ export function AboutSection({ onOpenLicenses }: { onOpenLicenses: () => void })
       progress.value = 0;
       return;
     }
+    if (reduceMotion) {
+      progress.value = expanded ? 1 : 0;
+      return;
+    }
     progress.value = withTiming(expanded ? 1 : 0, {
       duration: expanded ? ABOUT_EXPAND_DURATION : ABOUT_COLLAPSE_DURATION,
       easing: Easing.inOut(Easing.cubic),
     });
     return () => cancelAnimation(progress);
-  }, [contentMeasured, expanded, progress]);
+  }, [contentMeasured, expanded, progress, reduceMotion]);
 
   const collapsibleStyle = useAnimatedStyle(() => ({
     height: contentHeight.value * progress.value,
