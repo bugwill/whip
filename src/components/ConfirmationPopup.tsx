@@ -42,6 +42,8 @@ export function ConfirmationPopup({
     if (!busy) onCancel();
   };
 
+  if (!visible) return null;
+
   return (
     <Modal
       animationType={animationType}
@@ -52,7 +54,9 @@ export function ConfirmationPopup({
       <View className="flex-1 items-center justify-center px-5">
         <Pressable
           accessibilityLabel={t('common.cancel')}
-          className="absolute inset-0 bg-black/55"
+          // Keep the confirmation modal interactive without dimming the page.
+          // The dim layer causes a full-screen gray flash on E-Ink displays.
+          className="absolute inset-0 bg-transparent"
           disabled={busy}
           onPress={cancel}
         />

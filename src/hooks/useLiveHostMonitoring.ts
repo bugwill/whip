@@ -4,6 +4,7 @@ import { AppState } from 'react-native';
 import { flushLatencyDiagnosticWrites } from '../services/latencyDiagnostics';
 import { reportBackgroundFailure } from '../services/backgroundOperations';
 import { recordNetworkDiagnostic } from '../services/networkDiagnostics';
+import type { BackgroundPowerMode } from '../services/devicePreferences';
 import {
   startBackgroundMonitoring,
   stopBackgroundMonitoring,
@@ -15,10 +16,13 @@ interface LiveHostMonitoringOptions {
   restoreComplete: boolean;
   hostsVisible: boolean;
   appAccessLocked: boolean;
+  isEink: boolean;
+  backgroundPowerMode: BackgroundPowerMode;
   setRuntimeMonitoringState: (
     appActive: boolean,
     hostsVisible: boolean,
     accessLocked: boolean,
+    isEink: boolean,
   ) => void;
   onBackgroundMonitoringError: (error: unknown) => void;
 }
@@ -30,6 +34,8 @@ export function useLiveHostMonitoring({
   restoreComplete,
   hostsVisible,
   appAccessLocked,
+  isEink,
+  backgroundPowerMode,
   setRuntimeMonitoringState,
   onBackgroundMonitoringError,
 }: LiveHostMonitoringOptions): void {
@@ -40,10 +46,10 @@ export function useLiveHostMonitoring({
     if (!restoreComplete) return;
     const operation =
       alertsEnabled && liveHostCount > 0
-        ? startBackgroundMonitoring(liveHostCount)
+        ? startBackgroundMonitoring(liveHostCount, backgroundPowerMode)
         : stopBackgroundMonitoring();
     operation.catch(reportBackgroundError);
-  }, [alertsEnabled, liveHostCount, restoreComplete]);
+  }, [alertsEnabled, backgroundPowerMode, liveHostCount, restoreComplete]);
 
   useEffect(() => {
     if (liveHostCount === 0) return;
@@ -56,9 +62,9 @@ export function useLiveHostMonitoring({
       });
       previousState = state;
       if (state === 'active') {
-        updateRuntimeMonitoring(true, hostsVisible, appAccessLocked);
+        updateRuntimeMonitoring(true, hostsVisible, appAccessLocked, isEink);
       } else {
-        updateRuntimeMonitoring(false, hostsVisible, appAccessLocked);
+        updateRuntimeMonitoring(false, hostsVisible, appAccessLocked, isEink);
         reportBackgroundFailure(
           flushLatencyDiagnosticWrites(),
           'latency-diagnostics-flush',
@@ -69,18 +75,20 @@ export function useLiveHostMonitoring({
       AppState.currentState === 'active',
       hostsVisible,
       appAccessLocked,
+      isEink,
     );
     return () => {
       subscription.remove();
-      updateRuntimeMonitoring(false, false, appAccessLocked);
+      updateRuntimeMonitoring(false, false, appAccessLocked, isEink);
     };
-  }, [appAccessLocked, hostsVisible, liveHostCount]);
+  }, [appAccessLocked, hostsVisible, isEink, liveHostCount]);
 
   useEffect(() => {
     updateRuntimeMonitoring(
       AppState.currentState === 'active',
       hostsVisible,
       appAccessLocked,
+      isEink,
     );
-  }, [appAccessLocked, hostsVisible, liveHostCount]);
+  }, [appAccessLocked, hostsVisible, isEink, liveHostCount]);
 }

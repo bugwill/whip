@@ -3,6 +3,25 @@ import {
   localTunnelUrl,
   terminalWebLinkTarget,
 } from '../src/lib/terminalLinks';
+const { Terminal } = require('@xterm/xterm') as {
+  Terminal: new (options: { cols: number; rows: number }) => {
+    cols: number;
+    buffer: {
+      active: {
+        getLine: (row: number) => {
+          translateToString: (trimRight?: boolean) => string;
+          getCell: (column: number) => {
+            extended?: { urlId?: number };
+            getChars: () => string;
+            getWidth: () => number;
+          } | undefined;
+        } | undefined;
+      };
+    };
+    write: (data: string, callback: () => void) => void;
+    dispose: () => void;
+  };
+};
 const {
   extractTerminalLinks,
   mergeTerminalLinks,
@@ -35,17 +54,84 @@ const {
     }>,
     row: number,
     column: number,
+    cellMatchesLink?: (link: unknown, row: number, column: number) => boolean,
   ) => string | null;
   osc8LinkFromData: (data: string) => string | null;
   terminalLinkAt: (
-    rows: Array<{ text: string; isWrapped: boolean }>,
+    rows: Array<{ text: string; isWrapped: boolean; cellColumns?: number[] }>,
     columns: number,
     row: number,
     column: number,
+    rowBase?: number,
   ) => string | null;
 } = require('../scripts/terminal-link-extraction.cjs');
 
 describe('terminal web links', () => {
+  it('exposes live OSC-8 cell metadata and clears it when xterm erases the cell', async () => {
+    const terminal = new Terminal({ cols: 20, rows: 2 });
+    const write = (data: string) => new Promise<void>(resolve => terminal.write(data, resolve));
+
+    await write('\u001b]8;;https://example.com\u0007linked\u001b]8;;\u0007');
+    expect(terminal.buffer.active.getLine(0)?.getCell(0)?.extended?.urlId).toBeGreaterThan(0);
+
+    await write('\r\u001b[2Kprompt');
+    expect(terminal.buffer.active.getLine(0)?.getCell(0)?.extended?.urlId || 0).toBe(0);
+    terminal.dispose();
+  });
+
+  it('maps plaintext links after wide, surrogate, and combining cells to real xterm columns', async () => {
+    const terminal = new Terminal({ cols: 80, rows: 2 });
+    const write = (data: string) => new Promise<void>(resolve => terminal.write(data, resolve));
+    for (const prefix of ['中文 ', 'e\u0301 😀 ']) {
+      await write('\u001bc');
+      await write(`${prefix}https://example.com`);
+
+      const line = terminal.buffer.active.getLine(0)!;
+      const text = line.translateToString(false);
+      const cellColumns = [0];
+      let urlColumn = -1;
+      for (let column = 0; column < terminal.cols; column += 1) {
+        const cell = line.getCell(column)!;
+        if (cell.getChars().startsWith('h')) urlColumn = column;
+        if (cell.getWidth() === 0) continue;
+        const chars = cell.getChars() || ' ';
+        chars.split('').forEach(() => cellColumns.push(column + cell.getWidth()));
+      }
+
+      expect(urlColumn).toBeGreaterThan(0);
+      const mappedRows = [{ text, isWrapped: false, cellColumns }];
+      const unmappedRows = [{ text, isWrapped: false }];
+      const urlLength = 'https://example.com'.length;
+      expect(terminalLinkAt(mappedRows, terminal.cols, 0, urlColumn - 1)).toBeNull();
+      expect(terminalLinkAt(mappedRows, terminal.cols, 0, urlColumn)).toBe('https://example.com/');
+      expect(terminalLinkAt(mappedRows, terminal.cols, 0, urlColumn + urlLength - 1)).toBe(
+        'https://example.com/',
+      );
+      expect(terminalLinkAt(mappedRows, terminal.cols, 0, urlColumn + urlLength)).toBeNull();
+      const stringStart = text.indexOf('https');
+      expect(stringStart).not.toBe(urlColumn);
+      expect(terminalLinkAt(
+        unmappedRows,
+        terminal.cols,
+        0,
+        stringStart,
+      )).toBe('https://example.com/');
+      expect(terminalLinkAt(
+        unmappedRows,
+        terminal.cols,
+        0,
+        urlColumn,
+      )).toBe(stringStart < urlColumn ? 'https://example.com/' : null);
+      expect(terminalLinkAt(
+        [{ text, isWrapped: false }],
+        terminal.cols,
+        0,
+        stringStart - 1,
+      )).toBeNull();
+    }
+    terminal.dispose();
+  });
+
   it('accepts HTTP(S) OSC-8 targets and ignores close or unsafe sequences', () => {
     expect(osc8LinkFromData(';https://example.com/issues/1?tab=one')).toBe(
       'https://example.com/issues/1?tab=one',
@@ -105,6 +191,22 @@ describe('terminal web links', () => {
     expect(osc8LinkAt(links, 5, 0)).toBe('https://example.com/semantic-target');
     expect(osc8LinkAt(links, 6, 7)).toBe('https://example.com/semantic-target');
     expect(osc8LinkAt(links, 6, 8)).toBeNull();
+  });
+
+  it('rejects an OSC-8 marker range when the current cell no longer carries its link', () => {
+    const links = [{
+      href: 'https://example.com/rewritten',
+      marker: { line: 12 },
+      endMarker: { line: 13 },
+      startColumn: 4,
+      endColumn: 9,
+      sequence: 1,
+    }];
+
+    expect(osc8LinkAt(links, 12, 5, () => false)).toBeNull();
+    expect(osc8LinkAt(links, 12, 5, (_link, row, column) => row === 12 && column === 5)).toBe(
+      'https://example.com/rewritten',
+    );
   });
 
   it.each([
@@ -169,6 +271,7 @@ describe('terminal web links', () => {
     expect(terminalLinkAt(rows, 40, 1, 4)).toBe(
       'https://example.com/a/very/long/path?with=query',
     );
+    expect(terminalLinkAt(rows, 40, 2, 4)).toBeNull();
   });
 
   it('extracts a link hard-wrapped at the terminal edge', () => {

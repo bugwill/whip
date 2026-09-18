@@ -1,5 +1,34 @@
-function handleKeyboardClosedStationaryTap({
+function terminalCellAtPoint(point, rect, columns, rows, rowBase = 0) {
+  if (!rect || !Number.isFinite(rect.left) || !Number.isFinite(rect.top)
+    || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)
+    || rect.width <= 0 || rect.height <= 0 || columns <= 0 || rows <= 0) {
+    return null;
+  }
+  const x = Number(point?.clientX);
+  const y = Number(point?.clientY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)
+    || x < rect.left || x >= rect.left + rect.width
+    || y < rect.top || y >= rect.top + rect.height) {
+    return null;
+  }
+  return {
+    col: Math.min(columns - 1, Math.floor((x - rect.left) / (rect.width / columns))),
+    row: rowBase + Math.min(rows - 1, Math.floor((y - rect.top) / (rect.height / rows))),
+  };
+}
+
+function terminalMousePointForAction(action, point, fallbackPoint, cellAtPoint) {
+  if (!point) return null;
+  if (action === 'down' && !cellAtPoint(point)) return null;
+  if (action === 'up' && !cellAtPoint(point)) {
+    return fallbackPoint && cellAtPoint(fallbackPoint) ? fallbackPoint : null;
+  }
+  return point;
+}
+
+function handleTerminalStationaryTap({
   point,
+  keyboardEnabled = false,
   urlAtPoint,
   terminalMouseInputEnabled,
   dispatchTerminalClick,
@@ -10,13 +39,22 @@ function handleKeyboardClosedStationaryTap({
   const link = urlAtPoint(point.clientX, point.clientY);
   if (link) {
     send({ type: 'open-link', link });
-    return;
+    return true;
   }
   if (terminalMouseInputEnabled()) {
     dispatchTerminalClick(point);
-    return;
+    return true;
   }
-  if (!moveCursor(point)) clearInteractiveSelection(true);
+  if (moveCursor(point)) return true;
+  if (!keyboardEnabled) clearInteractiveSelection(true);
+  return false;
+}
+
+function handleKeyboardClosedStationaryTap(options) {
+  return handleTerminalStationaryTap({
+    ...options,
+    keyboardEnabled: false,
+  });
 }
 
 /**
@@ -194,9 +232,12 @@ function setTerminalKeyboardInputEnabled(terminal, enabled) {
 }
 
 module.exports = {
+  terminalCellAtPoint,
+  terminalMousePointForAction,
   terminalManualEditRange,
   terminalVisibleCellCount,
   terminalCursorTapInput,
+  handleTerminalStationaryTap,
   handleKeyboardClosedStationaryTap,
   setTerminalKeyboardInputEnabled,
   terminalMouseClickInput,

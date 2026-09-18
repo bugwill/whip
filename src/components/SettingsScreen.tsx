@@ -38,6 +38,8 @@ import {
   agentAlertLevels,
   type AgentAlertLevel,
   type AppearancePreference,
+  type BackgroundPowerPreference,
+  backgroundPowerPreferences,
   type LanguagePreference,
   type TerminalPreferences,
 } from '@/src/services/devicePreferences';
@@ -108,6 +110,7 @@ export interface SettingsSectionProps {
   alertsEnabled: boolean;
   agentAlertLevel: AgentAlertLevel;
   backgroundMonitoringAvailable: boolean;
+  backgroundPowerPreference: BackgroundPowerPreference;
   persistentAlertDurationSeconds: number;
   ttsEnabled: boolean;
   biometricForKeys: boolean;
@@ -134,6 +137,7 @@ export interface SettingsSectionProps {
   onAlertsChange: (value: boolean) => void;
   onAgentAlertLevelChange: (value: AgentAlertLevel) => void;
   onStartBackgroundMonitoring: () => Promise<void>;
+  onBackgroundPowerPreferenceChange: (value: BackgroundPowerPreference) => void;
   onPersistentAlertDurationChange: (value: number) => void;
   onTestAgentNotification: () => void;
   onTtsChange: (value: boolean) => void;
@@ -263,6 +267,10 @@ export function SettingsSection(props: SettingsSectionProps) {
           disabled={!props.backgroundMonitoringAvailable}
           onPress={props.onStartBackgroundMonitoring}
           divided
+        /> : null}
+        {Platform.OS === 'android' ? <BackgroundPowerRow
+          value={props.backgroundPowerPreference}
+          onChange={props.onBackgroundPowerPreferenceChange}
         /> : null}
         {Platform.OS !== 'web' ? <ActionRow
           title={t('settings.testAgentNotification')}
@@ -525,6 +533,12 @@ const displayProfileOptions: { labelKey: string; value: DisplayProfilePreference
   { labelKey: 'settings.displayProfileEink', value: 'eink' },
 ];
 
+const backgroundPowerLabelKeys: Record<BackgroundPowerPreference, string> = {
+  auto: 'settings.backgroundPowerAuto',
+  balanced: 'settings.backgroundPowerBalanced',
+  realtime: 'settings.backgroundPowerRealtime',
+};
+
 const agentAlertLevelLabelKeys: Record<AgentAlertLevel, string> = {
   regular: 'settings.alertLevelRegular',
   persistent: 'settings.alertLevelPersistent',
@@ -661,6 +675,43 @@ function DisplayProfileRow({ value, onChange }: { value: DisplayProfilePreferenc
         ))}
       </View>
     </GlassSurface>
+  );
+}
+
+function BackgroundPowerRow({
+  value,
+  onChange,
+}: {
+  value: BackgroundPowerPreference;
+  onChange: (value: BackgroundPowerPreference) => void;
+}) {
+  const { t } = useTranslation();
+  const copyKey = value === 'balanced'
+    ? 'settings.backgroundPowerBalancedCopy'
+    : value === 'realtime'
+    ? 'settings.backgroundPowerRealtimeCopy'
+    : 'settings.backgroundPowerAutoCopy';
+  return (
+    <View className="border-t border-border p-3.5">
+      <DetailsTitle
+        title={t('settings.backgroundPowerPlan')}
+        copy={t(copyKey)}
+      />
+      <View className="mt-3 flex-row gap-2">
+        {backgroundPowerPreferences.map(option => (
+          <Button
+            key={option}
+            className="flex-1 rounded-full px-1"
+            variant={option === value ? 'default' : 'outline'}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: option === value }}
+            onPress={hapticPress(() => onChange(option))}
+          >
+            <Text className="text-xs">{t(backgroundPowerLabelKeys[option])}</Text>
+          </Button>
+        ))}
+      </View>
+    </View>
   );
 }
 

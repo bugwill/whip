@@ -121,7 +121,7 @@ export function WhipMark({
     <LocalSvg
       accessibilityLabel={accessibilityLabel}
       accessible={Boolean(accessibilityLabel)}
-      asset={bundledAsset(require('../../assets/whip-cyborg-hand-concept.svg'))}
+      asset={bundledAsset(require('../../assets/whip-logo.svg'))}
       height={size}
       width={size}
     />

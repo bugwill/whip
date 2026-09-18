@@ -29,6 +29,7 @@ jest.mock('react-native-whip-ssh', () => ({
 }));
 jest.mock('../src/services/NativeTranscriptService', () => ({
   agentTranscriptService: {
+    acquireSpeechLease: jest.fn(() => jest.fn()),
     subscribe: (binding: string, listener: (state: AgentChatState | null, baseline?: boolean) => void) => {
       mockListeners.set(binding, listener);
       return () => mockListeners.delete(binding);

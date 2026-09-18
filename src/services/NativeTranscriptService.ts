@@ -26,6 +26,7 @@ export type NativeTranscriptTransport = Pick<
   | 'currentAgentChat'
   | 'detachAgentChat'
   | 'openAgentChat'
+  | 'setAgentChatActive'
   | 'startAgentChat'
 >;
 
@@ -77,6 +78,12 @@ export class NativeTranscriptService {
   private readonly entries = new Map<string, TranscriptEntry>();
   private readonly terminalBindings = new Map<string, string>();
   private readonly retentionVersions = new Map<string, NativeAgentTranscriptRetention>();
+  private readonly presentationLeases = new Set<string>();
+  private readonly speechLeases = new Map<string, number>();
+  private readonly appliedConsumerActivity = new Map<
+    string,
+    { transport: NativeTranscriptTransport; active: boolean }
+  >();
 
   constructor(private readonly cache: AgentChatCache = agentChatCache) {}
 
@@ -228,6 +235,7 @@ export class NativeTranscriptService {
         terminalId: binding.terminalId,
       });
     }
+    if (explicitOpen) this.setConsumerActive(binding.bindingToken, true);
 
     if (isNewEntry) {
       this.restoreAndStart(entry, binding);
@@ -254,6 +262,62 @@ export class NativeTranscriptService {
     return this.entryForBinding(bindingToken)?.state ?? null;
   }
 
+  /** Set the presentation lease; speech leases remain active independently. */
+  setConsumerActive(bindingToken: string, active: boolean): void {
+    const entry = this.entryForBinding(bindingToken);
+    if (!entry) return;
+    if (active) this.presentationLeases.add(bindingToken);
+    else this.presentationLeases.delete(bindingToken);
+    this.applyEffectiveConsumerState(bindingToken, entry);
+  }
+
+  private applyEffectiveConsumerState(
+    bindingToken: string,
+    entry = this.entryForBinding(bindingToken),
+  ): void {
+    if (!entry) return;
+    const effectiveActive =
+      this.presentationLeases.has(bindingToken) ||
+      (this.speechLeases.get(bindingToken) ?? 0) > 0;
+    const applied = this.appliedConsumerActivity.get(bindingToken);
+    if (
+      applied?.transport === entry.transport &&
+      applied.active === effectiveActive
+    ) {
+      return;
+    }
+    try {
+      if (!entry.transport.setAgentChatActive(bindingToken, effectiveActive)) return;
+      this.appliedConsumerActivity.set(bindingToken, {
+        transport: entry.transport,
+        active: effectiveActive,
+      });
+    } catch (error) {
+      recordAgentChatDiagnostic('consumer-lease-failed', {
+        active: effectiveActive,
+        bindingToken: agentChatDiagnosticToken(bindingToken),
+        error: String(error),
+      });
+    }
+  }
+
+  /** Keep remote work alive while explicit Chat speech is reading the stream. */
+  acquireSpeechLease(bindingToken: string): () => void {
+    const entry = this.entryForBinding(bindingToken);
+    if (!entry) return () => undefined;
+    this.speechLeases.set(bindingToken, (this.speechLeases.get(bindingToken) ?? 0) + 1);
+    this.applyEffectiveConsumerState(bindingToken, entry);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const refs = this.speechLeases.get(bindingToken) ?? 0;
+      if (refs <= 1) this.speechLeases.delete(bindingToken);
+      else this.speechLeases.set(bindingToken, refs - 1);
+      this.applyEffectiveConsumerState(bindingToken);
+    };
+  }
+
   closeTerminal(
     hostSessionId: string,
     terminalId: string,
@@ -278,6 +342,9 @@ export class NativeTranscriptService {
     }
     this.entries.clear();
     this.terminalBindings.clear();
+    this.presentationLeases.clear();
+    this.speechLeases.clear();
+    this.appliedConsumerActivity.clear();
   }
 
   /** Apply Rust's authoritative retention decision without interpreting cache keys. */
@@ -493,6 +560,9 @@ export class NativeTranscriptService {
     entry.listeners.get(bindingToken)?.clear();
     entry.listeners.delete(bindingToken);
     entry.bindings.delete(bindingToken);
+    this.presentationLeases.delete(bindingToken);
+    this.speechLeases.delete(bindingToken);
+    this.appliedConsumerActivity.delete(bindingToken);
     for (const [terminalKey, token] of this.terminalBindings) {
       if (token === bindingToken) this.terminalBindings.delete(terminalKey);
     }

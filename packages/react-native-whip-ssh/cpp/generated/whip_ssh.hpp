@@ -88,6 +88,7 @@ class NativeWhipSsh : public jsi::HostObject {
     jsi::Value cpp_uniffi_whip_ssh_fn_method_hostruntime_detach_agent_chat(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_method_hostruntime_install_agent_integration(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_method_hostruntime_open_agent_chat(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_whip_ssh_fn_method_hostruntime_set_agent_chat_active(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_method_hostruntime_start_agent_chat(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_method_hostruntime_submit_pastes(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_method_hostruntime_connect(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
@@ -379,6 +380,7 @@ class NativeWhipSsh : public jsi::HostObject {
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_hostruntime_detach_agent_chat(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_hostruntime_install_agent_integration(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_hostruntime_open_agent_chat(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_hostruntime_start_agent_chat(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_hostruntime_submit_pastes(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_hostruntime_connect(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);

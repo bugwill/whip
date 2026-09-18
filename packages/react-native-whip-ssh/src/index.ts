@@ -2589,8 +2589,14 @@ export class NativeHostRuntime {
     appActive: boolean,
     hostsVisible: boolean,
     accessLocked: boolean,
+    isEink: boolean,
   ): void {
-    this.runtime.setMonitoringState(appActive, hostsVisible, accessLocked);
+    this.runtime.setMonitoringState(
+      appActive,
+      hostsVisible,
+      accessLocked,
+      isEink,
+    );
   }
 
   async createTabWithLaunch(
@@ -2775,6 +2781,10 @@ export class NativeHostRuntime {
       type: 'started',
       state: nativeAgentTranscript(result.inner.state),
     };
+  }
+
+  setAgentChatActive(bindingToken: string, active: boolean): boolean {
+    return this.runtime.setAgentChatActive(bindingToken, active);
   }
 
   agentTranscript(key: string): NativeAgentTranscriptState {

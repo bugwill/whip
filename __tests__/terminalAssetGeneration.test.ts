@@ -65,6 +65,8 @@ test('recreates both complete asset directories from source inputs alone', () =>
   }
   for (const [index, directory] of outputDirectories.entries()) {
     const html = index === 0 ? 'herdr-terminal.html' : 'index.html';
+    const generatedHtml = readFileSync(join(fixture, directory, html), 'utf8');
+    expect(generatedHtml).toContain('.xterm { box-sizing: border-box; height: 100%; padding: 0 16px; }');
     expect(readdirSync(join(fixture, directory)).sort()).toEqual(
       [...Object.keys(copies), html, 'mermaid-preview.html'].sort(),
     );

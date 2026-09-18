@@ -86,6 +86,7 @@ function fakeTransport(initial = state()) {
     agentTranscript: jest.fn(() => current),
     detachAgentChat: jest.fn(() => undefined),
     confirmAgentTranscriptCache: jest.fn(() => true),
+    setAgentChatActive: jest.fn(() => true),
   };
   return {
     value,
@@ -129,7 +130,7 @@ function openedToken(
 }
 
 describe('Rust-owned agent Chat projection', () => {
-  test('preload establishes once and deduplicates pending cache restoration and native startup', async () => {
+test('preload establishes once and deduplicates pending cache restoration and native startup', async () => {
     const cache = new MemoryAgentChatCache();
     let restore!: (blob: ArrayBuffer) => void;
     const load = jest.spyOn(cache, 'loadNative').mockReturnValue(new Promise(resolve => { restore = resolve; }));
@@ -474,6 +475,70 @@ describe('Rust-owned agent Chat projection', () => {
     expect(service.getState(token)).toBeNull();
     expect(reconciledPresentation).toBe(AgentChatPresentationPhase.Dormant);
   });
+});
+
+test('presentation and speech leases are independent and use effective OR activity', () => {
+  const remote = fakeTransport();
+  const service = new NativeTranscriptService(new MemoryAgentChatCache());
+  const token = openedToken(service, remote.value);
+  const setActive = remote.value.setAgentChatActive as jest.Mock;
+  setActive.mockClear();
+
+  const releaseSpeech = service.acquireSpeechLease(token);
+  releaseSpeech();
+  expect(setActive).not.toHaveBeenCalled();
+
+  service.setConsumerActive(token, false);
+  expect(setActive).toHaveBeenLastCalledWith(token, false);
+});
+
+test('hidden Chat remains active while speech holds a lease', () => {
+  const remote = fakeTransport();
+  const service = new NativeTranscriptService(new MemoryAgentChatCache());
+  const token = openedToken(service, remote.value);
+  const setActive = remote.value.setAgentChatActive as jest.Mock;
+  setActive.mockClear();
+
+  service.setConsumerActive(token, false);
+  const releaseSpeech = service.acquireSpeechLease(token);
+  expect(setActive).toHaveBeenLastCalledWith(token, true);
+  releaseSpeech();
+  expect(setActive).toHaveBeenLastCalledWith(token, false);
+});
+
+test('concurrent speech leases release independently', () => {
+  const remote = fakeTransport();
+  const service = new NativeTranscriptService(new MemoryAgentChatCache());
+  const token = openedToken(service, remote.value);
+  const setActive = remote.value.setAgentChatActive as jest.Mock;
+  setActive.mockClear();
+
+  service.setConsumerActive(token, false);
+  const releaseFirst = service.acquireSpeechLease(token);
+  const releaseSecond = service.acquireSpeechLease(token);
+  releaseFirst();
+  expect(setActive).toHaveBeenLastCalledWith(token, true);
+  releaseSecond();
+  expect(setActive).toHaveBeenLastCalledWith(token, false);
+});
+
+test('consumer activity deduplicates successful calls and retries failed calls', () => {
+  const remote = fakeTransport();
+  const service = new NativeTranscriptService(new MemoryAgentChatCache());
+  const token = openedToken(service, remote.value);
+  const setActive = remote.value.setAgentChatActive as jest.Mock;
+  setActive.mockClear();
+
+  service.setConsumerActive(token, false);
+  setActive.mockClear();
+  service.setConsumerActive(token, true);
+  service.setConsumerActive(token, true);
+  expect(setActive).toHaveBeenCalledTimes(1);
+
+  setActive.mockReturnValueOnce(false).mockReturnValueOnce(true);
+  service.setConsumerActive(token, false);
+  service.setConsumerActive(token, false);
+  expect(setActive).toHaveBeenCalledTimes(3);
 });
 
 

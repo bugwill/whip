@@ -983,11 +983,18 @@ interface NativeModuleInterface {
     modifiers: number,
     uniffi_out_err: UniffiRustCallStatus,
   ): void;
+  ubrn_uniffi_whip_ssh_fn_method_hostruntime_set_agent_chat_active(
+    uniffiSelf: bigint,
+    bindingToken: Uint8Array,
+    active: number,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): number;
   ubrn_uniffi_whip_ssh_fn_method_hostruntime_set_monitoring_state(
     uniffiSelf: bigint,
     appActive: number,
     hostsVisible: number,
     accessLocked: number,
+    isEink: number,
     uniffi_out_err: UniffiRustCallStatus,
   ): void;
   ubrn_uniffi_whip_ssh_fn_method_hostruntime_ssh_shell_geometry(
@@ -1286,6 +1293,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_whip_ssh_checksum_method_hostruntime_runtime_id(): number;
   ubrn_uniffi_whip_ssh_checksum_method_hostruntime_runtime_incarnation(): number;
   ubrn_uniffi_whip_ssh_checksum_method_hostruntime_scroll_terminal(): number;
+  ubrn_uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active(): number;
   ubrn_uniffi_whip_ssh_checksum_method_hostruntime_set_monitoring_state(): number;
   ubrn_uniffi_whip_ssh_checksum_method_hostruntime_ssh_shell_geometry(): number;
   ubrn_uniffi_whip_ssh_checksum_method_hostruntime_ssh_shell_input(): number;

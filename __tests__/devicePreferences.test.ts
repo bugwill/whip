@@ -19,6 +19,7 @@ import {
 import {
   defaultDevicePreferences,
   loadDevicePreferences,
+  resolveBackgroundPowerMode,
   saveDevicePreferences,
 } from '../src/services/devicePreferences';
 import {
@@ -68,6 +69,7 @@ test('terminal preference defaults match the mobile renderer', () => {
   expect(defaultDevicePreferences.persistentAlertDurationSeconds).toBe(30);
   expect(defaultDevicePreferences.appearance).toBe('system');
   expect(defaultDevicePreferences.displayProfile).toBe('auto');
+  expect(defaultDevicePreferences.backgroundPowerPreference).toBe('auto');
   expect(defaultDevicePreferences.fullscreenApp).toBe(false);
   expect(defaultDevicePreferences.smoothSpinners).toBe(false);
   expect(defaultDevicePreferences.appBackgroundImageUri).toBeNull();
@@ -93,6 +95,21 @@ test('persists the spinner frame-rate choice across reloads', async () => {
   }
 });
 
+test('resolves automatic background power by display profile and honors overrides', () => {
+  expect(resolveBackgroundPowerMode('auto', true)).toBe('balanced');
+  expect(resolveBackgroundPowerMode('auto', false)).toBe('realtime');
+  expect(resolveBackgroundPowerMode('balanced', false)).toBe('balanced');
+  expect(resolveBackgroundPowerMode('realtime', true)).toBe('realtime');
+});
+
+test('migrates an invalid persisted background power choice to automatic', async () => {
+  mockGetItem.mockResolvedValueOnce(JSON.stringify({ backgroundPowerPreference: 'turbo' }));
+
+  await expect(loadDevicePreferences()).resolves.toMatchObject({
+    backgroundPowerPreference: 'auto',
+  });
+});
+
 test('migrates the old 11px mobile default to the usable 8px geometry', async () => {
   mockGetItem
     .mockResolvedValueOnce(null)
@@ -112,6 +129,7 @@ test('migrates the old 11px mobile default to the usable 8px geometry', async ()
     biometricOnResume: false,
     appearance: 'system',
     displayProfile: 'auto',
+    backgroundPowerPreference: 'auto',
     fullscreenApp: false,
     smoothSpinners: false,
     appBackgroundImageUri: null,

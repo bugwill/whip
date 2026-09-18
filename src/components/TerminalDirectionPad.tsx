@@ -45,8 +45,8 @@ export function TerminalDirectionPad({ onDirection }: { onDirection: (direction:
         const direction = event.nativeEvent.actionName;
         if (direction === 'up' || direction === 'down' || direction === 'left' || direction === 'right') callback.current(direction);
       }}
-      style={{ backgroundColor: colors.controlSurface, height: 36, width: 44, flexShrink: 0,
-        alignItems: 'center', justifyContent: 'center', borderRadius: 2, borderWidth: 1, borderColor: colors.divider }}>
+      style={{ backgroundColor: 'transparent', height: 36, width: 44, flexShrink: 0,
+        alignItems: 'center', justifyContent: 'center', borderRadius: 8, borderWidth: 1, borderColor: colors.divider }}>
       <View pointerEvents="none"><Move size={22} color={colors.text} /></View>
     </View>
   );

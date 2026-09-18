@@ -257,15 +257,17 @@ describe('TerminalRendererHost lifecycle', () => {
     const injected: string[] = [];
     const handle = createRef<TerminalRendererHandle>();
     const requestFocus = jest.fn();
+    let renderedVisible = true;
+    let renderedEink = eink;
     const renderHost = (target: TerminalRenderTarget) => (
-      <DisplayProfileProvider preference={eink ? 'eink' : 'normal'}>
+      <DisplayProfileProvider preference={renderedEink ? 'eink' : 'normal'}>
       <TerminalRendererHost
         ref={handle}
         {...eventCallbacks}
         activeTarget={target}
         preferences={{ ...preferences, pauseResizeInBackground, xtermCacheCapacity }}
         targets={targets}
-        visible
+        visible={renderedVisible}
       />
       </DisplayProfileProvider>
     );
@@ -306,7 +308,21 @@ describe('TerminalRendererHost lifecycle', () => {
         await Promise.resolve();
       });
     };
-    return { activateTarget, eventCallbacks, handle, injected, requestFocus, webView };
+    const setVisible = async (nextVisible: boolean) => {
+      renderedVisible = nextVisible;
+      await act(async () => {
+        renderer.update(renderHost(activeTarget));
+        await Promise.resolve();
+      });
+    };
+    const setEink = async (nextEink: boolean) => {
+      renderedEink = nextEink;
+      await act(async () => {
+        renderer.update(renderHost(activeTarget));
+        await Promise.resolve();
+      });
+    };
+    return { activateTarget, eventCallbacks, handle, injected, requestFocus, setEink, setVisible, webView };
   };
 
   test('E-Ink releases the oldest renderer before allocating a fourth despite preference 20', async () => {
@@ -322,6 +338,129 @@ describe('TerminalRendererHost lifecycle', () => {
     expect(removal).toBeGreaterThanOrEqual(0);
     expect(allocation).toBeGreaterThan(removal);
     expect(client.closeTerminalBridge).not.toHaveBeenCalled();
+  });
+
+  test('E-Ink releases hidden Herdr screen ownership and reacquires the selected baseline', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll });
+    const target = createTarget('term-1', client, scroll);
+    const { injected, setVisible } = await mountReadyHost(target, [target], true, 4, true);
+    const encoded = Buffer.from('visible output').toString('base64');
+    act(() => client.emitFrame({
+      type: 'terminal.frame', seq: 1, encoding: 'ansi', width: 80, height: 24,
+      full: true, bytes: encoded,
+    }));
+    injected.length = 0;
+
+    await setVisible(false);
+    expect(client.releaseTerminal).toHaveBeenCalledTimes(1);
+    expect(injected.join('\n')).toContain('herdrSnapshot');
+    expect(injected.join('\n')).toContain('"hide"');
+    expect(injected.join('\n')).toContain('window.herdrActivate(null);');
+
+    await setVisible(true);
+    expect(client.openTerminal).toHaveBeenCalledTimes(2);
+    act(() => client.emitFrame({
+      type: 'terminal.frame', seq: 1, encoding: 'ansi', width: 80, height: 24,
+      full: true, bytes: encoded,
+    }));
+    expect(injected.join('\n')).toContain('herdrReset');
+    expect(client.closeTerminalBridge).not.toHaveBeenCalled();
+  });
+
+  test('late ready/resize callbacks cannot reconnect a cached inactive E-Ink pane', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll, 'term-2': scroll });
+    const first = createTarget('term-1', client, scroll);
+    const second = createTarget('term-2', client, scroll);
+    const { activateTarget, webView } = await mountReadyHost(first, [first, second], true, 4, true);
+    await activateTarget(second);
+    const opensAfterSwitch = client.openTerminal.mock.calls.length;
+    await sendRendererMessage(webView, { type: 'terminal-ready', key: first.key });
+    await sendRendererMessage(webView, {
+      type: 'resize', source: 'fit', key: first.key,
+      cols: 80, rows: 24, cellWidthPx: 8, cellHeightPx: 16,
+    });
+    expect(client.openTerminal).toHaveBeenCalledTimes(opensAfterSwitch);
+  });
+
+  test('E-Ink batches ordered ANSI frames, flushes pressure, and bypasses batching for input echo', async () => {
+    jest.useFakeTimers();
+    try {
+      const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+      const client = createClient({ 'term-1': scroll });
+      const target = createTarget('term-1', client, scroll);
+      const { handle, injected } = await mountReadyHost(target, [target], true, 4, true);
+      const frame = (seq: number, text: string, full = false) => client.emitFrame({
+        type: 'terminal.frame', seq, encoding: 'ansi', width: 80, height: 24,
+        full, bytes: Buffer.from(text).toString('base64'),
+      });
+      frame(1, 'baseline', true);
+      injected.length = 0;
+      frame(2, 'second');
+      frame(3, 'third');
+      expect(injected).toEqual([]);
+      jest.advanceTimersByTime(99);
+      expect(injected).toEqual([]);
+      jest.advanceTimersByTime(1);
+      expect(injected).toHaveLength(1);
+      expect(injected[0].indexOf(Buffer.from('second').toString('base64')))
+        .toBeLessThan(injected[0].indexOf(Buffer.from('third').toString('base64')));
+
+      injected.length = 0;
+      frame(4, 'x'.repeat(70_000));
+      expect(injected).toHaveLength(1);
+
+      injected.length = 0;
+      // Perfetto tracing is disabled in this test, so the input trace cookie
+      // is null. The interaction window itself must force the echo through.
+      act(() => { handle.current?.input('echo'); });
+      frame(5, 'input echo');
+      expect(injected).toHaveLength(1);
+      expect(injected[0]).toContain(Buffer.from('input echo').toString('base64'));
+
+      injected.length = 0;
+      jest.advanceTimersByTime(500);
+      frame(6, 'back to batch');
+      expect(injected).toEqual([]);
+      jest.advanceTimersByTime(100);
+      expect(injected).toHaveLength(1);
+
+      injected.length = 0;
+      act(() => { handle.current?.scroll('up', 1); });
+      injected.length = 0;
+      frame(7, 'scroll echo');
+      expect(injected).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('display-profile switch flushes queued E-Ink output before normal configuration', async () => {
+    jest.useFakeTimers();
+    try {
+      const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+      const client = createClient({ 'term-1': scroll });
+      const target = createTarget('term-1', client, scroll);
+      const { injected, setEink } = await mountReadyHost(target, [target], true, 4, true);
+      const encoded = Buffer.from('queued before toggle').toString('base64');
+      act(() => client.emitFrame({
+        type: 'terminal.frame', seq: 1, encoding: 'ansi', width: 80, height: 24,
+        full: true, bytes: Buffer.from('baseline').toString('base64'),
+      }));
+      injected.length = 0;
+      act(() => client.emitFrame({
+        type: 'terminal.frame', seq: 2, encoding: 'ansi', width: 80, height: 24,
+        full: false, bytes: encoded,
+      }));
+      expect(injected).toEqual([]);
+      await setEink(false);
+      const combined = injected.join('\n');
+      expect(combined).toContain(encoded);
+      expect(combined.indexOf(encoded)).toBeLessThan(combined.indexOf('herdrConfigure'));
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('only the active pane can request the software keyboard', async () => {

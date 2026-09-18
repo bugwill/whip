@@ -7,6 +7,20 @@ import {
 
 interface HerdrSoftInputNativeModule {
   setComposerOverlayEnabled(owner: string, enabled: boolean): Promise<void>;
+  getImeTopInWindow?(): Promise<number | null>;
+}
+
+/** Uses Android WindowInsets as the composer geometry source when available. */
+export async function getTerminalImeTopInWindow(): Promise<number | null> {
+  if (Platform.OS !== 'android') return null;
+  const module = NativeModules.HerdrSoftInput as HerdrSoftInputNativeModule | undefined;
+  if (!module?.getImeTopInWindow) return null;
+  try {
+    const top = await module.getImeTopInWindow();
+    return typeof top === 'number' && Number.isFinite(top) && top >= 0 ? top : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function setTerminalComposerOverlay(

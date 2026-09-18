@@ -20579,10 +20579,16 @@ export interface HostRuntimeLike {
     row: number | undefined,
     modifiers: number,
   ) /*throws*/ : void;
+  /**
+   * Pause or resume remote transcript work without releasing the resident
+   * transcript or its durable cache checkpoints.
+   */
+  setAgentChatActive(bindingToken: string, active: boolean): boolean;
   setMonitoringState(
     appActive: boolean,
     hostsVisible: boolean,
     accessLocked: boolean,
+    isEink: boolean,
   ): void;
   sshShellGeometry(terminalId: string): HostTerminalGeometry | undefined;
   sshShellInput(terminalId: string, bytes: ArrayBuffer) /*throws*/ : void;
@@ -22116,10 +22122,34 @@ export class HostRuntime
     );
   }
 
+  /**
+   * Pause or resume remote transcript work without releasing the resident
+   * transcript or its durable cache checkpoints.
+   */
+  setAgentChatActive(bindingToken: string, active: boolean): boolean {
+    return FfiConverterBool.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ callStatus => {
+          return nativeModule().ubrn_uniffi_whip_ssh_fn_method_hostruntime_set_agent_chat_active(
+            uniffiTypeHostRuntimeObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              bindingToken,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterBool.lower(active, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
   setMonitoringState(
     appActive: boolean,
     hostsVisible: boolean,
     accessLocked: boolean,
+    isEink: boolean,
   ): void {
     uniffiCaller.rustCall(
       /*caller:*/ callStatus => {
@@ -22128,6 +22158,7 @@ export class HostRuntime
           FfiConverterBool.lower(appActive, nativeModule().rustbuffer_alloc),
           FfiConverterBool.lower(hostsVisible, nativeModule().rustbuffer_alloc),
           FfiConverterBool.lower(accessLocked, nativeModule().rustbuffer_alloc),
+          FfiConverterBool.lower(isEink, nativeModule().rustbuffer_alloc),
           callStatus,
         );
       },
@@ -26632,8 +26663,16 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active() !==
+    42317
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active',
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_whip_ssh_checksum_method_hostruntime_set_monitoring_state() !==
-    42801
+    8699
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       'uniffi_whip_ssh_checksum_method_hostruntime_set_monitoring_state',

@@ -39,6 +39,7 @@ import {
   reportBackgroundFailure,
 } from '../services/backgroundOperations';
 import { startBackgroundMonitoring } from '../services/backgroundMonitoring';
+import type { BackgroundPowerMode } from '../services/devicePreferences';
 import { useTheme } from '../theme';
 import type { LiveSessionRailItem } from './LiveSessionRail';
 import { AgentStatusAnimationProvider } from './app-ui';
@@ -71,6 +72,7 @@ interface AppShellProps {
   terminals: ReturnType<typeof useTerminalSessions>;
   telemetry: ReturnType<typeof useLiveHostTelemetry>;
   history: ReturnType<typeof useTerminalHistory>;
+  backgroundPowerMode: BackgroundPowerMode;
 }
 
 /** Main application presentation. State and lifecycle stay in domain controllers. */
@@ -101,6 +103,7 @@ function AppShellContent({
   terminals,
   telemetry,
   history,
+  backgroundPowerMode,
 }: AppShellProps) {
   const { t } = useTranslation();
   const { colors: theme, isDark } = useTheme();
@@ -441,6 +444,9 @@ function AppShellContent({
                       backgroundMonitoringAvailable={
                         alertsEnabled && sessions.state.sessions.length > 0
                       }
+                      backgroundPowerPreference={
+                        storedPreferences.backgroundPowerPreference
+                      }
                       persistentAlertDurationSeconds={
                         persistentAlertDurationSeconds
                       }
@@ -489,6 +495,7 @@ function AppShellContent({
                         try {
                           await startBackgroundMonitoring(
                             sessions.state.sessions.length,
+                            backgroundPowerMode,
                           );
                         } catch (error) {
                           hosts.setError(
@@ -551,6 +558,9 @@ function AppShellContent({
                       }
                       onDisplayProfileChange={value =>
                         preferences.setPreference('displayProfile', value)
+                      }
+                      onBackgroundPowerPreferenceChange={value =>
+                        preferences.setPreference('backgroundPowerPreference', value)
                       }
                       onFullscreenAppChange={value =>
                         preferences.setPreference('fullscreenApp', value)

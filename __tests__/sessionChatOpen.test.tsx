@@ -186,6 +186,7 @@ function setup(agent: ChatAgent) {
     startAgentChat: jest.fn(
       (_bindingToken: string, _cacheBlob?: ArrayBuffer): NativeAgentChatStartResult => ({ type: 'stale-binding' }),
     ),
+    setAgentChatActive: jest.fn(() => true),
     detachAgentChat: jest.fn((terminalId: string) => {
       bindings.delete(terminalId);
       return undefined as { namespace: string; key: string; blob: ArrayBuffer } | undefined;
@@ -518,6 +519,74 @@ test('all three rails retain full original names and content-sized buttons in ho
   }
 });
 
+test('tab and pane markers stay fixed, agent chips have icons, and pane plus splits the selected pane', async () => {
+  const host = setup('codex');
+  const ordinary = { ...host.pane, pane_id: 'pane-2', terminal_id: 'terminal-2', agent: undefined, display_agent: undefined, agent_session: undefined };
+  host.props.snapshot = { ...host.props.snapshot, panes: [host.pane, ordinary] };
+  await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
+
+  const tabRow = renderer.root.findByProps({ testID: 'session-tab-row' });
+  const paneRow = renderer.root.findByProps({ testID: 'session-pane-row' });
+  expect(tabRow.findByProps({ accessibilityLabel: 'session.tab' }).find(node => String(node.type) === 'PanelTop')).toBeTruthy();
+  expect(paneRow.findAllByProps({ accessibilityLabel: 'session.pane' })[0].find(node => String(node.type) === 'PanelRightOpen')).toBeTruthy();
+  const agentChip = paneRow.findAll(node => node.props.accessibilityLabel === 'session.openPane')[0];
+  expect(agentChip.find(node => String(node.type) === 'Bot')).toBeTruthy();
+  const groupMarker = paneRow.findAllByProps({ accessibilityLabel: 'session.pane' })[1];
+  expect(groupMarker.find(node => String(node.type) === 'SquareTerminal')).toBeTruthy();
+  expect(groupMarker.findAll(node => String(node.type) === 'Text')).toHaveLength(0);
+
+  host.native.requestHerdrApi.mockClear();
+  await act(async () => paneRow.findByProps({ accessibilityLabel: 'session.newPane' }).props.onPress());
+  expect(host.native.requestHerdrApi).toHaveBeenCalledWith({
+    method: 'pane.split',
+    params: { target_pane_id: host.pane.pane_id, direction: 'right', focus: true },
+  });
+});
+
+test('workspace plus stays fixed and creates a named workspace with its own tab and pane', async () => {
+  const host = setup('codex');
+  await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
+  const workspaceRow = renderer.root.findByProps({ testID: 'session-workspace-row' });
+  const plus = workspaceRow.findByProps({ accessibilityLabel: 'rail.newWorkspace' });
+  for (let parent = plus.parent; parent; parent = parent.parent) {
+    expect(String(parent.type)).not.toBe('ScrollView');
+  }
+
+  await act(async () => plus.props.onPress());
+  const editor = ui('EditorSheet');
+  expect(editor.props.visible).toBe(true);
+  await act(async () => {
+    renderer.root.findByProps({ accessibilityLabel: 'herd.labelOptional' }).props.onChangeText('New Space');
+    renderer.root.findByProps({ accessibilityLabel: 'herd.workingDirectoryOptional' }).props.onChangeText('/work');
+  });
+  const created = {
+    type: 'workspace_created',
+    workspace: { ...host.props.snapshot.workspaces[0], workspace_id: 'workspace-2', label: 'New Space', active_tab_id: 'tab-2' },
+    tab: { ...host.props.snapshot.tabs[0], tab_id: 'tab-2', workspace_id: 'workspace-2' },
+    root_pane: { ...host.pane, pane_id: 'pane-2', terminal_id: 'terminal-2', tab_id: 'tab-2', workspace_id: 'workspace-2' },
+  };
+  host.native.requestHerdrApi.mockResolvedValueOnce(created);
+  await act(async () => ui('EditorSheet').props.onSave());
+  expect(host.native.requestHerdrApi).toHaveBeenCalledWith({
+    method: 'workspace.create',
+    params: { label: 'New Space', cwd: '/work', focus: true },
+  });
+  expect(host.props.onActivateTerminal).toHaveBeenCalledWith(created.root_pane);
+  expect(renderer.root.findByProps({ testID: 'session-workspaces' }).findAll(
+    node => String(node.type) === 'Text' && node.props.children === 'New Space',
+  )).toHaveLength(1);
+  expect(ui('EditorSheet').props.visible).toBe(false);
+});
+
+test('workspace plus remains available when the server has no workspaces yet', async () => {
+  const host = setup('codex');
+  host.props.snapshot = { ...host.props.snapshot, workspaces: [], tabs: [], panes: [] };
+  await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
+  expect(renderer.root.findByProps({ testID: 'session-workspace-row' }).findByProps({
+    accessibilityLabel: 'rail.newWorkspace',
+  })).toBeTruthy();
+});
+
 describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
   test('E-Ink terminal startup leaves large Chat history dormant until Chat is pressed', async () => {
     const host = setup(agent);
@@ -693,6 +762,46 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
     expect(host.native.detachAgentChat).not.toHaveBeenCalled();
     expect(host.native.openAgentChat).toHaveBeenCalledTimes(1);
     expect(host.native.startAgentChat).toHaveBeenCalledTimes(1);
+  });
+
+  test('normal to E-Ink to normal reactivates a previously paused Chat binding', async () => {
+    const host = setup(agent);
+    const binding = bindChat(host, agent);
+    host.native.startAgentChat.mockImplementation(() => {
+      binding.state = { ...binding.state, status: 'live', revision: 1 };
+      return { type: 'started', state: binding.state };
+    });
+    let preference: 'normal' | 'eink' = 'normal';
+    const render = () => (
+      <DisplayProfileProvider preference={preference}>
+        <SessionScreen {...host.props} />
+      </DisplayProfileProvider>
+    );
+    act(() => {
+      renderer = create(render(), {
+        createNodeMock: element => element.type === 'WebView' ? {
+          injectJavaScript: (script: string) => host.injected.push(script),
+        } : null,
+      });
+    });
+    await act(async () => {
+      control().onPress();
+      await ui('WebView').props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'ready' }) } });
+    });
+    revealChat();
+    act(() => { control().onPress(); });
+    expect(ui('TerminalScreen').props.chatViewEnabled).toBe(false);
+    host.native.setAgentChatActive.mockClear();
+
+    preference = 'eink';
+    await act(async () => {
+      renderer.update(render());
+    });
+    expect(host.native.setAgentChatActive).toHaveBeenLastCalledWith('binding-1', false);
+
+    preference = 'normal';
+    await act(async () => { renderer.update(render()); });
+    expect(host.native.setAgentChatActive).toHaveBeenLastCalledWith('binding-1', true);
   });
 
   test.each(['dormant', 'warm'] as const)('%s preload is released on real residency eviction', async phase => {

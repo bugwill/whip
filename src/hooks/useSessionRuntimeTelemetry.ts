@@ -154,9 +154,15 @@ export function useSessionRuntimeTelemetry({
     appActive: boolean,
     hostsVisible: boolean,
     accessLocked: boolean,
+    isEink: boolean,
   ) => {
     for (const runtime of runtimesRef.current.values()) {
-      runtime.client.setMonitoringState(appActive, hostsVisible, accessLocked);
+      runtime.client.setMonitoringState(
+        appActive,
+        hostsVisible,
+        accessLocked,
+        isEink,
+      );
     }
   }, [runtimesRef]);
 

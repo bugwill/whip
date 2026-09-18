@@ -515,6 +515,7 @@ extern "C" {
         int8_t app_active,
         int8_t hosts_visible,
         int8_t access_locked,
+        int8_t is_eink,
         RustCallStatus *uniffi_out_err
     );
     RustBuffer uniffi_whip_ssh_fn_method_hostruntime_status(
@@ -564,6 +565,12 @@ extern "C" {
     RustBuffer uniffi_whip_ssh_fn_method_hostruntime_open_agent_chat(
         /*handle*/ uint64_t ptr,
         RustBuffer terminal_id,
+        RustCallStatus *uniffi_out_err
+    );
+    int8_t uniffi_whip_ssh_fn_method_hostruntime_set_agent_chat_active(
+        /*handle*/ uint64_t ptr,
+        RustBuffer binding_token,
+        int8_t active,
         RustCallStatus *uniffi_out_err
     );
     RustBuffer uniffi_whip_ssh_fn_method_hostruntime_start_agent_chat(
@@ -1623,6 +1630,8 @@ extern "C" {
     uint16_t uniffi_whip_ssh_checksum_method_hostruntime_install_agent_integration(
     );
     uint16_t uniffi_whip_ssh_checksum_method_hostruntime_open_agent_chat(
+    );
+    uint16_t uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active(
     );
     uint16_t uniffi_whip_ssh_checksum_method_hostruntime_start_agent_chat(
     );
@@ -6445,7 +6454,7 @@ NativeWhipSsh::NativeWhipSsh(
     props["ubrn_uniffi_whip_ssh_fn_method_hostruntime_set_monitoring_state"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_whip_ssh_fn_method_hostruntime_set_monitoring_state"),
-        4,
+        5,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_whip_ssh_fn_method_hostruntime_set_monitoring_state(rt, thisVal, args, count);
         }
@@ -6528,6 +6537,14 @@ NativeWhipSsh::NativeWhipSsh(
         2,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_whip_ssh_fn_method_hostruntime_open_agent_chat(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_whip_ssh_fn_method_hostruntime_set_agent_chat_active"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_whip_ssh_fn_method_hostruntime_set_agent_chat_active"),
+        3,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_whip_ssh_fn_method_hostruntime_set_agent_chat_active(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_whip_ssh_fn_method_hostruntime_start_agent_chat"] = jsi::Function::createFromHostFunction(
@@ -8858,6 +8875,14 @@ NativeWhipSsh::NativeWhipSsh(
             return this->cpp_uniffi_whip_ssh_checksum_method_hostruntime_open_agent_chat(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_whip_ssh_checksum_method_hostruntime_start_agent_chat"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_whip_ssh_checksum_method_hostruntime_start_agent_chat"),
@@ -10273,7 +10298,7 @@ jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_fn_method_hostruntime_runtime_inca
 }
 jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_fn_method_hostruntime_set_monitoring_state(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::whip_ssh::Bridging<RustCallStatus>::rustSuccess(rt);
-        uniffi_whip_ssh_fn_method_hostruntime_set_monitoring_state(uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker, args[0]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[1]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[2]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[3]),
+        uniffi_whip_ssh_fn_method_hostruntime_set_monitoring_state(uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker, args[0]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[1]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[2]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[3]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[4]),
             &status
         );
         uniffi::whip_ssh::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
@@ -10371,6 +10396,16 @@ jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_fn_method_hostruntime_open_agent_c
 
 
         return uniffi::whip_ssh::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_fn_method_hostruntime_set_agent_chat_active(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        RustCallStatus status = uniffi::whip_ssh::Bridging<RustCallStatus>::rustSuccess(rt);
+        auto value = uniffi_whip_ssh_fn_method_hostruntime_set_agent_chat_active(uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker, args[0]), uniffi::whip_ssh::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[2]),
+            &status
+        );
+        uniffi::whip_ssh::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
+
+
+        return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
 }
 jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_fn_method_hostruntime_start_agent_chat(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::whip_ssh::Bridging<RustCallStatus>::rustSuccess(rt);
@@ -12675,6 +12710,13 @@ jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_checksum_method_hostruntime_instal
 }
 jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_checksum_method_hostruntime_open_agent_chat(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_whip_ssh_checksum_method_hostruntime_open_agent_chat(
+        );
+
+
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_whip_ssh_checksum_method_hostruntime_set_agent_chat_active(
         );
 
 

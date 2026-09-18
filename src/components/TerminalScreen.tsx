@@ -100,7 +100,7 @@ import {
 } from '../services/performanceTrace';
 import { reportBackgroundFailure } from '../services/backgroundOperations';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { setTerminalComposerOverlay } from '../services/terminalSoftInput';
+import { getTerminalImeTopInWindow, setTerminalComposerOverlay } from '../services/terminalSoftInput';
 import {
   applyTerminalModifiers,
   type TerminalModifierState,
@@ -538,6 +538,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     const { inset: keyboardInset, remeasure: remeasureKeyboard } = useKeyboardInset(keyboardViewportRef, {
       enabled: visible,
       onVisibilityChange: setKeyboardVisible,
+      getKeyboardTop: Platform.OS === 'android' ? getTerminalImeTopInWindow : undefined,
     });
     const [alternateScreen, setAlternateScreen] = useState(false);
     const [reportedTitle, setReportedTitle] = useState('');
@@ -1382,6 +1383,12 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           keyboardEnabledBeforeComposeRef.current = keyboardEnabled;
           setKeyboardEnabled(true);
           setComposeOpen(true);
+          // The native window may have changed from resize to overlay while
+          // this IME was already open; measure again after the layout settles.
+          remeasureKeyboard();
+          setTimeout(() => {
+            if (visibleRef.current && composeOpenRef.current) remeasureKeyboard();
+          }, 80);
         });
     };
 
@@ -1586,10 +1593,11 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             }}
             className={cn(
               TERMINAL_ICON_CONTROL_CLASS,
-              keyboardControlSelected && 'border-primary bg-primary/15',
+              keyboardControlSelected && 'border-primary',
             )}
             disabled={keyboardControlDisabled}
-            variant="secondary"
+            variant="ghost"
+            style={{ backgroundColor: 'transparent' }}
             onPress={() => {
               onControlUse(control);
               const enabled = !keyboardEnabled;
@@ -2323,6 +2331,12 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                   inputRef={composeInputRef}
                   autoFocus={keyboardEnabled}
                   showSoftInputOnFocus={keyboardEnabled}
+                  onFocus={() => {
+                    remeasureKeyboard();
+                    setTimeout(() => {
+                      if (visibleRef.current && composeOpenRef.current) remeasureKeyboard();
+                    }, 80);
+                  }}
                   multiline
                   numberOfLines={3}
                   textAlignVertical="top"
@@ -2389,7 +2403,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           <View className="flex-row items-start">
           <View testID="terminal-fixed-controls" style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 0, gap: 5,
             paddingLeft: 6, paddingRight: 6, paddingTop: 7, paddingBottom: 7 + bottomSafeAreaInset,
-            borderRightWidth: 1, borderRightColor: appColors.divider }}>
+          }}>
             {fixedTerminalControls.map(renderTerminalControl)}
             <TerminalDirectionPad onDirection={direction => {
               onControlUse('up');

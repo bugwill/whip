@@ -159,6 +159,8 @@ export function HerdScreen({
     hostId: string;
     workspace: WorkspaceInfo;
   } | null>(null);
+  const [closeTabTarget, setCloseTabTarget] = useState<HerdQueueAgent | null>(null);
+  const closeTabResolver = useRef<((confirmed: boolean) => void) | null>(null);
   const [closingTabKey, setClosingTabKey] = useState<string | null>(null);
   const [commandRunnerOpen, setCommandRunnerOpen] = useState(false);
   const [tabNameDraft, setTabNameDraft] = useState('');
@@ -307,8 +309,31 @@ export function HerdScreen({
     setCommandRunnerOpen(false);
   };
 
+  const requestCloseTabConfirmation = useCallback(
+    (item: HerdQueueAgent): Promise<boolean> => new Promise(resolve => {
+      closeTabResolver.current?.(false);
+      closeTabResolver.current = resolve;
+      setCloseTabTarget(item);
+    }),
+    [],
+  );
+
+  const cancelCloseTab = useCallback(() => {
+    closeTabResolver.current?.(false);
+    closeTabResolver.current = null;
+    setCloseTabTarget(null);
+  }, []);
+
+  const confirmCloseTab = useCallback(() => {
+    const resolve = closeTabResolver.current;
+    closeTabResolver.current = null;
+    setCloseTabTarget(null);
+    resolve?.(true);
+  }, []);
+
   const closeTab = useCallback(
     async (item: HerdQueueAgent): Promise<boolean> => {
+      if (!(await requestCloseTabConfirmation(item))) return false;
       const key = `${item.hostId}:${item.agent.tab_id}`;
       setClosingTabKey(key);
       try {
@@ -321,7 +346,7 @@ export function HerdScreen({
         setClosingTabKey(null);
       }
     },
-    [onCloseTab, showHerdrError],
+    [onCloseTab, requestCloseTabConfirmation, showHerdrError],
   );
 
   const visibleSorted = useMemo(
@@ -571,6 +596,20 @@ export function HerdScreen({
           );
         }}
       />
+      <ConfirmationPopup
+        busy={Boolean(closingTabKey)}
+        confirmLabel={t('common.close')}
+        copy={closeTabTarget?.tabLabel || closeTabTarget?.agent.tab_id || ''}
+        icon={Trash2}
+        title={closeTabTarget
+          ? t('session.closeTab', { tab: closeTabTarget.tabLabel })
+          : t('session.closeTab', { tab: '' })}
+        visible={closeTabTarget !== null}
+        onCancel={cancelCloseTab}
+        onConfirm={() => {
+          confirmCloseTab();
+        }}
+      />
       <Modal
         animationType={animationType}
         onRequestClose={closeCommandRunner}
@@ -773,14 +812,26 @@ const AgentRow = memo(
       translateX.value = isEinkRef.current ? 0 : withSpring(0, DEFAULT_SPRING_CONFIG);
     };
 
-    const finishClose = (finished: boolean) => {
-      if (finished) {
-        reportBackgroundFailure(onCloseTab(item), 'herd-tab-close');
-        return;
-      }
+    const restoreCancelledClose = () => {
       committingRef.current = false;
       rowHeight.value = restingHeightRef.current;
       restore();
+    };
+
+    const waitForCloseResult = () => {
+      void onCloseTab(item)
+        .then(succeeded => {
+          if (!succeeded) restoreCancelledClose();
+        })
+        .catch(restoreCancelledClose);
+    };
+
+    const finishClose = (finished: boolean) => {
+      if (finished) {
+        waitForCloseResult();
+        return;
+      }
+      restoreCancelledClose();
     };
 
     const commitClose = hapticPress(() => {
@@ -789,7 +840,7 @@ const AgentRow = memo(
       if (isEinkRef.current) {
         translateX.value = -Math.max(rowWidthRef.current, HERD_TAB_MAX_DRAG);
         rowHeight.value = 0;
-        reportBackgroundFailure(onCloseTab(item), 'herd-tab-close');
+        waitForCloseResult();
         return;
       }
       translateX.value = withTiming(

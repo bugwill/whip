@@ -18,7 +18,11 @@ function createTerminalOfflineCache({
   let dirty = false;
   let timer = null;
   let scrollback = 5000;
+  let lastTranscript = null;
+  let lastSnapshotAt = null;
+  let einkMode = false;
   const normalDelayMs = delayMs;
+  const EINK_MIN_IDLE_INTERVAL_MS = 30_000;
 
   const clearTimer = () => {
     if (timer === null) return;
@@ -42,29 +46,44 @@ function createTerminalOfflineCache({
 
   const snapshot = (reason = 'idle', force = false) => {
     clearTimer();
-    if (!enabled || (!dirty && !force)) return false;
-    dirty = false;
-    send({ type: 'cache-snapshot-start', reason });
+    // E-Ink lifecycle force bypasses the idle timer but still requires dirty
+    // state. Preserve the prior normal-mode force behavior for callers that
+    // explicitly request a snapshot of a clean renderer.
+    if (!enabled || (!dirty && (einkMode || !force))) return false;
     const started = now();
     let transcript = null;
+    let failed = false;
     try {
       transcript = safeSerialization(serialize({ scrollback }));
     } catch {
       // Snapshot failure must not abort renderer eviction or live rendering.
       dirty = true;
+      failed = true;
     }
+    if (einkMode && !failed && transcript === lastTranscript) {
+      dirty = false;
+      lastSnapshotAt = now();
+      return false;
+    }
+    if (!failed) dirty = false;
+    send({ type: 'cache-snapshot-start', reason });
     send({
       type: 'cache-snapshot',
       reason,
       durationMs: Math.max(0, now() - started),
       transcript,
     });
+    if (!failed) {
+      lastTranscript = transcript;
+      lastSnapshotAt = now();
+    }
     return true;
   };
 
   return {
     configure(options) {
-      delayMs = options?.eink ? Math.max(3000, normalDelayMs) : normalDelayMs;
+      einkMode = options?.eink === true;
+      delayMs = einkMode ? Math.max(3000, normalDelayMs) : normalDelayMs;
       enabled = options?.enabled === true;
       // serialize() builds the entire ANSI string before safeSerialization can
       // clip it. Keep the synchronous work and WebView bridge payload bounded
@@ -73,6 +92,8 @@ function createTerminalOfflineCache({
       scrollback = Math.max(1, Math.min(maximumScrollback, Math.round(Number(options?.scrollback)) || maximumScrollback));
       if (!enabled) {
         dirty = false;
+        lastTranscript = null;
+        lastSnapshotAt = null;
         clearTimer();
       }
     },
@@ -80,10 +101,16 @@ function createTerminalOfflineCache({
       if (!enabled) return;
       dirty = true;
       clearTimer();
+      const sinceLastSnapshot = lastSnapshotAt === null
+        ? EINK_MIN_IDLE_INTERVAL_MS
+        : Math.max(0, now() - lastSnapshotAt);
+      const minimumWait = einkMode
+        ? Math.max(3000, EINK_MIN_IDLE_INTERVAL_MS - sinceLastSnapshot)
+        : delayMs;
       timer = schedule(() => {
         timer = null;
         snapshot('idle');
-      }, delayMs);
+      }, minimumWait);
     },
     snapshot,
     dispose() {

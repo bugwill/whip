@@ -38,7 +38,10 @@ import type { TerminalRenderTarget } from '../lib/terminalRenderer';
 import type { TabLaunchIntent } from '../lib/herdrCreationFlows';
 import type { HerdrClient } from '../services/HerdrClient';
 import type { StartupStorageSnapshot } from '../services/startupStorage';
-import type { AgentAlertLevel } from '../services/devicePreferences';
+import type {
+  AgentAlertLevel,
+  BackgroundPowerMode,
+} from '../services/devicePreferences';
 import type {
   AgentInfo,
   ConnectionProfile,
@@ -57,6 +60,8 @@ interface SessionRuntimeManagerOptions {
   agentAlertLevel: AgentAlertLevel;
   persistentAlertDurationSeconds: number;
   ttsEnabled: boolean;
+  isEink: boolean;
+  backgroundPowerMode: BackgroundPowerMode;
   appAccessLocked: boolean;
   hostsVisible: boolean;
   t: TFunction;
@@ -137,6 +142,8 @@ export function useSessionRuntimeManager({
   agentAlertLevel,
   persistentAlertDurationSeconds,
   ttsEnabled,
+  isEink,
+  backgroundPowerMode,
   appAccessLocked,
   hostsVisible,
   t,
@@ -242,6 +249,8 @@ export function useSessionRuntimeManager({
     restoreComplete,
     hostsVisible,
     appAccessLocked,
+    isEink,
+    backgroundPowerMode,
     setRuntimeMonitoringState: runtimeTelemetry.setMonitoringState,
     onBackgroundMonitoringError: monitoringError => {
       hosts.setError(

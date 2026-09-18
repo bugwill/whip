@@ -11,7 +11,7 @@ import { TerminalScreen } from '../src/components/TerminalScreen';
 import { AgentChatView } from '../src/components/AgentChatView';
 import { emptyTranscript } from '../src/agentChat';
 import { terminalControlBarInset } from '../src/lib/floatingChrome';
-import { setTerminalComposerOverlay } from '../src/services/terminalSoftInput';
+import { getTerminalImeTopInWindow, setTerminalComposerOverlay } from '../src/services/terminalSoftInput';
 
 jest.mock('react-native-css-interop/jsx-runtime', () =>
   jest.requireActual('react/jsx-runtime'),
@@ -95,6 +95,7 @@ jest.mock('../src/services/volumeKeys', () => ({
 }));
 jest.mock('../src/services/terminalSoftInput', () => ({
   setTerminalComposerOverlay: jest.fn(async () => {}),
+  getTerminalImeTopInWindow: jest.fn(async () => null),
 }));
 jest.mock('../src/services/operationalDiagnostics', () => ({
   recordOperationalDiagnostic: jest.fn(),
@@ -119,6 +120,7 @@ const terminalHandle = {
 };
 const chatListHandle = { scrollToEnd: jest.fn(), scrollToOffset: jest.fn() };
 const screenHeight = 800;
+let measuredViewportHeight = screenHeight;
 const keyboardHeight = 300;
 const controlBarHeight = terminalControlBarInset(34);
 const keyboardFrame = {
@@ -183,10 +185,11 @@ const button = (label: string) =>
       node.props.accessibilityLabel === `terminal.${label}`,
   );
 
-function emitKeyboard(visible: boolean) {
+function emitKeyboard(visible: boolean, screenY = keyboardFrame.screenY) {
+  const frame = { ...keyboardFrame, screenY };
   jest
     .mocked(Keyboard.metrics)
-    .mockReturnValue(visible ? keyboardFrame : undefined);
+    .mockReturnValue(visible ? frame : undefined);
   jest.mocked(Keyboard.isVisible).mockReturnValue(visible);
   act(() => {
     for (const listener of listeners.get(
@@ -195,7 +198,7 @@ function emitKeyboard(visible: boolean) {
       listener({
         duration: 0,
         easing: 'keyboard',
-        endCoordinates: keyboardFrame,
+        endCoordinates: frame,
       });
     }
   });
@@ -220,7 +223,7 @@ function mount(overrides: Partial<Props> = {}) {
             );
             const translateY =
               view.props.style?.transform?.[0]?.translateY ?? 0;
-            callback(0, translateY, 400, screenHeight);
+            callback(0, translateY, 400, measuredViewportHeight);
           },
         };
       },
@@ -256,8 +259,10 @@ function scrollEvent(offset: number) {
 }
 
 beforeEach(() => {
+  measuredViewportHeight = screenHeight;
   jest.useFakeTimers();
   jest.clearAllMocks();
+  jest.mocked(getTerminalImeTopInWindow).mockResolvedValue(null);
   listeners = new Map();
   jest.mocked(Keyboard.metrics).mockReturnValue(undefined);
   jest.mocked(Keyboard.isVisible).mockReturnValue(false);
@@ -543,6 +548,31 @@ describe.each(['android', 'ios'] as const)(
         );
       },
     );
+
+    test('composer focus lifts controls when an already-open IME stops resizing the window', async () => {
+      mount();
+      measuredViewportHeight = screenHeight - keyboardHeight;
+      emitKeyboard(true);
+      await press('compose');
+      expect(ui('MessageComposer').parent?.props.style.bottom).toBe(controlBarHeight);
+
+      measuredViewportHeight = screenHeight;
+      act(() => { void ui('MessageComposer').props.onFocus(); });
+      expect(ui('MessageComposer').parent?.props.style.bottom).toBe(controlBarHeight + keyboardHeight);
+      const controls = renderer.root.findByProps({ testID: 'terminal-fixed-controls' });
+      expect(controls.parent?.parent?.props.style.transform).toEqual([{ translateY: -keyboardHeight }]);
+    });
+
+    if (platform === 'android') test('native IME inset keeps controls above keyboard when its RN frame reports no overlap', async () => {
+      mount();
+      emitKeyboard(true, screenHeight);
+      expect(ui('TerminalRendererHost').parent?.props.style).toEqual({ marginBottom: controlBarHeight, overflow: 'hidden' });
+      jest.mocked(getTerminalImeTopInWindow).mockResolvedValue(screenHeight - keyboardHeight);
+      await press('compose');
+      await act(async () => { void ui('MessageComposer').props.onFocus(); await Promise.resolve(); });
+      expect(ui('MessageComposer').parent?.props.style.bottom).toBe(controlBarHeight + keyboardHeight);
+      expect(renderer.root.findByProps({ testID: 'terminal-fixed-controls' }).parent?.parent?.props.style.transform).toEqual([{ translateY: -keyboardHeight }]);
+    });
 
     test('input toggles during show and hide keep composer geometry until the IME hides', async () => {
       mount();

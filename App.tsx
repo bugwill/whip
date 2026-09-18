@@ -11,6 +11,11 @@ import { ReducedMotionProvider, WhipMark } from './src/components/app-ui';
 import { guiFontFamilies } from './src/lib/guiFonts';
 import { bundledAsset } from './src/lib/bundledAsset';
 import { terminalFontFamily } from './src/lib/terminalFonts';
+import { resolveDisplayProfile } from './src/lib/displayProfile';
+import {
+  resolveBackgroundPowerMode,
+  type BackgroundPowerMode,
+} from './src/services/devicePreferences';
 import { reportBackgroundFailure } from './src/services/backgroundOperations';
 import { useAgentNotifications } from './src/hooks/useAgentNotifications';
 import { useAppNavigation } from './src/hooks/useAppNavigation';
@@ -57,6 +62,11 @@ function AppContent({ startupStorage }: { startupStorage: ReturnType<typeof useS
   const { t } = useTranslation();
   const preferences = useDevicePreferences(startupStorage);
   const preferencesLoaded = preferences.hydration.status !== 'loading';
+  const resolvedIsEink = resolveDisplayProfile(preferences.value.displayProfile) === 'eink';
+  const backgroundPowerMode: BackgroundPowerMode = resolveBackgroundPowerMode(
+    preferences.value.backgroundPowerPreference,
+    resolvedIsEink,
+  );
   const membershipSimulationEnabled =
     preferencesLoaded &&
     preferences.value.developerOptionsEnabled;
@@ -114,6 +124,8 @@ function AppContent({ startupStorage }: { startupStorage: ReturnType<typeof useS
     persistentAlertDurationSeconds:
       preferences.value.persistentAlertDurationSeconds,
     ttsEnabled: preferences.value.ttsEnabled,
+    isEink: resolvedIsEink,
+    backgroundPowerMode,
     appAccessLocked: security.locked,
     hostsVisible: navigation.state.tab === 'hosts',
     t,
@@ -163,6 +175,7 @@ function AppContent({ startupStorage }: { startupStorage: ReturnType<typeof useS
       terminals={terminals}
       telemetry={telemetry}
       history={history}
+      backgroundPowerMode={backgroundPowerMode}
     />
   );
 }

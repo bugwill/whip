@@ -8,17 +8,27 @@ import type { Terminal } from '@xterm/xterm';
 import { terminalViewportLayout } from '../src/lib/floatingChrome';
 
 function eventTarget() {
-  const listeners = new Map<string, Set<() => void>>();
+  const listeners = new Map<string, Set<(event?: Record<string, unknown>) => void>>();
   return {
-    addEventListener: (type: string, listener: () => void) => {
+    addEventListener: (type: string, listener: (event?: Record<string, unknown>) => void) => {
       if (!listeners.has(type)) listeners.set(type, new Set());
       listeners.get(type)!.add(listener);
     },
-    removeEventListener: (type: string, listener: () => void) => {
+    removeEventListener: (type: string, listener: (event?: Record<string, unknown>) => void) => {
       listeners.get(type)?.delete(listener);
     },
-    dispatch: (type: string) => {
-      for (const listener of listeners.get(type) ?? []) listener();
+    dispatch: (type: string, event: Record<string, unknown> = {}) => {
+      let immediateStopped = false;
+      const dispatched = {
+        preventDefault: () => {},
+        stopPropagation: () => {},
+        stopImmediatePropagation: () => { immediateStopped = true; },
+        ...event,
+      };
+      for (const listener of listeners.get(type) ?? []) {
+        listener(dispatched);
+        if (immediateStopped) break;
+      }
     },
   };
 }
@@ -26,9 +36,9 @@ function eventTarget() {
 type ElementStub = ReturnType<typeof eventTarget> & {
   style: { display: string; setProperty: ReturnType<typeof jest.fn> };
   classList: { contains: (name: string) => boolean; remove: (name: string) => boolean };
-  closest: () => ElementStub;
+  closest: (selector?: string) => ElementStub | null;
   querySelector: (selector: string) => ElementStub;
-  getBoundingClientRect: () => { width: number; height: number; top: number; bottom: number };
+  getBoundingClientRect: () => { left: number; width: number; height: number; top: number; bottom: number };
 };
 
 // Execute the shipped runtime with real FitAddon measurements. Only the DOM
@@ -46,12 +56,12 @@ async function runtime(asset: string, userAgent: string) {
         contains: (name: string) => classNames.has(name),
         remove: (name: string) => classNames.delete(name),
       },
-      closest: () => root,
+      closest: (selector?: string) => selector === '#selection-toolbar' ? null : root,
       querySelector: (selector: string): ElementStub => {
         if (!nodes.has(selector)) nodes.set(selector, element());
         return nodes.get(selector)!;
       },
-      getBoundingClientRect: () => ({ ...geometry, top: 0, bottom: geometry.height }),
+      getBoundingClientRect: () => ({ left: 0, ...geometry, top: 0, bottom: geometry.height }),
     };
   }
   const root = element();
@@ -76,12 +86,34 @@ async function runtime(asset: string, userAgent: string) {
     element: { ...element(), parentElement: parent, ownerDocument: { defaultView: window } },
     cols: 0,
     rows: 0,
-    buffer: { active: { baseY: 0, viewportY: 0 }, onBufferChange: jest.fn() },
+    modes: { applicationCursorKeysMode: false, mouseTrackingMode: 'none' },
+    buffer: {
+      active: {
+        baseY: 0,
+        viewportY: 0,
+        length: 50,
+        getLine: (row: number) => row === 0
+          ? {
+            isWrapped: false,
+            translateToString: () => 'Open https://example.com/current',
+            getCell: () => ({ getWidth: () => 1, getChars: () => ' ' }),
+          }
+          : {
+            isWrapped: false,
+            translateToString: () => '',
+            getCell: () => ({ getWidth: () => 1, getChars: () => ' ' }),
+          },
+      },
+      onBufferChange: jest.fn(),
+    },
     parser: { registerOscHandler: jest.fn() },
     loadAddon: (addon: { activate?: (term: Terminal) => void }) => addon.activate?.(terminal as unknown as Terminal),
     open: jest.fn(),
     refresh: jest.fn(),
+    clearSelection: jest.fn(),
     blur: jest.fn(),
+    focus: jest.fn(),
+    scrollLines: jest.fn(),
     attachCustomKeyEventHandler: jest.fn(),
     onData: jest.fn(),
     onResize: (listener: typeof resizeListener) => { resizeListener = listener; },
@@ -99,7 +131,7 @@ async function runtime(asset: string, userAgent: string) {
   const html = readFileSync(resolve(__dirname, '..', asset), 'utf8');
   const script = html.split('<script>')[1].split('</script>')[0];
   const api = new Script(`${script}\ncreateTerminalSession(root, report);`).runInNewContext({
-    root, report, window, TextDecoder,
+    root, report, window, TextDecoder, URL,
     document: {},
     navigator: { userAgent },
     performance: { now: () => 0 },
@@ -114,7 +146,7 @@ async function runtime(asset: string, userAgent: string) {
   await Promise.resolve();
   await Promise.resolve();
   const resizeReports = () => report.mock.calls.filter(([value]) => value.type === 'resize');
-  return { api, window, terminal, geometry, padding, classNames, fitSpy, resizeReports, report };
+  return { api, window, terminal, geometry, padding, classNames, fitSpy, resizeReports, report, nodes };
 }
 
 describe.each([
@@ -201,6 +233,16 @@ describe.each([
     expect(state.fitSpy).toHaveBeenCalledTimes(4);
   });
 
+  test('terminal edge padding reduces columns instead of clipping output', async () => {
+    const state = await setup();
+    const initialCols = state.terminal.cols;
+    state.padding['padding-left'] = '16px';
+    state.padding['padding-right'] = '16px';
+    state.window.dispatch('resize');
+    expect(state.terminal.cols).toBe(initialCols - 4);
+    expect(state.resizeReports().at(-1)?.[0].cols).toBe(initialCols - 4);
+  });
+
   test('unchanged explicit fits and configuration acknowledge completion without resizing', async () => {
     const state = await setup();
     state.report.mockClear();
@@ -263,5 +305,42 @@ describe.each([
     state.window.dispatch('resize');
     expect(state.fitSpy).toHaveBeenCalledTimes(3);
     expect(state.resizeReports()).toHaveLength(2);
+  });
+
+  test('generated touch wiring suppresses late synthetic clicks after scroll and opens a real stationary link once', async () => {
+    const state = await setup();
+    const surface = state.nodes.get('#terminal')!;
+    state.api.herdrScanLinks();
+    expect(state.report.mock.calls.at(-1)?.[0].links).toContain('https://example.com/current');
+    state.report.mockClear();
+    const staleNativeActivations: string[] = [];
+    surface.addEventListener('click', () => {
+      staleNativeActivations.push('synthetic-linkifier-click');
+      state.report({ type: 'open-link', link: 'https://example.com/stale' });
+    });
+    const touch = (clientX: number, clientY: number) => ({ clientX, clientY });
+    const touchEvent = (clientX: number, clientY: number) => ({
+      target: surface,
+      touches: [touch(clientX, clientY)],
+      changedTouches: [touch(clientX, clientY)],
+    });
+
+    surface.dispatch('touchstart', touchEvent(50, 40));
+    surface.dispatch('touchmove', touchEvent(50, 80));
+    jest.advanceTimersByTime(800);
+    surface.dispatch('touchend', touchEvent(50, 80));
+    surface.dispatch('click', { target: surface });
+
+    expect(staleNativeActivations).toEqual([]);
+    expect(state.report.mock.calls.filter(([value]) => value.type === 'open-link')).toEqual([]);
+
+    surface.dispatch('touchstart', touchEvent(50, 8));
+    surface.dispatch('touchend', touchEvent(50, 8));
+    surface.dispatch('click', { target: surface });
+
+    expect(state.report.mock.calls.filter(([value]) => value.type === 'open-link')).toEqual([[
+      { type: 'open-link', link: 'https://example.com/current' },
+    ]]);
+    expect(staleNativeActivations).toEqual([]);
   });
 });

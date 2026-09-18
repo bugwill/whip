@@ -1719,13 +1719,13 @@ fn foreground_activation_interrupts_a_persistent_reconnect_delay() {
         });
         tokio::task::yield_now().await;
 
-        set_monitoring_state(&inner, true, false, false);
+        set_monitoring_state(&inner, true, false, false, false);
 
         assert!(matches!(
             tokio::time::timeout(Duration::from_millis(100), waiter).await,
             Ok(Ok(true))
         ));
-        set_monitoring_state(&inner, false, false, false);
+        set_monitoring_state(&inner, false, false, false, false);
     });
 }
 

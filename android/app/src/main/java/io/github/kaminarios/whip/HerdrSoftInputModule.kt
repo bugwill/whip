@@ -1,7 +1,9 @@
 package io.github.kaminarios.whip
 
 import android.app.Activity
+import android.os.Build
 import android.util.Log
+import android.view.WindowInsets
 import android.view.WindowManager
 import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.bridge.Promise
@@ -42,6 +44,35 @@ class HerdrSoftInputModule(
         promise.resolve(null)
       } catch (error: Throwable) {
         promise.reject("E_SOFT_INPUT_MODE", error)
+      }
+    }
+  }
+
+  /** The IME's actual top in window dp; RN keyboard frame events can lag an
+   * adjustResize -> adjustNothing transition, especially in fullscreen. */
+  @ReactMethod
+  fun getImeTopInWindow(promise: Promise) {
+    UiThreadUtil.runOnUiThread {
+      try {
+        val decor = foregroundActivity()?.window?.decorView
+        if (decor == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+          promise.resolve(null)
+          return@runOnUiThread
+        }
+        val insets = decor.rootWindowInsets
+        if (insets == null || !insets.isVisible(WindowInsets.Type.ime())) {
+          promise.resolve(null)
+          return@runOnUiThread
+        }
+        val imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
+        if (imeBottom <= 0 || decor.height <= 0) {
+          promise.resolve(null)
+          return@runOnUiThread
+        }
+        val density = decor.resources.displayMetrics.density
+        promise.resolve((decor.height - imeBottom).toDouble() / density)
+      } catch (error: Throwable) {
+        promise.reject("E_IME_INSETS", error)
       }
     }
   }

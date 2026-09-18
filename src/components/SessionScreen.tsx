@@ -7,10 +7,15 @@ import {
   useState,
 } from 'react';
 import {
+  Bot,
   ChevronLeft,
   Globe2,
+  Layers3,
+  PanelRightOpen,
+  PanelTop,
   Plus,
   SquareTerminal,
+  Trash2,
   X,
 } from 'lucide-react-native';
 import {
@@ -21,12 +26,14 @@ import {
   Platform,
   ScrollView,
   View,
+  type TextInput as TextInputHandle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import WebView from 'react-native-webview';
 import {
   terminalControlBarInset,
+  SESSION_WORKSPACE_BAR_HEIGHT,
   terminalSessionChromeHeight,
 } from '@/src/lib/floatingChrome';
 import { useDisplayAnimationType, useDisplayProfile } from '@/src/lib/displayProfile';
@@ -129,11 +136,12 @@ import {
   sessionPaneAgentColor,
   type SessionSelectionMemory,
 } from '../lib/sessionNavigation';
-import type { HerdrSnapshot, PaneInfo, TabInfo } from '../types';
+import type { HerdrSnapshot, PaneInfo, TabInfo, WorkspaceInfo } from '../types';
 import { recordNetworkDiagnostic } from '../services/networkDiagnostics';
 import { AnimatedAgentStatusGlyph, hapticPress } from './app-ui';
 import { AgentIdentityWarningSheet } from './AgentIdentityWarningSheet';
 import { AppAlertPopup, type AppAlertContent } from './AppAlertPopup';
+import { ConfirmationPopup } from './ConfirmationPopup';
 import { AppBackground } from './AppBackground';
 import {
   AttachmentPasteSheet,
@@ -193,10 +201,14 @@ interface Props {
   onExit: () => void;
 }
 
-type EditorMode = 'tab' | 'rename-tab' | 'rename-pane';
+type EditorMode = 'workspace' | 'tab' | 'rename-tab' | 'rename-pane';
 type PendingFocus = {
   previousId: string | null;
 };
+
+type PendingResourceClose =
+  | { kind: 'tab'; item: TabInfo }
+  | { kind: 'pane'; item: PaneInfo };
 
 interface BrowserWebViewHandle {
   goBack: () => void;
@@ -255,10 +267,15 @@ export function SessionScreen({
   snapshotRef.current = snapshot;
   const [pendingCreatedSelection, setPendingCreatedSelection] =
     useState<CreatedTabFocusResult | null>(null);
+  const [pendingCreatedWorkspace, setPendingCreatedWorkspace] = useState<WorkspaceInfo | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode | null>(null);
   const [editingPaneId, setEditingPaneId] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const [workspaceCwd, setWorkspaceCwd] = useState('');
+  const workspaceCwdInputRef = useRef<TextInputHandle | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingResourceClose, setPendingResourceClose] =
+    useState<PendingResourceClose | null>(null);
   const [terminalSessionChromeBottom, setTerminalSessionChromeBottom] = useState(
     terminalControlBarInset(safeAreaInsets.bottom),
   );
@@ -365,7 +382,11 @@ export function SessionScreen({
     [showAppAlert, t],
   );
 
-  const workspaces = useMemo(() => orderSessionWorkspaces(snapshot.workspaces), [snapshot.workspaces]);
+  const workspaces = useMemo(() => orderSessionWorkspaces(
+    pendingCreatedWorkspace && !snapshot.workspaces.some(item => item.workspace_id === pendingCreatedWorkspace.workspace_id)
+      ? [...snapshot.workspaces, pendingCreatedWorkspace]
+      : snapshot.workspaces,
+  ), [pendingCreatedWorkspace, snapshot.workspaces]);
   const workspace =
     workspaces.find(item => item.workspace_id === workspaceId) ||
     focusedWorkspace;
@@ -383,19 +404,24 @@ export function SessionScreen({
     tabs.find(item => item.focused) ||
     tabs[0];
   const editorTitle =
-    editorMode === 'rename-tab'
+    editorMode === 'workspace'
+      ? t('rail.newWorkspace')
+      : editorMode === 'rename-tab'
       ? t('session.renameTab')
       : editorMode === 'rename-pane'
       ? t('session.renamePane')
       : t('session.newTab');
   const editorContext =
-    editorMode === 'rename-pane'
+    editorMode === 'workspace'
+      ? undefined
+      : editorMode === 'rename-pane'
       ? selectedTab?.label || selectedTab?.tab_id
       : workspace?.label || workspace?.workspace_id;
   const panes = orderSessionPanes(selectableResources.panes.filter(
     item => item.tab_id === selectedTab?.tab_id,
   ));
-  const sessionChromeInset = terminalSessionChromeHeight(panes.length, Boolean(workspace));
+  const sessionChromeInset = terminalSessionChromeHeight(panes.length, Boolean(workspace))
+    + (!workspace && snapshot.server.running ? SESSION_WORKSPACE_BAR_HEIGHT : 0);
   const serverWorkspace =
     snapshot.workspaces.find(item => item.focused) || snapshot.workspaces[0];
   const serverTab =
@@ -673,6 +699,7 @@ export function SessionScreen({
     lastActivePaneId.current = null;
     pendingFocus.current = null;
     setPendingCreatedSelection(null);
+    setPendingCreatedWorkspace(null);
     browserRequestRef.current += 1;
     setEditorMode(null);
     setEditingPaneId(null);
@@ -756,13 +783,13 @@ export function SessionScreen({
   useEffect(() => {
     pruneSessionSelectionMemory(
       selectionMemory,
-      snapshot.workspaces,
+      workspaces,
       selectableResources.tabs,
       selectableResources.panes,
     );
     const local = localSelectionRef.current;
     if (local && (
-      !snapshot.workspaces.some(item => item.workspace_id === local.workspaceId)
+      !workspaces.some(item => item.workspace_id === local.workspaceId)
       || (local.tabId && !selectableResources.tabs.some(item => item.tab_id === local.tabId))
     )) {
       localSelectionRef.current = null;
@@ -772,12 +799,15 @@ export function SessionScreen({
       localSelectionRef.current = { ...local, paneId: null };
       pendingPaneFocus.current = null;
     }
-  }, [selectableResources.panes, selectableResources.tabs, selectionMemory, snapshot.workspaces]);
+  }, [selectableResources.panes, selectableResources.tabs, selectionMemory, workspaces]);
 
   useEffect(() => {
     setPendingCreatedSelection(current =>
       reconcilePendingCreatedSelection(current, snapshot),
     );
+    setPendingCreatedWorkspace(current => current && snapshot.workspaces.some(
+      item => item.workspace_id === current.workspace_id,
+    ) ? null : current);
   }, [snapshot]);
 
   const updateChatRestoreIntent = useCallback((key: string, transcriptKey?: string) => {
@@ -992,6 +1022,22 @@ export function SessionScreen({
     );
     return () => subscriptions.forEach(unsubscribe => unsubscribe());
   }, [chatSubscriptionIdentity, nextChatPresentationGeneration, terminalTargets]);
+
+  useEffect(() => {
+    const activeKey = visible && appActive ? activeTarget?.key : null;
+    for (const [key, view] of chatViews) {
+      // Normal displays retain the existing eager Chat consumer behavior.
+      // E-Ink is the bounded opt-in suspension policy: only the selected,
+      // explicitly requested Chat (or its speech lease) stays remote-active.
+      const consumerActive =
+        !isEink ||
+        (key === activeKey && chatPresentationRequested(view.presentation));
+      agentTranscriptService.setConsumerActive(
+        view.binding.bindingToken,
+        consumerActive,
+      );
+    }
+  }, [activeTarget?.key, appActive, chatViews, isEink, visible]);
 
   useEffect(() => {
     if (
@@ -1367,7 +1413,38 @@ export function SessionScreen({
   const create = async () => {
     if (mutationInFlight.current) return;
     let succeeded = true;
-    if (editorMode === 'rename-tab' && selectedTab) {
+    if (editorMode === 'workspace') {
+      pendingFocus.current = null;
+      succeeded = await run(async () => {
+        const created = await client.native.requestHerdrApi({
+          method: 'workspace.create',
+          params: { label: name.trim() || null, cwd: workspaceCwd.trim() || null, focus: true },
+        });
+        if (created.type !== 'workspace_created') {
+          throw new Error(`Unexpected workspace.create result: ${created.type}`);
+        }
+        setPendingCreatedWorkspace(created.workspace);
+        setPendingCreatedSelection(created);
+        localSelectionRef.current = {
+          workspaceId: created.workspace.workspace_id,
+          tabId: created.tab.tab_id,
+          paneId: created.root_pane.pane_id,
+        };
+        rememberSessionWorkspace(selectionMemory, created.workspace.workspace_id);
+        rememberSessionTab(selectionMemory, created.workspace.workspace_id, created.tab.tab_id);
+        rememberSessionPane(selectionMemory, created.tab.tab_id, created.root_pane.pane_id);
+        pendingPaneFocus.current = created.root_pane.pane_id;
+        setPaneId(created.root_pane.pane_id);
+        activateCreatedTabLocally(created, {
+          select: (createdWorkspaceId, createdTabId) => {
+            setWorkspaceId(createdWorkspaceId);
+            setTabId(createdTabId);
+          },
+          terminalSelectionStarted: terminalTabSelectionStarted,
+          activateTerminal: onActivateTerminal,
+        });
+      });
+    } else if (editorMode === 'rename-tab' && selectedTab) {
       succeeded = await run(() =>
         client.native.requestHerdrApi({
           method: 'tab.rename',
@@ -1407,8 +1484,12 @@ export function SessionScreen({
         });
       });
     }
-    if (!succeeded) pendingFocus.current = null;
+    if (!succeeded) {
+      pendingFocus.current = null;
+      return;
+    }
     setName('');
+    setWorkspaceCwd('');
     setEditingPaneId(null);
     setEditorMode(null);
   };
@@ -1421,7 +1502,7 @@ export function SessionScreen({
     setEditorMode('rename-tab');
   };
 
-  const closeTab = async (item: TabInfo | undefined = selectedTab) => {
+  const performCloseTab = async (item: TabInfo | undefined = selectedTab) => {
     if (!item) return;
     // Herdr focuses a surviving tab after closing the current one.
     pendingPaneFocus.current = null;
@@ -1447,7 +1528,7 @@ export function SessionScreen({
     setEditorMode('rename-pane');
   };
 
-  const closePane = async (pane: PaneInfo) => {
+  const performClosePane = async (pane: PaneInfo) => {
     if (editingPaneId === pane.pane_id) {
       setEditingPaneId(null);
       setEditorMode(null);
@@ -1460,8 +1541,38 @@ export function SessionScreen({
     );
   };
 
+  const requestCloseTab = (item: TabInfo | undefined = selectedTab) => {
+    if (!item || busy) return;
+    setPendingResourceClose({ kind: 'tab', item });
+  };
+
+  const requestClosePane = (pane: PaneInfo) => {
+    if (busy) return;
+    setPendingResourceClose({ kind: 'pane', item: pane });
+  };
+
+  const confirmResourceClose = async () => {
+    const pending = pendingResourceClose;
+    if (!pending) return;
+    setPendingResourceClose(null);
+    if (pending.kind === 'tab') {
+      await performCloseTab(pending.item);
+    } else {
+      await performClosePane(pending.item);
+    }
+  };
+
+  const addPane = async () => {
+    if (!selectedPane) return;
+    await run(() => client.native.requestHerdrApi({
+      method: 'pane.split',
+      params: { target_pane_id: selectedPane.pane_id, direction: 'right', focus: true },
+    }));
+  };
+
   const closeEditor = () => {
     setName('');
+    setWorkspaceCwd('');
     setEditingPaneId(null);
     setEditorMode(null);
   };
@@ -1552,14 +1663,14 @@ export function SessionScreen({
     return (
       <View
         key={pane.pane_id}
-        className="h-11 shrink-0 flex-row items-center rounded-full border"
+        className="h-10 shrink-0 flex-row items-center rounded-full border"
         style={agent ? sessionAgentRailStyle(active, accent, colors) : sessionTabGlassStyle(active, colors)}
       >
         <Button
           accessibilityLabel={t('session.openPane', { pane: navigationLabel })}
           className={cn(
-            'h-11 shrink-0 flex-row justify-start gap-1.5 rounded-none px-2.5 py-0',
-            isTablet && 'px-3',
+            'h-10 shrink-0 flex-row justify-start gap-1 rounded-none px-2 py-0',
+            isTablet && 'px-2.5',
           )}
           variant="ghost"
           onPress={hapticPress(() => choosePane(pane))}
@@ -1569,12 +1680,13 @@ export function SessionScreen({
             className="size-[6px] rounded-full"
             style={{ backgroundColor: accent }}
           />
+          {agent && <Bot size={isTablet ? 14 : 13} color={active ? colors.activeSurfaceForeground : colors.text} />}
           {agent && (
             <Text
               numberOfLines={1}
               className={cn(
-                'shrink-0 pb-0.5 text-[10px] font-black leading-[18px]',
-                isTablet && 'text-[12px]',
+                'shrink-0 pb-0.5 text-[10px] font-black leading-4',
+                isTablet && 'text-[11px]',
               )}
               style={{ color: active ? colors.activeSurfaceForeground : accent }}
             >
@@ -1584,8 +1696,8 @@ export function SessionScreen({
           <Text
             numberOfLines={1}
             className={cn(
-              'shrink-0 pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground',
-              isTablet && 'text-[13px]',
+              'shrink-0 pb-0.5 text-[10px] font-semibold leading-4 text-muted-foreground',
+              isTablet && 'text-[12px]',
               active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
             )}
           >
@@ -1594,10 +1706,10 @@ export function SessionScreen({
         </Button>
         <Button
           accessibilityLabel={t('session.closePane', { pane: navigationLabel })}
-          className="size-11 rounded-none px-0"
+          className="size-10 rounded-none px-0"
           disabled={busy}
           variant="ghost"
-          onPress={hapticPress(() => closePane(pane))}
+          onPress={hapticPress(() => requestClosePane(pane))}
         >
           <X
             size={13}
@@ -1609,7 +1721,7 @@ export function SessionScreen({
   };
 
   return (
-    <View
+            <View
       accessibilityElementsHidden={!visible}
       importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
       pointerEvents={visible ? 'auto' : 'none'}
@@ -1628,18 +1740,18 @@ export function SessionScreen({
         className="absolute inset-x-0 z-30"
         style={{ bottom: terminalSessionChromeBottom, backgroundColor: colors.canvas }}
       >
-        {workspace && (
+        {(workspace || snapshot.server.running) && (
           <View
             testID="session-workspace-row"
             accessibilityElementsHidden={!terminalSessionChromeVisible}
             importantForAccessibility={terminalSessionChromeVisible ? 'auto' : 'no-hide-descendants'}
             pointerEvents={terminalSessionChromeVisible ? 'auto' : 'none'}
-            className="h-11 flex-row border-b border-border bg-transparent"
+            className="h-10 flex-row bg-transparent"
             style={terminalSessionChromeVisible ? undefined : { display: 'none' }}
           >
             <Button
               accessibilityLabel={t('session.backToHerd')}
-              className="h-11 w-11 items-center justify-center rounded-none px-0 py-0"
+              className="h-10 w-10 items-center justify-center rounded-none px-0 py-0"
               size="content"
               variant="ghost"
               onPress={hapticPress(onExit)}
@@ -1651,7 +1763,7 @@ export function SessionScreen({
               className="min-w-0 flex-1"
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerClassName="items-center gap-[5px] px-1.5"
+              contentContainerClassName="items-center gap-1 px-1"
             >
               {workspaces.map(item => {
                 const active = item.workspace_id === workspace?.workspace_id;
@@ -1659,7 +1771,7 @@ export function SessionScreen({
                 return (
                   <View
                     key={item.workspace_id}
-                    className="h-11 shrink-0 flex-row items-center rounded-full border"
+                    className="h-10 shrink-0 flex-row items-center rounded-full border"
                     style={sessionTabGlassStyle(active, colors)}
                   >
                     <Button
@@ -1667,27 +1779,28 @@ export function SessionScreen({
                         workspace: label,
                         status: item.agent_status,
                       })}
-                      className="h-11 shrink-0 flex-row justify-start gap-2 rounded-full px-3 py-0"
+                      className="h-10 shrink-0 flex-row justify-start gap-1.5 rounded-full px-2.5 py-0"
                       variant="ghost"
                       onPress={hapticPress(() => chooseWorkspace(item))}
                     >
                       <AnimatedAgentStatusGlyph
                         status={item.agent_status}
                         color={statusColor(item.agent_status, colors)}
-                        size={isTablet ? 14 : 11}
+                        size={isTablet ? 13 : 10}
                       />
                       <Text
                         numberOfLines={1}
                         className={cn(
-                          'shrink-0 text-[11px] font-semibold text-muted-foreground',
-                          isTablet && 'text-[13px]',
+                          'shrink-0 text-[10px] font-semibold text-muted-foreground',
+                          isTablet && 'text-[11px]',
                           active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
                         )}
                       >
                         {label}
                       </Text>
                       <Text className={cn(
-                        'font-mono text-[8px] text-muted-foreground',
+                        'font-mono text-[7px] text-muted-foreground',
+                        isTablet && 'text-[9px]',
                         active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
                       )}>
                         {item.tab_count}
@@ -1697,6 +1810,16 @@ export function SessionScreen({
                 );
               })}
             </ScrollView>
+            <Button
+              accessibilityLabel={t('rail.newWorkspace')}
+              className="h-10 w-10 items-center justify-center rounded-none px-0 py-0"
+              disabled={busy || !snapshot.server.running}
+              size="content"
+              variant="ghost"
+              onPress={hapticPress(() => setEditorMode('workspace'))}
+            >
+              <Plus size={Platform.OS === 'ios' ? 23 : 16} color={colors.text} />
+            </Button>
           </View>
         )}
 
@@ -1705,17 +1828,20 @@ export function SessionScreen({
           accessibilityElementsHidden={!terminalSessionChromeVisible}
           importantForAccessibility={terminalSessionChromeVisible ? 'auto' : 'no-hide-descendants'}
           pointerEvents={terminalSessionChromeVisible ? 'auto' : 'none'}
-          className="h-[55px] flex-row border-b border-border bg-transparent"
+          className="h-12 flex-row bg-transparent"
           style={terminalSessionChromeVisible ? undefined : { display: 'none' }}
         >
           {workspace ? (
             <>
+              <View className="h-12 w-10 items-center justify-center" accessibilityLabel={t('session.tab')}>
+                <PanelTop size={18} color={colors.text} />
+              </View>
               <ScrollView
                 testID="session-tabs"
                 className="min-w-0 flex-1"
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerClassName="items-center gap-[5px] px-1.5"
+                contentContainerClassName="items-center gap-1 px-1"
               >
                 {tabs.map(item => {
                   const active = item.tab_id === selectedTab?.tab_id;
@@ -1727,14 +1853,14 @@ export function SessionScreen({
                   return (
                     <View
                       key={item.tab_id}
-                      className="h-11 shrink-0 flex-row items-center rounded-full border"
+                      className="h-10 shrink-0 flex-row items-center rounded-full border"
                       style={sessionTabGlassStyle(active, colors)}
                     >
                       <Button
                         accessibilityLabel={t('session.openTab', { tab: label })}
                         className={cn(
-                          'h-11 shrink-0 justify-start gap-2 rounded-none px-[11px] py-0 pr-1 active:bg-transparent active:opacity-70 dark:active:bg-transparent',
-                          isTablet && 'px-3',
+                          'h-10 shrink-0 justify-start gap-1.5 rounded-none px-2 py-0 pr-1 active:bg-transparent active:opacity-70 dark:active:bg-transparent',
+                          isTablet && 'px-2.5',
                         )}
                         variant="ghost"
                         onPress={hapticPress(() => chooseTab(item))}
@@ -1743,13 +1869,13 @@ export function SessionScreen({
                         <AnimatedAgentStatusGlyph
                           status={item.agent_status}
                           color={sessionTabStatusColor(item.agent_status, itemSession?.status, colors)}
-                          size={isTablet ? 16 : 12}
+                          size={isTablet ? 14 : 11}
                         />
                         <Text
                           numberOfLines={1}
                           className={cn(
-                            'shrink-0 pb-0.5 text-[11px] font-semibold leading-[18px] text-muted-foreground',
-                            isTablet && 'text-[14px] leading-5',
+                            'shrink-0 pb-0.5 text-[10px] font-semibold leading-4 text-muted-foreground',
+                            isTablet && 'text-[12px] leading-[18px]',
                             active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
                           )}
                         >
@@ -1757,8 +1883,8 @@ export function SessionScreen({
                         </Text>
                         {item.pane_count > 1 && (
                           <Text className={cn(
-                            'font-mono text-[8px] text-muted-foreground',
-                            isTablet && 'text-[11px]',
+                            'font-mono text-[7px] text-muted-foreground',
+                            isTablet && 'text-[9px]',
                             active && (isEink ? 'text-foreground' : 'text-primary-foreground'),
                           )}>
                             {item.pane_count}
@@ -1767,12 +1893,12 @@ export function SessionScreen({
                       </Button>
                       <Button
                         accessibilityLabel={t('session.closeTab', { tab: label })}
-                        className="size-11 rounded-none px-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent"
+                        className="size-10 rounded-none px-0 active:bg-transparent active:opacity-70 dark:active:bg-transparent"
                         variant="ghost"
-                        onPress={hapticPress(() => closeTab(item))}
+                        onPress={hapticPress(() => requestCloseTab(item))}
                       >
                         <X
-                          size={isTablet ? 18 : 14}
+                          size={isTablet ? 16 : 13}
                           color={active ? colors.activeSurfaceForeground : colors.textSecondary}
                         />
                       </Button>
@@ -1783,8 +1909,8 @@ export function SessionScreen({
               <Button
                 accessibilityLabel={t('session.newTab')}
                 className={cn(
-                  'h-[55px] items-center justify-center rounded-none px-0 py-0',
-                  Platform.OS === 'ios' ? 'w-14' : 'w-11',
+                  'h-12 items-center justify-center rounded-none px-0 py-0',
+                  Platform.OS === 'ios' ? 'w-12' : 'w-10',
                 )}
                 disabled={busy}
                 size="content"
@@ -1798,19 +1924,19 @@ export function SessionScreen({
             <>
               <Button
                 accessibilityLabel={t('session.backToHerd')}
-                className="h-[55px] w-11 items-center justify-center rounded-none px-0"
+                className="h-12 w-10 items-center justify-center rounded-none px-0"
                 size="content"
                 variant="ghost"
                 onPress={hapticPress(onExit)}
               >
                 <ChevronLeft size={20} color={colors.text} />
               </Button>
-              <Text className="flex-1 self-center px-2 font-mono text-[11px] font-semibold text-foreground">
+              <Text className="flex-1 self-center px-2 font-mono text-[10px] font-semibold text-foreground">
                 {t('terminal.sshShell')}
               </Text>
               <Button
                 accessibilityLabel={t('terminal.closeSession')}
-                className="h-[55px] w-11 rounded-none px-0"
+                className="h-12 w-10 rounded-none px-0"
                 variant="ghost"
                 onPress={hapticPress(() => onCloseTerminal(activeTerminalSession.terminalId))}
               >
@@ -1823,7 +1949,7 @@ export function SessionScreen({
         <ResourceEditorSheet
           busy={busy}
           context={editorContext}
-          icon={SquareTerminal}
+          icon={editorMode === 'workspace' ? Layers3 : SquareTerminal}
           onClose={closeEditor}
           onSave={create}
           title={editorTitle}
@@ -1831,24 +1957,29 @@ export function SessionScreen({
         >
           <ResourceEditorField
             label={
-              editorMode === 'rename-pane' ? t('pane.label') : t('herd.tabName')
+              editorMode === 'workspace'
+                ? t('herd.labelOptional')
+                : editorMode === 'rename-pane' ? t('pane.label') : t('herd.tabName')
             }
           >
             <Input
               accessibilityLabel={
-                editorMode === 'rename-pane'
+                editorMode === 'workspace'
+                  ? t('herd.labelOptional')
+                  : editorMode === 'rename-pane'
                   ? t('pane.label')
                   : t('herd.tabName')
               }
               autoFocus
               autoCorrect={false}
               editable={!busy}
-              returnKeyType="done"
+              returnKeyType={editorMode === 'workspace' ? 'next' : 'done'}
               selectTextOnFocus={editorMode?.startsWith('rename')}
               value={name}
               onChangeText={setName}
               onSubmitEditing={() => {
-                reportBackgroundFailure(create(), 'session-resource-create');
+                if (editorMode === 'workspace') workspaceCwdInputRef.current?.focus();
+                else reportBackgroundFailure(create(), 'session-resource-create');
               }}
               placeholder={
                 editorMode === 'tab'
@@ -1858,23 +1989,61 @@ export function SessionScreen({
               placeholderTextColor={colors.textTertiary}
             />
           </ResourceEditorField>
+          {editorMode === 'workspace' && (
+            <ResourceEditorField label={t('herd.workingDirectoryOptional')}>
+              <Input
+                ref={workspaceCwdInputRef}
+                accessibilityLabel={t('herd.workingDirectoryOptional')}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!busy}
+                returnKeyType="done"
+                value={workspaceCwd}
+                onChangeText={setWorkspaceCwd}
+                onSubmitEditing={() => {
+                  reportBackgroundFailure(create(), 'session-workspace-create');
+                }}
+                placeholder="~"
+                placeholderTextColor={colors.textTertiary}
+              />
+            </ResourceEditorField>
+          )}
         </ResourceEditorSheet>
 
         {terminalSessionChromeVisible && workspace && (
-          <View testID="session-pane-row" className="h-11 flex-row border-b border-border bg-transparent">
+          <View testID="session-pane-row" className="h-10 flex-row bg-transparent">
+            <View className="h-10 w-10 items-center justify-center" accessibilityLabel={t('session.pane')}>
+              <PanelRightOpen size={18} color={colors.text} />
+            </View>
             <ScrollView
               testID="session-panes"
               className="min-w-0 flex-1"
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerClassName="items-center px-1.5 gap-[5px]"
+              contentContainerClassName="items-center gap-1 px-1"
             >
               {agentPanes.map(renderPaneChip)}
               {agentPanes.length > 0 && ordinaryPanes.length > 0 && (
-                <View className="mx-1 h-7 w-px" style={{ backgroundColor: colors.divider }} />
+                <View
+                  className="mx-1 h-6 shrink-0 flex-row items-center gap-1.5 px-1"
+                  accessibilityLabel={t('session.pane')}
+                >
+                  <View className="h-5 w-[2px]" style={{ backgroundColor: colors.textSecondary }} />
+                  <SquareTerminal size={isTablet ? 16 : 14} color={colors.text} />
+                </View>
               )}
               {ordinaryPanes.map(renderPaneChip)}
             </ScrollView>
+            <Button
+              accessibilityLabel={t('session.newPane')}
+              className="h-10 w-10 items-center justify-center rounded-none px-0 py-0"
+              disabled={busy || !selectedPane}
+              size="content"
+              variant="ghost"
+              onPress={hapticPress(() => { void addPane(); })}
+            >
+              <Plus size={Platform.OS === 'ios' ? 23 : 16} color={colors.text} />
+            </Button>
           </View>
         )}
       </View>
@@ -2327,6 +2496,27 @@ export function SessionScreen({
         title={visibleAppAlert?.title || ''}
         visible={visibleAppAlert !== null}
         onClose={() => { setAppAlert(null); chatOpen.dismissNotice(); }}
+      />
+      <ConfirmationPopup
+        busy={busy}
+        confirmLabel={t('common.close')}
+        copy={pendingResourceClose?.kind === 'tab'
+          ? t('session.closeTab', { tab: pendingResourceClose.item.label || pendingResourceClose.item.tab_id })
+          : pendingResourceClose?.kind === 'pane'
+          ? t('session.closePane', { pane: paneNavigationLabel(pendingResourceClose.item) })
+          : ''}
+        icon={Trash2}
+        title={pendingResourceClose?.kind === 'tab'
+          ? t('session.closeTab', { tab: pendingResourceClose.item.label || pendingResourceClose.item.tab_id })
+          : t('pane.closeTitle')}
+        visible={pendingResourceClose !== null}
+        onCancel={() => setPendingResourceClose(null)}
+        onConfirm={() => {
+          reportBackgroundFailure(
+            confirmResourceClose(),
+            'session-resource-close',
+          );
+        }}
       />
     </View>
   );

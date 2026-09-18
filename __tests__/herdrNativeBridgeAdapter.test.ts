@@ -839,6 +839,7 @@ describe('native HostRuntime adapter', () => {
       detachAgentChat: jest.fn(() => undefined),
       acceptsAgentTranscriptEvent: jest.fn(() => true),
       confirmAgentTranscriptCache: jest.fn(() => true),
+      setAgentChatActive: jest.fn(() => true),
     };
     mockGenerated.createHostRuntime.mockReturnValueOnce(rustRuntime);
     const runtime = createHostRuntime({
@@ -990,6 +991,7 @@ describe('native HostRuntime adapter', () => {
         },
       })),
       disconnect: jest.fn().mockResolvedValue(undefined),
+      setAgentChatActive: jest.fn(() => true),
     });
     const config = {
       runtimeId: 'runtime-agent-reused',

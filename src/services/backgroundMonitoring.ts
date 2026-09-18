@@ -1,7 +1,8 @@
 import { NativeModules, Platform } from 'react-native';
+import type { BackgroundPowerMode } from './devicePreferences';
 
 interface HerdrBackgroundNativeModule {
-  start(hostCount: number): Promise<void>;
+  start(hostCount: number, powerMode: BackgroundPowerMode): Promise<void>;
   stop(): Promise<void>;
   armPersistentAlert(
     notificationIdentifier: string,
@@ -20,10 +21,13 @@ function nativeModule(): HerdrBackgroundNativeModule | null {
   return module;
 }
 
-export async function startBackgroundMonitoring(hostCount: number): Promise<void> {
+export async function startBackgroundMonitoring(
+  hostCount: number,
+  powerMode: BackgroundPowerMode,
+): Promise<void> {
   const module = nativeModule();
   if (!module) return;
-  await module.start(Math.max(1, Math.trunc(hostCount)));
+  await module.start(Math.max(1, Math.trunc(hostCount)), powerMode);
 }
 
 export async function stopBackgroundMonitoring(): Promise<void> {

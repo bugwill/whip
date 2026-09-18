@@ -718,8 +718,20 @@ impl HostRuntime {
         self.inner.state.lock().host_state.projection()
     }
 
-    pub fn set_monitoring_state(&self, app_active: bool, hosts_visible: bool, access_locked: bool) {
-        monitoring::set_monitoring_state(&self.inner, app_active, hosts_visible, access_locked);
+    pub fn set_monitoring_state(
+        &self,
+        app_active: bool,
+        hosts_visible: bool,
+        access_locked: bool,
+        is_eink: bool,
+    ) {
+        monitoring::set_monitoring_state(
+            &self.inner,
+            app_active,
+            hosts_visible,
+            access_locked,
+            is_eink,
+        );
     }
 }
 

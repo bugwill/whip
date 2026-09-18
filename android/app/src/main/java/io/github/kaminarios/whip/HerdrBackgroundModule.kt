@@ -55,6 +55,7 @@ class HerdrBackgroundModule(
   fun startChatSpeech(token: String, label: String, promise: Promise) {
     mainHandler.post {
       try {
+        HerdrBackgroundService.beginChatSpeechHandoff()
         ChatSpeechPlayback.onStopped = { stoppedToken, error ->
           val event = Arguments.createMap().apply {
             putString("token", stoppedToken)
@@ -67,11 +68,15 @@ class HerdrBackgroundModule(
         ChatSpeechPlayback.start(context, token, label, promise)
         val intent = Intent(context, HerdrBackgroundService::class.java).apply {
           action = HerdrBackgroundService.ACTION_START
+          putExtra(HerdrBackgroundService.EXTRA_POWER_MODE, HerdrBackgroundService.POWER_MODE_REALTIME)
+          putExtra(HerdrBackgroundService.EXTRA_MONITORING_REQUEST, false)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
         else context.startService(intent)
+        HerdrBackgroundService.completeChatSpeechHandoff()
       } catch (error: Throwable) {
         ChatSpeechPlayback.stop(token, error.message)
+        HerdrBackgroundService.completeChatSpeechHandoff()
         promise.reject("E_CHAT_SPEECH_START", error)
       }
     }
@@ -92,17 +97,20 @@ class HerdrBackgroundModule(
   @ReactMethod
   fun stopChatSpeech(token: String, promise: Promise) {
     mainHandler.post {
-      ChatSpeechPlayback.stop(token)
-      promise.resolve(null)
+        ChatSpeechPlayback.stop(token)
+        HerdrBackgroundService.refreshNotification()
+        promise.resolve(null)
     }
   }
 
   @ReactMethod
-  fun start(hostCount: Double, promise: Promise) {
+  fun start(hostCount: Double, powerMode: String, promise: Promise) {
     try {
       val intent = Intent(context, HerdrBackgroundService::class.java).apply {
         action = HerdrBackgroundService.ACTION_START
         putExtra(HerdrBackgroundService.EXTRA_HOST_COUNT, hostCount.toInt().coerceAtLeast(1))
+        putExtra(HerdrBackgroundService.EXTRA_POWER_MODE, powerMode)
+        putExtra(HerdrBackgroundService.EXTRA_MONITORING_REQUEST, true)
       }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         context.startForegroundService(intent)
@@ -118,7 +126,13 @@ class HerdrBackgroundModule(
   @ReactMethod
   fun stop(promise: Promise) {
     try {
-      context.stopService(Intent(context, HerdrBackgroundService::class.java))
+      if (ChatSpeechPlayback.token != null) {
+        context.startService(Intent(context, HerdrBackgroundService::class.java).apply {
+          action = HerdrBackgroundService.ACTION_STOP_MONITORING
+        })
+      } else {
+        context.stopService(Intent(context, HerdrBackgroundService::class.java))
+      }
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("E_BACKGROUND_MONITORING_STOP", error)

@@ -44,11 +44,13 @@ export function listenToChat(
   let ready = false;
   let draining = false;
   let unsubscribe = () => {};
+  let releaseTranscriptLease = () => {};
 
   const stop = () => {
     if (stopped) return;
     stopped = true;
     unsubscribe();
+    releaseTranscriptLease();
     subscription.remove();
     queue.dispose();
     if (active?.stop === stop) {
@@ -74,6 +76,7 @@ export function listenToChat(
   });
   active = { target, stop };
   setChatSpeechFocus(target);
+  releaseTranscriptLease = agentTranscriptService.acquireSpeechLease(target.bindingToken);
 
   const drain = async () => {
     if (!ready || stopped || draining) return;

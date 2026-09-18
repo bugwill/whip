@@ -324,6 +324,12 @@ impl HostRuntime {
         self.inner.agents.start_bound(&binding_token, cache_blob)
     }
 
+    /// Pause or resume remote transcript work without releasing the resident
+    /// transcript or its durable cache checkpoints.
+    pub fn set_agent_chat_active(&self, binding_token: String, active: bool) -> bool {
+        self.inner.agents.set_binding_active(&binding_token, active)
+    }
+
     /// Return the current Rust-owned binding without creating or reopening it.
     /// Presentation reconciliation must use this projection rather than the
     /// explicit `open_agent_chat` operation.

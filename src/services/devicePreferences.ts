@@ -70,6 +70,17 @@ export interface TerminalPreferences {
 
 export type AppearancePreference = 'system' | 'light' | 'dark';
 export type LanguagePreference = 'system' | 'en' | 'zh-Hant' | 'zh-Hans' | 'ja' | 'es';
+export const backgroundPowerPreferences = ['auto', 'balanced', 'realtime'] as const;
+export type BackgroundPowerPreference = (typeof backgroundPowerPreferences)[number];
+export type BackgroundPowerMode = Exclude<BackgroundPowerPreference, 'auto'>;
+
+export function resolveBackgroundPowerMode(
+  preference: BackgroundPowerPreference,
+  isEink: boolean,
+): BackgroundPowerMode {
+  if (preference !== 'auto') return preference;
+  return isEink ? 'balanced' : 'realtime';
+}
 
 type StoredTerminalPreferences = Partial<TerminalPreferences> & {
   backgroundOpacity?: unknown;
@@ -85,6 +96,7 @@ export interface DevicePreferences {
   biometricOnResume: boolean;
   appearance: AppearancePreference;
   displayProfile: DisplayProfilePreference;
+  backgroundPowerPreference: BackgroundPowerPreference;
   fullscreenApp: boolean;
   smoothSpinners: boolean;
   appBackgroundImageUri: string | null;
@@ -110,6 +122,7 @@ export const defaultDevicePreferences: DevicePreferences = {
   biometricOnResume: false,
   appearance: 'system',
   displayProfile: 'auto',
+  backgroundPowerPreference: 'auto',
   fullscreenApp: false,
   smoothSpinners: false,
   appBackgroundImageUri: null,
@@ -268,6 +281,11 @@ function parseDevicePreferences(
       displayProfile: isDisplayProfilePreference(parsed.displayProfile)
         ? parsed.displayProfile
         : defaultDevicePreferences.displayProfile,
+      backgroundPowerPreference: isBackgroundPowerPreference(
+        parsed.backgroundPowerPreference,
+      )
+        ? parsed.backgroundPowerPreference
+        : defaultDevicePreferences.backgroundPowerPreference,
       fullscreenApp: parsed.fullscreenApp === true,
       smoothSpinners: parsed.smoothSpinners === true,
       appBackgroundImageUri: typeof parsed.appBackgroundImageUri === 'string' && parsed.appBackgroundImageUri
@@ -393,6 +411,10 @@ function isAppearancePreference(value: unknown): value is AppearancePreference {
 
 function isDisplayProfilePreference(value: unknown): value is DisplayProfilePreference {
   return value === 'auto' || value === 'normal' || value === 'eink';
+}
+
+function isBackgroundPowerPreference(value: unknown): value is BackgroundPowerPreference {
+  return backgroundPowerPreferences.some(preference => preference === value);
 }
 
 function isAgentAlertLevel(value: unknown): value is AgentAlertLevel {

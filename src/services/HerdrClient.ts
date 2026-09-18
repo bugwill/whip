@@ -231,8 +231,9 @@ export class HerdrClient {
     appActive: boolean,
     hostsVisible: boolean,
     accessLocked: boolean,
+    isEink: boolean,
   ): void {
-    this.native.setMonitoringState(appActive, hostsVisible, accessLocked);
+    this.native.setMonitoringState(appActive, hostsVisible, accessLocked, isEink);
   }
 
   private requireProfile(): ConnectionProfile {

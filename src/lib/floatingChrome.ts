@@ -11,9 +11,9 @@ export interface TerminalViewportLayout {
 }
 
 export const TERMINAL_CONTROL_BAR_BASE_HEIGHT = 50;
-export const SESSION_WORKSPACE_BAR_HEIGHT = 44;
-export const SESSION_TAB_BAR_HEIGHT = 55;
-export const SESSION_PANE_BAR_HEIGHT = 44;
+export const SESSION_WORKSPACE_BAR_HEIGHT = 40;
+export const SESSION_TAB_BAR_HEIGHT = 48;
+export const SESSION_PANE_BAR_HEIGHT = 40;
 export const TERMINAL_FLOATING_ACTION_GAP = 12;
 
 export function terminalSessionChromeHeight(

@@ -6,6 +6,77 @@
 
 ## 已完成的修改
 
+### 2.3 Logo 源文件统一（build 245）
+
+- 应用内 `WhipMark`、Expo 应用图标、iOS AppIcon 和 Android 启动图标统一改用 `assets/whip-logo.svg`；该设计为机器人、终端窗口和 `Whip` 字标组合，使用浅灰圆角底和深灰图形，保留 E-Ink 可辨识的高对比度。
+- Android 图标不再把 SVG 强行解析为旧的路径型 VectorDrawable；`scripts/generate-android-launcher-vector.mjs` 会用 Sharp 从同一 SVG 生成 PNG 前景，再由自适应图标引用，避免 `<text>`、圆形和矩形在 Android 图标中丢失。
+- 修改 Logo 后必须运行 `node scripts/generate-android-launcher-vector.mjs`，并重新生成 `assets/icon.png` 及 Android 各密度启动图标；不能只替换应用内 `WhipMark`。build 245 已包含并验证新的 Logo，但尚未进行 Bigme 真机图标验收。
+- APK：[app-release-245.apk](android/app/build/outputs/apk/release/app-release-245.apk)，`1.7.0` / versionCode `245` / `arm64-v8a` / minSdk 24；`106,495,007` bytes；SHA-256：`50509e5d507aa4d9fc165b3ec00030845cd22cbca8f0ec028240a319ff9be5ab`。已通过 ZIP CRC、APK v2 签名、zipalign、Manifest/ABI 检查；使用预览签名与跳过 R8 的本地测试配置。
+
+### 2.4 三行导航紧凑高度（build 245）
+
+- Workspace、Tab、Pane 三行的文字、状态图标、芯片和固定按钮适当缩小；三行高度调整为 40/48/40 dp，Tab 行仍保留略高空间以容纳关闭和新增按钮。`terminalSessionChromeHeight` 已同步更新，终端正文和底部控制栏不会继续使用旧的三行高度。
+- 只压缩导航栏，不改变 Workspace/Tab/Pane 的原名称、横向滑动、选择、关闭确认、加号和 Agent/普通 Pane 分组逻辑；触摸区域仍保持可操作尺寸。
+- 本轮通过 TypeScript、SessionScreen/floatingChrome ESLint、Session/输入相关 118 项 Jest 测试；Android Release 构建成功，Metro bundle 已确认包含新 Logo 引用。
+
+### 2.1 链接误触与省电优化（build 241）
+
+- 用户在 build 240 后反馈：终端输出中有网页链接，滚动后点击其它位置或输入区也可能打开网页。本轮按用户指定由 Luna xhigh 修复链接并实施已批准的省电方案，主线程审阅/要求修正后由 SOL medium 编译；已生成并验证本地测试包，尚未完成 Bigme 真机验收。
+- 链接编号映射随历史 marker/终端生命周期回收；已用安装的 xterm 验证 OSC-8 字符元数据在擦除后消失，并用生成运行时验证完整的滑动/点击事件。Android/iOS 终端资产必须从源脚本重新生成后再打包，不能只改生成 HTML。
+- 链接阶段已完成代码审阅：坐标越界返回空而非夹到边缘；按当前滚动位置及实时 OSC-8 字符属性定位；触摸结束/取消重新抑制合成 click，避免超过 750ms 的长手势绕过保护；已有鼠标拖动在区域外松手仍配对释放。生成运行时测试必须提供浏览器 `URL` 全局，否则链接解析中的 catch 会吞掉测试环境的 ReferenceError，产生假的“未扫描到链接”。Android/iOS 运行时均已验证长滚动后的合成 click 不激活、真正链接只激活一次。尚不能等同 Bigme 真机触摸验收。
+- 编译注意：本轮 Rust 监控和 Chat API 有变，必须重新编译 ARM64 Rust 并生成 UniFFI 的 TS/C++ 绑定，禁止沿用 build 240 的 `-x :react-native-whip-ssh:buildRustArm64`。审阅手写源码/测试后再编译生成绑定，随后重新执行 TypeScript 和相关测试；不要靠类型断言隐藏过期绑定。构建使用 `EXPO_NO_DOTENV=1`，禁止自动加载敏感环境配置。不得把编译完成或单次内存快照当作实测省电比例。
+- 真机回归清单：安装后先核对实际 versionCode；① 输出含中文前缀/OSC-8 的链接，长滑动后点空白、Codex 输入区及 composer，再直接点可见链接；② 静止阅读、持续输出、快速切换三行导航、切到后台再返回，核对正文与光标没有丢失；③ 正在写入大 Chat 缓存时隐藏/恢复，观察 `cacheWriteQueued`、native heap/PSS 趋势；④ 分别测试平衡省电/实时提醒和主动语音朗读；⑤ 同亮度、Wi-Fi、刷新模式与内容下比较 CPU/唤醒及耗电。当前 `adb devices` 无设备，尚未执行这些 Bigme 验收步骤。
+- 已接入后台电源偏好 `backgroundPowerPreference: auto | balanced | realtime`，旧偏好迁移默认 `auto`；E-Ink 自动解析为 balanced，普通屏为 realtime，用户可手动覆盖或选回自动。Android 前台服务按当前模式调整 CPU wake lock；balanced 不长期持有监控锁，显式语音朗读仍保留自己的唤醒需求。模式切换、语音所有者交接和只停止监控时不能误停正在播放的新语音会话。自动模式的说明也须告知通知可能延迟、返回时可能重连。
+- Rust 主机监控由固定 1 秒 tick 改为按下一次到期时间或生命周期事件唤醒。普通屏保留健康检查 15 秒、Hosts 延迟采样 3 秒；E-Ink 分别为 60 秒、15 秒；定期状态校正仍为 120 秒，健康检查发现 stale/needs_resync 时仍及时校正。前台恢复/Hosts 变为可见会立即触发检查；后台等待不强持有 RuntimeInner，Notify 先注册再检查状态以避免丢失唤醒。未改变 SSH 传输保活间隔。
+- 缓存审阅新增回归要求：暂停/恢复的同步世代与持久化确认生命周期分开；SQLite 旧写入确认迟到时，应释放对应的待写名额并补发最新已完成内容，不需要再等下一条消息。不能仅靠 offset 判断对应关系：源重建后相同 offset 的旧确认不得释放新快照的名额。页面消费者与语音消费者必须独立计数，原生有效活跃状态取二者的 OR，未变化状态不重复跨 FFI 调用。
+- 链接最终实现还修正了中文双宽字符、emoji 和组合字符导致的 JS 字符串位置与终端列号不一致；点击范围使用真实 xterm cell 列映射，查询仅扫描点击附近有界的行区间。纯链接测试使用实际安装的 xterm 字符元数据，不能用字符串长度代替终端列宽。此前左右 16px 阅读边距保留。
+- E-Ink 隐藏/非选中的 Herdr Pane 释放 SCREEN 订阅，回到前台只连接选中 Pane 并获取完整 baseline；迟到的 ready/resize 不得重新连接隐藏 Pane。隐藏整个终端宿主时取消 WebView 中所有 Pane 的呈现，但保留缓存 xterm 状态；直接 SSH 流不因隐藏而断开或丢字节。输出合并窗口 100ms，按 64KiB 或 32 个待写脚本阈值立即刷新；完整重绘、输入回显/resize、方向/滚动操作和显示模式切换刷新队列，保证顺序与输入响应。直接 SSH 字节流保持原有即时解析路径。
+- E-Ink 离线预览仍在首次空闲约 3 秒后保存；后续空闲序列化最短间隔 30 秒，未改变的内容不重复发送/保存，失败保留 dirty 标记，隐藏/回收时按需立即补存。上限仍是序列化前 500 行，普通模式保留原有策略。异常杀进程可能丢失最近尚未保存的本地预览，不影响远端会话原始内容。
+- 验证：最终源码及重新生成的原生绑定通过完整 TypeScript 检查、25 套定向 Jest/388 项（涵盖链接、终端、方向键、键盘、Chat、语音、偏好、启动和原生接口适配）、相关手写 TS/TSX ESLint、生成终端资产一致性与 diff 空白检查。Luna Rust `agent_sessions::tests` 28 项、monitoring 4 项通过。`setMonitoringState` 的第 4 个 `isEink` 参数和 `setAgentChatActive` 已由 SOL 生成到 UniFFI TS/C++，没有用类型断言或声明合并掩盖旧接口。ARM64 Rust、最终 Metro bundle 与 Android APK 均已重编；主线程复核 ZIP CRC、v2 签名、zipalign、Manifest、文件大小/SHA-256，以及包内 HTML 与生成源逐字节一致。临时 Gradle init script 已移除，旧 APK 保留。
+- 发布前二次审阅修正：`beginTerminalInputTrace` 在未开启 Perfetto 时返回 null，不能把 trace cookie 当作正常使用时“正在输入”的判断依据。输入/方向/滚动现在触发独立的 500ms 即时刷新窗口，不新建周期性 timer；窗口结束后恢复普通输出合并。诊断关闭时实际调用 renderer.input 的回归已通过，最终 Metro 必须打包此修正。下次优化也须测诊断关闭的实际路径，不能只 mock 一个非空 trace cookie。
+
+### 2.2 终端方向键与键盘按钮外观（build 244）
+
+- 方向键滑动区域不再使用 E-Ink 控制灰背景，恢复为与终端控制栏一致的透明底、细边框和圆角；保留 PanResponder 滑动、无障碍方向操作和原触摸尺寸。
+- 键盘按钮改为透明 Ghost 控件，取消普通背景和启用时的填充背景；启用状态仍通过边框和图标颜色表示，不改变键盘弹出、焦点或输入逻辑。
+- Pane/Tab 的关闭入口现在统一先显示确认框；取消 Herd 中滑动关闭 Agent Tab 的确认时，会恢复被暂时收起的行。Workspace 原有的关闭确认保持不变。
+- 关闭确认框不再使用全屏半透明黑色遮罩，点击关闭时直接显示确认框，避免 E-Ink 屏幕出现难看的整屏灰闪；透明遮罩仍保留点击空白处取消和弹窗交互拦截。
+- 方向键外框改为与 Home、键盘、Tab 控件一致的明显圆角，仍保持透明背景和细边框。
+- 终端固定功能区与可滑动功能区之间取消竖向分隔线；Workspace、Tab、Pane 三行之间取消横向分隔线，只移除边框，不改变原有高度、内边距或滚动区域。
+- 本轮只改终端控制栏 UI、确认框遮罩及方向键外观，未改变终端协议或方向键行为；已通过 TypeScript、相关 ESLint、方向键/终端控件及 SessionScreen 定向测试。build 244 已重新打包 Metro、ARM64 原生库和 Android APK。
+- 最新 APK：[app-release-244.apk](android/app/build/outputs/apk/release/app-release-244.apk)，`1.7.0` / versionCode `244` / `arm64-v8a` / minSdk 24；`106,794,547` bytes；SHA-256 `0e98e32d978ed487c4fd2f2e766cef74a415ab2f4a769418f532a63d51cd2777`。已通过 ZIP CRC、APK v2 签名、zipalign、Manifest/ABI 检查。这是预览签名、跳过 R8 的本地测试包，尚未进行 Bigme 真机触摸验收。
+
+### 2.0 Terminal 阅读边距（build 240）
+
+- 用户在 Bigme 上用 `cat` 查看长文时，正文从屏幕最左侧开始，右侧换行处也几乎贴边。根因是 `scripts/sync-terminal-assets.mjs` 生成的 xterm 样式只设置 `height: 100%`，没有水平内边距；与 `cat` 命令、SSH 内容或字体颜色无关。
+- 给实际 `.xterm` 元素添加左右各 16 CSS px 的内边距，而非仅移动外层容器。现有 FitAddon 与 `measureEffectiveTerminalGeometry` 都会扣除该元素的内边距计算列数，远端 PTY 可按新的列宽换行，不会把右侧字符藏在屏幕之外；触摸定位继续使用 `.xterm-screen` 的真实边界。Android 和 iOS 终端 HTML 都必须通过 `node scripts/sync-terminal-assets.mjs` 从脚本重新生成，不要只手改其中一个生成物。
+- 新增生成资源与列宽回归测试；左右各 16px 会按 8px 单元宽度将 400px 测试终端的列数减少 4 列，并向上层报告新尺寸。全量 Jest 146 套/1124 项、TypeScript、测试文件 ESLint、脚本 Node 语法检查、终端生成资产一致性均通过。该生成脚本原有的动态 `import` 无法被当前 ESLint 解析，因此未把对脚本运行 ESLint 当作验收项。
+- 编译时须先运行 `node scripts/sync-terminal-assets.mjs`；Android APK 内的 `assets/herdr-terminal.html` 要包含上述 16px 样式，避免只更新源码而分发旧 HTML。本轮 Rust/UniFFI 未变，沿用 Gradle 8.13、ARM64、预览签名、`skipR8`，可跳过 Rust 重编。Bigme 真机视觉效果仍需安装 build 240 确认。
+
+### 1.9 全屏输入框打开时控制栏仍被键盘遮住（build 239）
+
+- build 238 的 Bigme 截图显示：浮动 composer 在键盘上方，但方向键所在整排控制栏仅露出上缘。说明上一轮 `onFocus` 后重新调用 `measureInWindow` 仍依赖不准确/滞后的 React Native 键盘 frame；只重测同一个 frame 不能纠正位置。该 Terminal 会开启全屏，打开 composer 时原生窗口还会切换为 `SOFT_INPUT_ADJUST_NOTHING`，键盘本来就允许盖住窗口。Android 文档说明全屏窗口可能忽略 `adjustResize`，因此不能仅把窗口模式切回 resize 当作可靠修复。
+- Android `HerdrSoftInputModule` 新增 `getImeTopInWindow`：在 UI 线程读取 `rootWindowInsets` 的 `Type.ime()`，按显示密度换算为 RN 使用的 dp，返回当前窗口坐标内的真实键盘顶部。Android 11 以下、键盘未显示或 Insets 暂不可用时返回 null，保留旧 RN frame 计算作为降级路径。没有读取或触碰任何 SSH 密钥。
+- `useKeyboardInset` 在收到键盘 show/frame 与视口布局变化时先用 RN frame 即时计算，再以原生 IME 顶部异步校正同一个 inset；composer、控制栏、Session 三行导航和终端底部预留由这一 inset 驱动。用测量修订号丢弃键盘已隐藏、窗口已切换或组件卸载后的迟到回调。TerminalScreen 接入原生读取；其它页面仍保持原行为。
+- 新增“RN frame 误报没有遮挡，但 native Insets 表明实际遮挡”的 hook/TerminalScreen 回归测试，以及键盘隐藏后迟到回调测试；键盘隐藏时不查询原生 Insets，以免普通布局变化产生额外桥接调用。全量 Jest 146 套件/1122 项、TypeScript、修改文件 ESLint、终端资产检查通过。当前 `adb devices` 没有连接设备，**不能声称 Bigme 真机已修复**；下一次请安装 build 239 重现同一步骤，确认方向键整排可见且可按。若仍被遮住，应采集同一时刻的原生 IME Insets、RN `keyboardDidShow` 的 `screenY` 与 `measureInWindow` 的 y/height，排查厂商输入法额外浮层。
+- 本轮修改了 Android Kotlin 桥接模块，必须执行 Android 原生编译并生成新 APK；仅更新 Metro JS bundle 不会包含 `getImeTopInWindow`。Rust/UniFFI 未变，可跳过 `:react-native-whip-ssh:buildRustArm64`。沿用 Gradle 8.13、显式 Android SDK、仅 `:app` 输出到 tmpfs、ARM64、预览签名与 `skipR8` 的本地测试配置。Kotlin 编译与最终 Metro JS 二次打包均成功，APK 最终校验见下方结果。
+
+### 1.8 Workspace 新建入口与 Pane 分组图标（build 238）
+
+- 用户认为 build 237 在 Agent Pane 与普通 Pane 之间的“Pane”文字块过于突兀。本轮去掉带框文字，改用深灰 2dp 分隔线 + 扁平 `SquareTerminal` 图标；保留每个 Agent Pane 前的 `Bot` 图标与普通 Pane 的原始名称、横向滚动，E-Ink 上不依赖颜色辨别分组。
+- Workspace 第一行右端新增固定“+”，与 Tab/Pane 的“+”一样置于横向 ScrollView 外。点击后打开与 Herd 新建 Workspace 一致的编辑弹窗，可填可选名称和工作目录；提交调用 Herdr `workspace.create`（`focus: true`），校验 `workspace_created` 结果后立即在本地选择返回的 Workspace/Tab/根 Pane，并等待服务端 snapshot 确认。已有 Workspace 仍可滑动；无 Workspace 但 Herdr 正在运行时，第一行与新建入口仍显示。Herdr 停止时入口禁用，原返回按钮保留。
+- 新建成功后暂存刚创建的 Workspace/Tab/根 Pane，避免快照尚未更新就被旧焦点拉回；快照确认后清除暂存。切换 Host 会清除暂存，不混用其它服务器的资源。测试覆盖固定按钮、API 参数、创建后的显示，以及空 Workspace 初始状态。
+- 全量 Jest 146 套件/1118 项、TypeScript、改动文件 ESLint 已通过。本轮只改 JS/UI、测试、文档和 Android `versionCode`，Rust/UniFFI 未变；重新打包了 Metro JS。build 238 APK 已通过 ZIP CRC、APK v2 签名、zipalign 和 aapt2 Manifest 验证；Bigme 真机视觉效果仍待验证。
+
+### 1.7 键盘遮挡、三行导航图标及 Pane 新建（build 237）
+
+- 用户提供 build 236 真机初测：安装后进程仍存活，native heap 约 119 MB、TOTAL PSS 约 444 MB、RSS 约 596 MB，暂未见新 `LOW_MEMORY`、ANR 或 fatal exception。这支持此前内存防护有效，但仍应在长时间运行及主动打开大型 Chat 历史后复测，不应把一次快照当作完整稳定性证明。
+- 修复输入法已经打开时再进入 Terminal 文本输入框的遮挡：Android `adjustResize` → `adjustNothing` 切换不一定重新触发 `keyboardDidShow`。打开 composer 和输入框获得焦点时，立即并在布局稳定后重测终端视口；底部固定方向键/功能键和输入框按实际键盘顶部一起抬升。重测仍使用最近的键盘显示/帧事件位置，不以可能滞后的 `Keyboard.metrics()` 覆盖 `keyboardDidChangeFrame`。隐藏页面后延迟重测不再执行。
+- Tab 行左侧增加固定扁平 Tab 图标，Pane 行左侧增加固定 Pane 图标，两个图标均在横向滚动区域之外；Workspace 行原返回按钮保留。Agent Pane 芯片内增加 `Bot` 图标和原 Agent/Panes 名字，Agent 与普通 Pane 之间改用有填充及边框、标注“Pane”的灰阶分组标签，不再只靠细线。E-Ink 下保持原黑/灰配色和原完整名称横向滚动。
+- Pane 行右端固定增加“+”，调用 Herdr 现有 `pane.split`，以当前选中 Pane 为目标向右分割并聚焦新 Pane；没有选中 Pane 或变更进行中时禁用。它不是新建 Tab，也不改动原终端方向键手势。各语言增加对应无障碍标签。
+- 增加已打开 IME 的窗口模式切换回归测试、固定图标/Agent 图标/分组标记和 Pane 分割 API 测试。全量 Jest 146 套件/1116 项、TypeScript、改动文件 ESLint 已通过。真机视觉位置和 Pane 分割后的服务端焦点回传仍需 Bigme 实测。
+- 本节仅修改 JS/UI、测试、文案和 Android `versionCode`，未改 Rust/UniFFI；APK 构建可跳过 `:react-native-whip-ssh:buildRustArm64`，但必须重新打包 Metro JS bundle。沿用 Gradle 8.13、显式 Android SDK、仅 `:app` 输出到 tmpfs、ARM64、预览签名和 `skipR8` 的本地测试配置。build 237 已完成打包和 ZIP CRC、v2 签名、zipalign、aapt2 Manifest 验证；没有连接 Bigme 真机。
+
 ### 1.6 Ubuntu 首次进入即被系统 LOW_MEMORY 杀进程：后台 Chat 预载与 checkpoint 防护（诊断候选 build 236）
 
 - 用户的 Android `ApplicationExitInfo`、`lowmemorykiller` 和 `dumpsys meminfo` 已确认旧包被系统以 `LOW_MEMORY` 杀死，退出前 PSS/RSS 约 2.5 GB、native heap 约 2.1 GB；SSH 已连接成功，没有证据支持 Java FATAL、SIGSEGV 或 ANR 是本次退出原因。用户没有切换任何 Pane：导航栏先显示，终端内容稍后显示，随后进程被杀。因此切换请求不是必要触发条件，也不能把此前 build 234/235 当作已验证修复。
@@ -170,11 +241,20 @@
 
 已生成并验证：
 
-- 最新诊断 APK：[app-release-235.apk](android/app/build/outputs/apk/release/app-release-235.apk)；兼容原路径 [app-release.apk](android/app/build/outputs/apk/release/app-release.apk)，两份内容相同。`1.7.0` / versionCode `235` / `arm64-v8a` / minSdk 24；`106,762,971` bytes；SHA-256 `ce95d39949dc7dcf117714af244f3828a6a7b733355c965f881fdb5aba0ecff7`。全量 Jest 146 套件/1110 项、TypeScript、修改的 TS/TSX ESLint、终端资产检查、Gradle 8.13 assembleRelease、ZIP CRC、apksigner v2、zipalign、aapt2 通过；未连接 Bigme、闪退仍待真机确认。仅使用预览签名/跳过 R8，正式上架需正式签名并重新构建。
+- 最新本地测试 APK：[app-release-244.apk](android/app/build/outputs/apk/release/app-release-244.apk)，`1.7.0` / versionCode `244` / `arm64-v8a` / minSdk 24；`106,794,547` bytes；SHA-256 `0e98e32d978ed487c4fd2f2e766cef74a415ab2f4a769418f532a63d51cd2777`。包含 Pane/Tab 关闭确认、终端控制栏透明样式、无灰屏确认框、方向键圆角及 Workspace/Tab/Pane 与功能栏分隔线移除；已通过 TypeScript、相关 ESLint、133 项定向 Jest、ZIP CRC、APK v2 签名、zipalign 和 aapt2 Manifest/ABI 检查。仅本地预览签名/跳过 R8，未真机验证触摸。
+- 上一版本本地测试 APK：[app-release-243.apk](android/app/build/outputs/apk/release/app-release-243.apk)，`1.7.0` / versionCode `243` / `arm64-v8a` / minSdk 24；`106,794,575` bytes；SHA-256 `d1f7ba59b25bb29d2a6f53aa60f01fb9cc711702e6505eda670580796c43b22b`。包含 Pane/Tab 关闭确认、终端控制栏透明样式、无灰屏确认框和方向键圆角；请下载 build 244 测试本轮分隔线修改。
+- 上一版本本地测试 APK：[app-release-242.apk](android/app/build/outputs/apk/release/app-release-242.apk)，`1.7.0` / versionCode `242` / `arm64-v8a` / minSdk 24；`106,794,679` bytes；SHA-256 `7be37fe565e7b31029d48899055efbffe06a228d8e4e11d0c26d2ccc3bbc0c78`。包含 Pane/Tab 关闭确认及终端控制栏透明样式；请下载带 `243` 的文件测试本轮修改，不要使用旧的无版本号 `app-release.apk`。
+- 上一版本本地测试 APK：[app-release-241.apk](android/app/build/outputs/apk/release/app-release-241.apk)，`1.7.0` / versionCode `241` / `arm64-v8a` / minSdk 24；`106,789,303` bytes；SHA-256 `dd51cec76199d87351fcee25db42b56a1797aad27221b63a8c21a60a0db4048a`。包含链接误触修正和省电策略。
+- 上一版本地测试 APK：[app-release-240.apk](android/app/build/outputs/apk/release/app-release-240.apk)，`1.7.0` / versionCode `240` / `arm64-v8a` / minSdk 24；`106,758,927` bytes；SHA-256 `11b183aa2b93aa246d7fe86c72c0197080f49088f5a2c9d5f709abd35dcd8460`。包含 16px 阅读边距，不包含 build 241 的链接和省电修改；保留以便对照。
+- 上一版测试 APK：[app-release-239.apk](android/app/build/outputs/apk/release/app-release-239.apk)，`1.7.0` / versionCode `239` / `arm64-v8a` / minSdk 24；`106,758,879` bytes；SHA-256 `65227c2848711c2ad47dde367859dd775031563ba685d8a63dc08daff2613322`。该版包含原生 IME Insets 修复，但**不包含**本轮终端阅读边距。
+- 上一版测试 APK：[app-release-238.apk](android/app/build/outputs/apk/release/app-release-238.apk)，`1.7.0` / versionCode `238`；`106,760,599` bytes；SHA-256 `62687e22144b20f46b7d19e222a6416c2d24f49e7b9fff4606b4f26e5505e2c7`。该版未包含本轮 Android IME Insets 修复，用户截图显示控制栏仍被遮挡，不能用它测试本轮修复。
+- 上一版测试 APK：[app-release-237.apk](android/app/build/outputs/apk/release/app-release-237.apk)，`1.7.0` / versionCode `237`；`106,768,651` bytes；SHA-256 `c95ba2e3956b7a195f1887bb7862f660d1a8f85d0a014e816d851675aac6fc98`。该版仍使用了被用户认为不美观的 Pane 文字分组标记，不能用它测试本轮改动。
+- 旧诊断 APK：[app-release-236.apk](android/app/build/outputs/apk/release/app-release-236.apk)，初步真机内存反馈见 1.7 节；`app-release.apk` 仍是更旧的 build 235，不能用它测试本轮修复。
+- 历史诊断 APK：[app-release-235.apk](android/app/build/outputs/apk/release/app-release-235.apk)；兼容原路径 [app-release.apk](android/app/build/outputs/apk/release/app-release.apk)，两份内容相同。`1.7.0` / versionCode `235` / `arm64-v8a` / minSdk 24；`106,762,971` bytes；SHA-256 `ce95d39949dc7dcf117714af244f3828a6a7b733355c965f881fdb5aba0ecff7`。全量 Jest 146 套件/1110 项、TypeScript、修改的 TS/TSX ESLint、终端资产检查、Gradle 8.13 assembleRelease、ZIP CRC、apksigner v2、zipalign、aapt2 通过；仅使用预览签名/跳过 R8。
 - A/B 候选 APK：[app-release-234.apk](android/app/build/outputs/apk/release/app-release-234.apk)，`1.7.0` / versionCode `234` / ARM64；`106,762,187` bytes；SHA-256 `22ed779c1fbcb955f74a0aab5566a54450a4051fcbad0df1a52174f344760aa9`。仅缩小终端缓存，未减少导航 spinner 原生视图；它通过 146 套件/1109 项及 APK 校验，未真机验证。
 - 旧版：[app-release-233.apk](android/app/build/outputs/apk/release/app-release-233.apk)；便于和诊断版对比，不再是兼容原路径。
 - 包名：`io.github.kaminarios.whip`
-- 版本：`1.7.0`，最新 versionCode `235`
+- 版本：`1.7.0`，最新 versionCode `244`
 - ABI：`arm64-v8a`，适合 Bigme B1051C
 - 旧版 build 233 文件大小：`106,761,875` bytes
 - 旧版 build 233 SHA-256：`1ab3cbfde4d7199360b74972817d25f1a2d14f14faa0235cbacf6c5d8c096e25`
@@ -221,7 +301,7 @@ cd android
 之前生成的 APK 不能安装，原因不是包名或 Manifest，而是 APK 内部 ZIP 数据出现 CRC/压缩数据损坏。`apksigner` 单独通过并不能证明 APK 完整；必须同时运行：
 
 ```bash
-APK=android/app/build/outputs/apk/release/app-release.apk
+APK=android/app/build/outputs/apk/release/app-release-244.apk
 unzip -tq "$APK"
 $ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose --print-certs "$APK"
 $ANDROID_HOME/build-tools/35.0.0/aapt2 dump badging "$APK"
@@ -248,6 +328,20 @@ allprojects {
 ```
 
 当前仓库的 Gradle wrapper 仍为 Gradle 9.3.1；本次成功验证使用了 Gradle 8.13 二进制配合现有 Android Gradle Plugin 8.12.0。若更换 Gradle 版本，必须重新执行上面的四项 APK 完整性检查。
+
+build 241 实际构建参数如下（工作目录 `android`，先创建上述仅重定向 `:app` 的 `.codex-release-build.gradle`；临时 Gradle 二进制路径下次使用前需确认存在）：
+
+```bash
+EXPO_NO_DOTENV=1 \
+ANDROID_HOME=/home/ubuntu/Android/Sdk \
+ANDROID_SDK_ROOT=/home/ubuntu/Android/Sdk \
+/tmp/whip-gradle-jCiASP/gradle-8.13/bin/gradle \
+  --no-daemon --max-workers=2 --init-script .codex-release-build.gradle \
+  :app:assembleRelease -Pwhip.previewSigning=true -Pwhip.skipR8=true \
+  -PreactNativeArchitectures=arm64-v8a
+```
+
+本轮不能跳过 `buildRustArm64`。构建脚本复制静态库时使用 `rust/target/aarch64-linux-android/release/libwhip_ssh.a`，不要只改 `CARGO_TARGET_DIR` 而仍从旧位置复制。缺少 `clang-format` 时生成 C++ 可能带大量尾随空白，最终生成结束后仅做机械格式清理，并复查 `git diff --check`。构建产物先在 `/dev/shm/whip-gradle-build/app/outputs/apk/release/app-release.apk` 校验，再复制到带新版本号的仓库路径，比较两份哈希并再做 ZIP 校验；不要覆盖旧版测试包。构建结束只清理本次临时 init script。
 
 build 228 的回归测试可运行：
 

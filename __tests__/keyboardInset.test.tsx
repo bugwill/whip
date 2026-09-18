@@ -22,6 +22,7 @@ let renderer: ReactTestRenderer | undefined;
 let result: ReturnType<typeof useKeyboardInset>;
 let measurements: Measurement[];
 let listeners: Map<string, (event: KeyboardEvent) => void>;
+let getKeyboardTop: (() => Promise<number | null>) | undefined;
 const onVisibilityChange = jest.fn();
 const measuredViewRef = {
   current: {
@@ -30,7 +31,7 @@ const measuredViewRef = {
 };
 
 function Harness({ enabled = true }: { enabled?: boolean }) {
-  result = useKeyboardInset(measuredViewRef, { enabled, onVisibilityChange });
+  result = useKeyboardInset(measuredViewRef, { enabled, onVisibilityChange, getKeyboardTop });
   return null;
 }
 
@@ -71,6 +72,7 @@ function measure(index = measurements.length - 1) {
 }
 
 beforeEach(() => {
+  getKeyboardTop = undefined;
   measurements = [];
   listeners = new Map();
   onVisibilityChange.mockClear();
@@ -114,6 +116,35 @@ test('layout changes remeasure after Android resizes the window', () => {
   act(() => result.remeasure());
   act(() => measurements[measurements.length - 1](0, 0, 400, 800));
   expect(result.inset).toBe(300);
+});
+
+test('native IME top corrects a fullscreen frame that incorrectly leaves controls under the keyboard', async () => {
+  getKeyboardTop = jest.fn(async () => 450);
+  render();
+  show(800);
+  measure();
+  expect(result.inset).toBe(0);
+  await act(async () => { await Promise.resolve(); });
+  act(() => measurements[measurements.length - 1](0, 0, 400, 800));
+  expect(result.inset).toBe(350);
+});
+
+test('native IME lookup is skipped while the keyboard is hidden', () => {
+  const getTop = jest.fn(async () => 450);
+  getKeyboardTop = getTop;
+  render();
+  act(() => result.remeasure());
+  expect(getTop).not.toHaveBeenCalled();
+});
+
+test('a late native IME measurement cannot revive the inset after keyboard hide', async () => {
+  let resolveNativeTop!: (value: number | null) => void;
+  getKeyboardTop = () => new Promise(resolve => { resolveNativeTop = resolve; });
+  render();
+  show(800);
+  hide();
+  await act(async () => { resolveNativeTop(450); });
+  expect(result.inset).toBe(0);
 });
 
 test('a keyboard frame change updates overlap without a second show', () => {

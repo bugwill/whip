@@ -168,11 +168,14 @@ struct SessionRuntime {
     terminals: HashSet<String>,
     core: AgentSessionCore,
     operation_epoch: u64,
+    sync_generation: u64,
     stream_context: Option<u64>,
     stream: Option<Arc<ConnectionExecStream>>,
     retry_running: bool,
     pending_cache_offset: Option<u64>,
+    pending_cache_checkpoint: Option<PendingCacheCheckpoint>,
     started: bool,
+    paused: bool,
     closed: bool,
     explicit_restart_pending: bool,
 }
@@ -185,6 +188,7 @@ struct TerminalBinding {
     pane_id: String,
     agent: AgentTranscriptKind,
     session_id: String,
+    active: bool,
 }
 
 #[derive(Debug)]
@@ -198,6 +202,13 @@ impl AgentSessionCore {
         match self {
             Self::Codex(_) => AgentTranscriptKind::Codex,
             Self::OpenCode(_) => AgentTranscriptKind::OpenCode,
+        }
+    }
+
+    fn source_generation(&self) -> u64 {
+        match self {
+            Self::Codex(core) => core.source_generation(),
+            Self::OpenCode(core) => core.source_generation(),
         }
     }
 
@@ -261,6 +272,13 @@ struct PendingCheckpoint {
     offset: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingCacheCheckpoint {
+    token: String,
+    source_generation: u64,
+    offset: u64,
+}
+
 #[derive(Debug)]
 struct ManagerState {
     // Invariants:
@@ -299,6 +317,7 @@ struct StreamContext {
     session_key: String,
     source_generation: u64,
     operation_epoch: u64,
+    sync_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -358,7 +377,9 @@ impl AgentSessionManager {
             let mut emissions = Vec::new();
             for session in state.sessions.values_mut() {
                 session.operation_epoch = NEXT_OPERATION_EPOCH.fetch_add(1, Ordering::Relaxed);
+                session.sync_generation = session.sync_generation.saturating_add(1);
                 session.retry_running = false;
+                session.paused = true;
                 if let Some(context) = session.stream_context.take() {
                     streams().write().remove(&context);
                 }
@@ -463,6 +484,7 @@ impl AgentSessionManager {
                     pane_id: identity.pane_id.clone(),
                     agent: identity.agent,
                     session_id: identity.session_id.clone(),
+                    active: true,
                 }
             });
             let session = state.sessions.entry(key.clone()).or_insert_with(|| {
@@ -480,11 +502,14 @@ impl AgentSessionManager {
                     terminals: HashSet::new(),
                     core,
                     operation_epoch: NEXT_OPERATION_EPOCH.fetch_add(1, Ordering::Relaxed),
+                    sync_generation: 1,
                     stream_context: None,
                     stream: None,
                     retry_running: false,
                     pending_cache_offset: None,
+                    pending_cache_checkpoint: None,
                     started: false,
+                    paused: false,
                     closed: false,
                     explicit_restart_pending: false,
                 }
@@ -520,12 +545,64 @@ impl AgentSessionManager {
         })
     }
 
+    pub(crate) fn set_binding_active(&self, binding_token: &str, active: bool) -> bool {
+        let (key, stream, resume) = {
+            let mut state = self.inner.state.lock();
+            let Some(binding) = state
+                .terminal_bindings
+                .values_mut()
+                .find(|binding| binding.token == binding_token)
+            else {
+                return false;
+            };
+            if binding.active == active {
+                return true;
+            }
+            binding.active = active;
+            let key = binding.key.clone();
+            let connected = state.connected;
+            let any_active = state
+                .terminal_bindings
+                .values()
+                .any(|candidate| candidate.key == key && candidate.active);
+            let Some(session) = state.sessions.get_mut(&key) else {
+                return false;
+            };
+            let mut stream = None;
+            let mut resume = false;
+            if !any_active && !session.closed {
+                session.sync_generation = session.sync_generation.saturating_add(1);
+                session.retry_running = false;
+                session.paused = true;
+                if let Some(context) = session.stream_context.take() {
+                    streams().write().remove(&context);
+                }
+                stream = session.stream.take();
+            } else if any_active
+                && session.paused
+                && session.started
+                && connected
+                && !session.closed
+            {
+                resume = true;
+            }
+            (key, stream, resume)
+        };
+        if let Some(stream) = stream {
+            let _ = stream.close();
+        }
+        if resume {
+            self.resume(key);
+        }
+        true
+    }
+
     pub(crate) fn start_bound(
         &self,
         binding_token: &str,
         cache_blob: Option<Vec<u8>>,
     ) -> Result<AgentChatStartResult, AgentSessionError> {
-        let (key, state_snapshot, should_start, kind) = {
+        let (key, state_snapshot, should_start, should_resume, kind) = {
             let mut state = self.inner.state.lock();
             if state.closed {
                 return Err(AgentSessionError::SessionClosed(
@@ -542,6 +619,7 @@ impl AgentSessionManager {
             };
             let key = binding.key;
             let connected = state.connected;
+            let active = has_active_consumer(&state, &key);
             let Some(session) = state.sessions.get_mut(&key) else {
                 return Ok(AgentChatStartResult::StaleBinding);
             };
@@ -551,16 +629,30 @@ impl AgentSessionManager {
                     let _ = session.core.restore_cache(blob);
                 }
                 session.started = true;
+                if !active {
+                    session.paused = true;
+                }
             }
             let state_snapshot = session.core.state();
-            let should_start = session.explicit_restart_pending
-                || should_restart_on_start(connected, first_start, state_snapshot.status);
+            let should_resume = active && session.paused && connected && !session.closed;
+            let should_start = active
+                && !should_resume
+                && (session.explicit_restart_pending
+                    || should_restart_on_start(connected, first_start, state_snapshot.status));
             session.explicit_restart_pending = false;
-            let result = (key, state_snapshot, should_start, session.core.kind());
+            let result = (
+                key,
+                state_snapshot,
+                should_start,
+                should_resume,
+                session.core.kind(),
+            );
             drop(state);
             result
         };
-        if should_start {
+        if should_resume {
+            self.resume(key);
+        } else if should_start {
             let label = match kind {
                 AgentTranscriptKind::Codex => "Opening Codex transcript",
                 AgentTranscriptKind::OpenCode => "Opening OpenCode transcript",
@@ -694,6 +786,7 @@ impl AgentSessionManager {
         session.operation_epoch = NEXT_OPERATION_EPOCH.fetch_add(1, Ordering::Relaxed);
         session.retry_running = false;
         session.pending_cache_offset = None;
+        session.pending_cache_checkpoint = None;
         if let Some(context) = session.stream_context.take() {
             streams().write().remove(&context);
         }
@@ -803,49 +896,63 @@ impl AgentSessionManager {
                 let confirmed = session
                     .core
                     .confirm_cache(checkpoint.source_generation, checkpoint.offset);
-                if confirmed
-                    && session
-                        .pending_cache_offset
-                        .is_some_and(|offset| offset <= checkpoint.offset)
-                {
+                let stale_source_generation =
+                    checkpoint.source_generation != session.core.source_generation();
+                // A durable confirmation releases only the native write it
+                // acknowledges. An old checkpoint must not clear a newer
+                // offset after a source rebind.
+                let matches_pending =
+                    session
+                        .pending_cache_checkpoint
+                        .as_ref()
+                        .is_some_and(|pending| {
+                            pending.token == token
+                                && pending.source_generation == checkpoint.source_generation
+                                && pending.offset == checkpoint.offset
+                        });
+                let checkpoint_released = matches_pending && (confirmed || stale_source_generation);
+                if checkpoint_released {
                     session.pending_cache_offset = None;
+                    session.pending_cache_checkpoint = None;
                 }
                 // Only one full-history blob may cross the native event bridge
                 // at once. After SQLite confirms, save the latest idle cursor.
-                let candidate =
-                    if confirmed && session.pending_cache_offset.is_none() && !session.closed {
-                        match &session.core {
-                            AgentSessionCore::Codex(core)
-                                if core.committable_offset() > core.committed_offset() =>
-                            {
-                                core.cache_blob().ok().map(|blob| {
-                                    (
-                                        core.source_generation(),
-                                        core.committable_offset(),
-                                        core.revision(),
-                                        blob,
-                                    )
-                                })
-                            }
-                            AgentSessionCore::OpenCode(core)
-                                if core.cursor().is_some_and(|cursor| {
-                                    cursor > core.committed_cursor().unwrap_or(0)
-                                }) =>
-                            {
-                                core.cache_blob().ok().map(|blob| {
-                                    (
-                                        core.source_generation(),
-                                        core.cursor().unwrap_or(0),
-                                        core.revision(),
-                                        blob,
-                                    )
-                                })
-                            }
-                            _ => None,
+                let candidate = if checkpoint_released
+                    && session.pending_cache_offset.is_none()
+                    && !session.closed
+                {
+                    match &session.core {
+                        AgentSessionCore::Codex(core)
+                            if core.committable_offset() > core.committed_offset() =>
+                        {
+                            core.cache_blob().ok().map(|blob| {
+                                (
+                                    core.source_generation(),
+                                    core.committable_offset(),
+                                    core.revision(),
+                                    blob,
+                                )
+                            })
                         }
-                    } else {
-                        None
-                    };
+                        AgentSessionCore::OpenCode(core)
+                            if core.cursor().is_some_and(|cursor| {
+                                cursor > core.committed_cursor().unwrap_or(0)
+                            }) =>
+                        {
+                            core.cache_blob().ok().map(|blob| {
+                                (
+                                    core.source_generation(),
+                                    core.cursor().unwrap_or(0),
+                                    core.revision(),
+                                    blob,
+                                )
+                            })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 let candidate = candidate.map(|(generation, offset, revision, blob)| {
                     session.pending_cache_offset = Some(offset);
                     (session.operation_epoch, generation, offset, revision, blob)
@@ -865,6 +972,13 @@ impl AgentSessionManager {
                         offset,
                     },
                 );
+                if let Some(session) = state.sessions.get_mut(&key) {
+                    session.pending_cache_checkpoint = Some(PendingCacheCheckpoint {
+                        token: confirmation_token.clone(),
+                        source_generation: generation,
+                        offset,
+                    });
+                }
                 (
                     key.clone(),
                     epoch,
@@ -889,9 +1003,20 @@ impl AgentSessionManager {
     }
 
     fn restart(&self, key: String, reason: String) {
+        self.restart_inner(key, reason, false);
+    }
+
+    fn resume(&self, key: String) {
+        self.restart_inner(key, "Resuming agent transcript".to_owned(), true);
+    }
+
+    fn restart_inner(&self, key: String, reason: String, preserve_checkpoint: bool) {
         let operation = {
             let mut state = self.inner.state.lock();
             if !state.connected {
+                return;
+            }
+            if !has_active_consumer(&state, &key) {
                 return;
             }
             let Some(session) = state.sessions.get_mut(&key) else {
@@ -900,9 +1025,16 @@ impl AgentSessionManager {
             if !session.started || session.closed || session.terminals.is_empty() {
                 return;
             }
-            session.operation_epoch = NEXT_OPERATION_EPOCH.fetch_add(1, Ordering::Relaxed);
+            if !preserve_checkpoint {
+                session.operation_epoch = NEXT_OPERATION_EPOCH.fetch_add(1, Ordering::Relaxed);
+            }
+            session.sync_generation = session.sync_generation.saturating_add(1);
             session.retry_running = false;
-            session.pending_cache_offset = None;
+            session.paused = false;
+            if !preserve_checkpoint {
+                session.pending_cache_offset = None;
+                session.pending_cache_checkpoint = None;
+            }
             if let Some(context) = session.stream_context.take() {
                 streams().write().remove(&context);
             }
@@ -910,38 +1042,55 @@ impl AgentSessionManager {
                 let _ = stream.close();
             }
             let kind = session.core.kind();
-            if let AgentSessionCore::OpenCode(core) = &mut session.core {
+            if !preserve_checkpoint && let AgentSessionCore::OpenCode(core) = &mut session.core {
                 core.begin_sync_generation();
             }
             let update = session.core.mark_restarting_update(reason);
             let operation = (
                 session.operation_epoch,
+                session.sync_generation,
+                kind,
                 session.session_id.clone(),
                 update,
-                kind,
+                preserve_checkpoint,
             );
             drop(state);
             operation
         };
-        emit(&self.inner, key.clone(), operation.0, operation.2, None);
+        emit(&self.inner, key.clone(), operation.0, operation.4, None);
         let manager = self.clone();
         if let Ok(runtime) = crate::runtime() {
             runtime.spawn(async move {
-                match operation.3 {
+                match operation.2 {
                     AgentTranscriptKind::Codex => {
                         manager
-                            .resolve_and_open(key, operation.0, operation.1)
+                            .resolve_and_open(
+                                key,
+                                operation.0,
+                                operation.1,
+                                operation.5,
+                                operation.3,
+                            )
                             .await;
                     }
                     AgentTranscriptKind::OpenCode => {
-                        manager.sync_opencode(key, operation.0, operation.1).await;
+                        manager
+                            .sync_opencode(key, operation.0, operation.1, operation.3)
+                            .await;
                     }
                 }
             });
         }
     }
 
-    async fn resolve_and_open(&self, key: String, operation_epoch: u64, session_id: String) {
+    async fn resolve_and_open(
+        &self,
+        key: String,
+        operation_epoch: u64,
+        sync_generation: u64,
+        preserve_checkpoint: bool,
+        session_id: String,
+    ) {
         let connection = self.inner.connection.clone();
         let result = async {
             let output = execute(&connection, codex_rollout_find_command(&session_id))
@@ -983,7 +1132,13 @@ impl AgentSessionManager {
                 } else {
                     SessionFailureKind::Transient
                 };
-                self.fail_session(key, operation_epoch, error.to_string(), kind);
+                self.fail_session(
+                    key,
+                    operation_epoch,
+                    sync_generation,
+                    error.to_string(),
+                    kind,
+                );
                 return;
             }
         };
@@ -995,28 +1150,38 @@ impl AgentSessionManager {
             let Some(session) = state.sessions.get_mut(&key) else {
                 return;
             };
-            if session.operation_epoch != operation_epoch || session.closed {
+            if session.operation_epoch != operation_epoch
+                || session.sync_generation != sync_generation
+                || session.paused
+                || session.closed
+            {
                 return;
             }
-            session.pending_cache_offset = None;
-            let AgentSessionCore::Codex(core) = &mut session.core else {
-                return;
+            if !preserve_checkpoint {
+                session.pending_cache_offset = None;
+            }
+            let (binding, reset, context) = {
+                let AgentSessionCore::Codex(core) = &mut session.core else {
+                    return;
+                };
+                let binding = core.bind_source(path.clone(), file_id.clone(), size);
+                let reset = binding
+                    .rebuilt
+                    .then(|| AgentTranscriptUpdate::reset(core.state()));
+                let context = NEXT_STREAM_CONTEXT.fetch_add(1, Ordering::Relaxed);
+                streams().write().insert(
+                    context,
+                    StreamContext {
+                        manager: Arc::downgrade(&self.inner),
+                        session_key: key.clone(),
+                        source_generation: binding.source_generation,
+                        operation_epoch,
+                        sync_generation,
+                    },
+                );
+                session.stream_context = Some(context);
+                (binding, reset, context)
             };
-            let binding = core.bind_source(path.clone(), file_id.clone(), size);
-            let reset = binding
-                .rebuilt
-                .then(|| AgentTranscriptUpdate::reset(core.state()));
-            let context = NEXT_STREAM_CONTEXT.fetch_add(1, Ordering::Relaxed);
-            streams().write().insert(
-                context,
-                StreamContext {
-                    manager: Arc::downgrade(&self.inner),
-                    session_key: key.clone(),
-                    source_generation: binding.source_generation,
-                    operation_epoch,
-                },
-            );
-            session.stream_context = Some(context);
             let opened = (context, binding.start_offset, reset);
             drop(state);
             opened
@@ -1037,6 +1202,7 @@ impl AgentSessionManager {
                 self.fail_session(
                     key.clone(),
                     operation_epoch,
+                    sync_generation,
                     format!("Codex rollout stream open failed: {error}"),
                     SessionFailureKind::Transient,
                 );
@@ -1045,7 +1211,7 @@ impl AgentSessionManager {
             Ok(stream) => {
                 let accepted = stream.is_current() && {
                     let mut state = self.inner.state.lock();
-                    current_session_mut(&mut state, &key, operation_epoch)
+                    current_session_sync_mut(&mut state, &key, operation_epoch, sync_generation)
                         .map(|session| session.stream = Some(stream.clone()))
                         .is_some()
                 };
@@ -1059,12 +1225,11 @@ impl AgentSessionManager {
         if stream_requested && size == opened.1 {
             let emission = {
                 let mut state = self.inner.state.lock();
-                current_session_mut(&mut state, &key, operation_epoch).and_then(|session| {
-                    match &mut session.core {
+                current_session_sync_mut(&mut state, &key, operation_epoch, sync_generation)
+                    .and_then(|session| match &mut session.core {
                         AgentSessionCore::Codex(core) => core.mark_live_update(),
                         AgentSessionCore::OpenCode(_) => None,
-                    }
-                })
+                    })
             };
             if let Some(update) = emission {
                 emit(&self.inner, key, operation_epoch, update, None);
@@ -1072,7 +1237,13 @@ impl AgentSessionManager {
         }
     }
 
-    async fn sync_opencode(&self, key: String, operation_epoch: u64, session_id: String) {
+    async fn sync_opencode(
+        &self,
+        key: String,
+        operation_epoch: u64,
+        sync_generation: u64,
+        session_id: String,
+    ) {
         let connection = self.inner.connection.clone();
         let cursor_output = match execute(
             &connection,
@@ -1085,6 +1256,7 @@ impl AgentSessionManager {
                 self.fail_session(
                     key,
                     operation_epoch,
+                    sync_generation,
                     error.to_string(),
                     SessionFailureKind::Transient,
                 );
@@ -1097,6 +1269,7 @@ impl AgentSessionManager {
                 self.fail_session(
                     key,
                     operation_epoch,
+                    sync_generation,
                     error.to_string(),
                     SessionFailureKind::Transient,
                 );
@@ -1105,7 +1278,9 @@ impl AgentSessionManager {
         };
         let local_cursor = {
             let mut state = self.inner.state.lock();
-            let Some(session) = current_session_mut(&mut state, &key, operation_epoch) else {
+            let Some(session) =
+                current_session_sync_mut(&mut state, &key, operation_epoch, sync_generation)
+            else {
                 return;
             };
             let AgentSessionCore::OpenCode(core) = &mut session.core else {
@@ -1117,18 +1292,17 @@ impl AgentSessionManager {
         if local_cursor == Some(remote_cursor) {
             let update = {
                 let mut state = self.inner.state.lock();
-                current_session_mut(&mut state, &key, operation_epoch).and_then(|session| {
-                    match &mut session.core {
+                current_session_sync_mut(&mut state, &key, operation_epoch, sync_generation)
+                    .and_then(|session| match &mut session.core {
                         AgentSessionCore::OpenCode(core) => Some(core.mark_live_update()),
                         AgentSessionCore::Codex(_) => None,
-                    }
-                })
+                    })
             };
             if let Some(update) = update {
                 if let Some(update) = update {
                     emit(&self.inner, key.clone(), operation_epoch, update, None);
                 }
-                self.schedule_opencode_poll(key, operation_epoch, session_id);
+                self.schedule_opencode_poll(key, operation_epoch, sync_generation, session_id);
             }
             return;
         }
@@ -1145,17 +1319,30 @@ impl AgentSessionManager {
                 self.fail_session(
                     key,
                     operation_epoch,
+                    sync_generation,
                     error.to_string(),
                     SessionFailureKind::Transient,
                 );
                 return;
             }
         };
-        let applied =
-            self.finish_opencode_sync(&key, operation_epoch, remote_cursor, &payload, needs_full);
+        let applied = self.finish_opencode_sync(
+            &key,
+            operation_epoch,
+            sync_generation,
+            remote_cursor,
+            &payload,
+            needs_full,
+        );
         if let Err(error) = applied {
             if needs_full {
-                self.fail_session(key, operation_epoch, error, SessionFailureKind::Transient);
+                self.fail_session(
+                    key,
+                    operation_epoch,
+                    sync_generation,
+                    error,
+                    SessionFailureKind::Transient,
+                );
                 return;
             }
             let export = execute(
@@ -1168,6 +1355,7 @@ impl AgentSessionManager {
                     if let Err(export_error) = self.finish_opencode_sync(
                         &key,
                         operation_epoch,
+                        sync_generation,
                         remote_cursor,
                         &export,
                         true,
@@ -1175,6 +1363,7 @@ impl AgentSessionManager {
                         self.fail_session(
                             key,
                             operation_epoch,
+                            sync_generation,
                             export_error,
                             SessionFailureKind::Transient,
                         );
@@ -1185,6 +1374,7 @@ impl AgentSessionManager {
                     self.fail_session(
                         key,
                         operation_epoch,
+                        sync_generation,
                         format!("{error}; fallback export failed: {export_error}"),
                         SessionFailureKind::Transient,
                     );
@@ -1192,13 +1382,14 @@ impl AgentSessionManager {
                 }
             }
         }
-        self.schedule_opencode_poll(key, operation_epoch, session_id);
+        self.schedule_opencode_poll(key, operation_epoch, sync_generation, session_id);
     }
 
     fn finish_opencode_sync(
         &self,
         key: &str,
         operation_epoch: u64,
+        sync_generation: u64,
         remote_cursor: u64,
         payload: &str,
         full: bool,
@@ -1206,8 +1397,9 @@ impl AgentSessionManager {
         let emission = {
             let mut state = self.inner.state.lock();
             let (update, cache_candidate) = {
-                let session = current_session_mut(&mut state, key, operation_epoch)
-                    .ok_or_else(|| "OpenCode transcript operation became stale".to_owned())?;
+                let session =
+                    current_session_sync_mut(&mut state, key, operation_epoch, sync_generation)
+                        .ok_or_else(|| "OpenCode transcript operation became stale".to_owned())?;
                 let AgentSessionCore::OpenCode(core) = &mut session.core else {
                     return Err("OpenCode transcript was rebound to another agent".to_owned());
                 };
@@ -1265,6 +1457,13 @@ impl AgentSessionManager {
                         offset: cursor,
                     },
                 );
+                if let Some(session) = state.sessions.get_mut(key) {
+                    session.pending_cache_checkpoint = Some(PendingCacheCheckpoint {
+                        token: token.clone(),
+                        source_generation,
+                        offset: cursor,
+                    });
+                }
                 AgentTranscriptCacheWrite {
                     namespace: self.inner.runtime_id.clone(),
                     key: key.to_owned(),
@@ -1282,10 +1481,18 @@ impl AgentSessionManager {
         Ok(())
     }
 
-    fn schedule_opencode_poll(&self, key: String, operation_epoch: u64, session_id: String) {
+    fn schedule_opencode_poll(
+        &self,
+        key: String,
+        operation_epoch: u64,
+        sync_generation: u64,
+        session_id: String,
+    ) {
         let scheduled = {
             let mut state = self.inner.state.lock();
-            let Some(session) = current_session_mut(&mut state, &key, operation_epoch) else {
+            let Some(session) =
+                current_session_sync_mut(&mut state, &key, operation_epoch, sync_generation)
+            else {
                 return;
             };
             if session.retry_running || session.terminals.is_empty() {
@@ -1304,8 +1511,12 @@ impl AgentSessionManager {
                 tokio::time::sleep(OPENCODE_POLL_DELAY).await;
                 let should_poll = {
                     let mut state = manager.inner.state.lock();
-                    let Some(session) = current_session_mut(&mut state, &key, operation_epoch)
-                    else {
+                    let Some(session) = current_session_sync_mut(
+                        &mut state,
+                        &key,
+                        operation_epoch,
+                        sync_generation,
+                    ) else {
                         return;
                     };
                     session.retry_running = false;
@@ -1313,7 +1524,7 @@ impl AgentSessionManager {
                 };
                 if should_poll {
                     manager
-                        .sync_opencode(key, operation_epoch, session_id)
+                        .sync_opencode(key, operation_epoch, sync_generation, session_id)
                         .await;
                 }
             });
@@ -1324,12 +1535,14 @@ impl AgentSessionManager {
         &self,
         key: String,
         operation_epoch: u64,
+        sync_generation: u64,
         reason: String,
         kind: SessionFailureKind,
     ) {
         let emission = {
             let mut state = self.inner.state.lock();
-            let session = current_session_mut(&mut state, &key, operation_epoch);
+            let session =
+                current_session_sync_mut(&mut state, &key, operation_epoch, sync_generation);
             let Some(session) = session else {
                 return;
             };
@@ -1362,8 +1575,12 @@ impl AgentSessionManager {
                 tokio::time::sleep(RETRY_DELAY).await;
                 let should_retry = {
                     let mut state = manager.inner.state.lock();
-                    let Some(session) = current_session_mut(&mut state, &key, operation_epoch)
-                    else {
+                    let Some(session) = current_session_sync_mut(
+                        &mut state,
+                        &key,
+                        operation_epoch,
+                        sync_generation,
+                    ) else {
                         return;
                     };
                     session.retry_running = false;
@@ -1402,6 +1619,23 @@ fn current_session_mut<'a>(
         .sessions
         .get_mut(key)
         .filter(|session| session.operation_epoch == operation_epoch && !session.closed)
+}
+
+fn current_session_sync_mut<'a>(
+    state: &'a mut ManagerState,
+    key: &str,
+    operation_epoch: u64,
+    sync_generation: u64,
+) -> Option<&'a mut SessionRuntime> {
+    current_session_mut(state, key, operation_epoch)
+        .filter(|session| session.sync_generation == sync_generation && !session.paused)
+}
+
+fn has_active_consumer(state: &ManagerState, key: &str) -> bool {
+    state
+        .terminal_bindings
+        .values()
+        .any(|binding| binding.key == key && binding.active)
 }
 
 fn merge_updates(
@@ -1462,10 +1696,11 @@ fn stream_data(context: u64, bytes: Vec<u8>) {
     let emission = {
         let mut state = manager.state.lock();
         let (update, cache_candidate) = {
-            let Some(session) = current_session_mut(
+            let Some(session) = current_session_sync_mut(
                 &mut state,
                 &context_value.session_key,
                 context_value.operation_epoch,
+                context_value.sync_generation,
             ) else {
                 return;
             };
@@ -1523,6 +1758,13 @@ fn stream_data(context: u64, bytes: Vec<u8>) {
                     offset,
                 },
             );
+            if let Some(session) = state.sessions.get_mut(&context_value.session_key) {
+                session.pending_cache_checkpoint = Some(PendingCacheCheckpoint {
+                    token: token.clone(),
+                    source_generation: context_value.source_generation,
+                    offset,
+                });
+            }
             AgentTranscriptCacheWrite {
                 namespace: manager.runtime_id.clone(),
                 key: context_value.session_key.clone(),
@@ -1553,6 +1795,7 @@ fn stream_failed(context: u64, reason: String) {
     AgentSessionManager { inner: manager }.fail_session(
         context_value.session_key,
         context_value.operation_epoch,
+        context_value.sync_generation,
         reason,
         SessionFailureKind::Transient,
     );
@@ -1984,6 +2227,90 @@ mod tests {
     }
 
     #[test]
+    fn consumer_leases_pause_only_after_last_shared_binding_releases() {
+        let manager = test_manager("host");
+        let first = manager
+            .bind_codex("terminal-1".into(), SESSION.into())
+            .unwrap();
+        let second = manager
+            .bind_codex("terminal-2".into(), SESSION.into())
+            .unwrap();
+        let (operation_epoch, sync_generation, context) = {
+            let mut state = manager.inner.state.lock();
+            let (operation_epoch, sync_generation) = {
+                let session = state.sessions.get_mut(&first.transcript_key).unwrap();
+                session.started = true;
+                session.paused = false;
+                session.pending_cache_offset = Some(42);
+                session.pending_cache_checkpoint = Some(PendingCacheCheckpoint {
+                    token: "pending".into(),
+                    source_generation: 1,
+                    offset: 42,
+                });
+                (session.operation_epoch, session.sync_generation)
+            };
+            state.checkpoints.insert(
+                "pending".into(),
+                PendingCheckpoint {
+                    session_key: first.transcript_key.clone(),
+                    source_generation: 1,
+                    offset: 42,
+                },
+            );
+            let context = NEXT_STREAM_CONTEXT.fetch_add(1, Ordering::Relaxed);
+            streams().write().insert(
+                context,
+                StreamContext {
+                    manager: Arc::downgrade(&manager.inner),
+                    session_key: first.transcript_key.clone(),
+                    source_generation: 1,
+                    operation_epoch,
+                    sync_generation,
+                },
+            );
+            state
+                .sessions
+                .get_mut(&first.transcript_key)
+                .unwrap()
+                .stream_context = Some(context);
+            (operation_epoch, sync_generation, context)
+        };
+
+        assert!(manager.set_binding_active(&first.binding_token, false));
+        {
+            let state = manager.inner.state.lock();
+            let session = &state.sessions[&first.transcript_key];
+            assert!(!session.paused, "the second binding is still active");
+            assert_eq!(session.operation_epoch, operation_epoch);
+            assert_eq!(session.sync_generation, sync_generation);
+            assert_eq!(session.pending_cache_offset, Some(42));
+            assert!(session.stream_context.is_some());
+            assert!(state.checkpoints.contains_key("pending"));
+        }
+
+        assert!(manager.set_binding_active(&second.binding_token, false));
+        let mut state = manager.inner.state.lock();
+        let session = &state.sessions[&first.transcript_key];
+        assert!(session.paused);
+        assert_eq!(session.operation_epoch, operation_epoch);
+        assert_eq!(session.sync_generation, sync_generation + 1);
+        assert_eq!(session.pending_cache_offset, Some(42));
+        assert!(session.pending_cache_checkpoint.is_some());
+        assert!(session.stream_context.is_none());
+        assert!(state.checkpoints.contains_key("pending"));
+        assert!(streams().read().get(&context).is_none());
+        assert!(
+            current_session_sync_mut(
+                &mut state,
+                &first.transcript_key,
+                operation_epoch,
+                sync_generation
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn inactive_codex_history_is_archived_and_restores_without_retaining_a_core() {
         let manager = test_manager("host");
         let binding = manager
@@ -2246,6 +2573,15 @@ mod tests {
                     offset: first_offset,
                 },
             );
+            state
+                .sessions
+                .get_mut(&binding.transcript_key)
+                .unwrap()
+                .pending_cache_checkpoint = Some(PendingCacheCheckpoint {
+                token: "first".into(),
+                source_generation: generation,
+                offset: first_offset,
+            });
         }
         assert!(manager.confirm_cache("first"));
         let next_token = {
@@ -2256,6 +2592,164 @@ mod tests {
             state.checkpoints.keys().next().unwrap().clone()
         };
         assert!(manager.confirm_cache(&next_token));
+        let state = manager.inner.state.lock();
+        assert_eq!(
+            state.sessions[&binding.transcript_key].pending_cache_offset,
+            None
+        );
+        assert!(state.checkpoints.is_empty());
+    }
+
+    #[test]
+    fn delayed_old_checkpoint_ack_after_resume_flushes_latest_cursor() {
+        let manager = test_manager("host");
+        let binding = manager
+            .bind_codex("terminal".into(), SESSION.into())
+            .unwrap();
+        let bytes = include_bytes!("../test-fixtures/codex/paginated-rollout.jsonl");
+        let split = bytes.iter().position(|byte| *byte == b'\n').unwrap() + 1;
+        let (old_generation, first_offset) = {
+            let mut state = manager.inner.state.lock();
+            let session = state.sessions.get_mut(&binding.transcript_key).unwrap();
+            let AgentSessionCore::Codex(core) = &mut session.core else {
+                unreachable!()
+            };
+            let source = core.bind_source("/rollout".into(), "1:2".into(), bytes.len() as u64);
+            core.ingest(source.source_generation, &bytes[..split])
+                .unwrap();
+            let first_offset = core.committable_offset();
+            session.pending_cache_offset = Some(first_offset);
+            (source.source_generation, first_offset)
+        };
+        {
+            let mut state = manager.inner.state.lock();
+            state.checkpoints.insert(
+                "old".into(),
+                PendingCheckpoint {
+                    session_key: binding.transcript_key.clone(),
+                    source_generation: old_generation,
+                    offset: first_offset,
+                },
+            );
+            state
+                .sessions
+                .get_mut(&binding.transcript_key)
+                .unwrap()
+                .pending_cache_checkpoint = Some(PendingCacheCheckpoint {
+                token: "old".into(),
+                source_generation: old_generation,
+                offset: first_offset,
+            });
+            let session = state.sessions.get_mut(&binding.transcript_key).unwrap();
+            let AgentSessionCore::Codex(core) = &mut session.core else {
+                unreachable!()
+            };
+            // Model pause/resume reopening the same source. This advances the
+            // source generation without acknowledging the old SQLite write.
+            let resumed = core.bind_source("/rollout".into(), "1:2".into(), bytes.len() as u64);
+            assert!(!resumed.rebuilt);
+            core.ingest(resumed.source_generation, &bytes[split..])
+                .unwrap();
+            assert_eq!(core.committable_offset(), bytes.len() as u64);
+            assert_eq!(core.committed_offset(), 0);
+        }
+
+        // SQLite has now durably acknowledged only the old blob. The stale
+        // source generation cannot be marked committed, but it must release
+        // exactly that pending checkpoint and enqueue the latest transcript.
+        assert!(!manager.confirm_cache("old"));
+        let next_token = {
+            let state = manager.inner.state.lock();
+            let session = &state.sessions[&binding.transcript_key];
+            assert_eq!(session.pending_cache_offset, Some(bytes.len() as u64));
+            assert_eq!(state.checkpoints.len(), 1);
+            state.checkpoints.keys().next().unwrap().clone()
+        };
+        assert!(manager.confirm_cache(&next_token));
+        let state = manager.inner.state.lock();
+        assert_eq!(
+            state.sessions[&binding.transcript_key].pending_cache_offset,
+            None
+        );
+        assert!(state.checkpoints.is_empty());
+    }
+
+    #[test]
+    fn stale_old_ack_cannot_release_new_same_offset_checkpoint() {
+        let manager = test_manager("host");
+        let binding = manager
+            .bind_codex("terminal".into(), SESSION.into())
+            .unwrap();
+        let bytes = include_bytes!("../test-fixtures/codex/paginated-rollout.jsonl");
+        let offset = {
+            let mut state = manager.inner.state.lock();
+            let (source_generation, offset) = {
+                let session = state.sessions.get_mut(&binding.transcript_key).unwrap();
+                let AgentSessionCore::Codex(core) = &mut session.core else {
+                    unreachable!()
+                };
+                let source = core.bind_source("/rollout".into(), "1:2".into(), bytes.len() as u64);
+                core.ingest(source.source_generation, bytes).unwrap();
+                (source.source_generation, core.committable_offset())
+            };
+            state.checkpoints.insert(
+                "old".into(),
+                PendingCheckpoint {
+                    session_key: binding.transcript_key.clone(),
+                    source_generation,
+                    offset,
+                },
+            );
+            let session = state.sessions.get_mut(&binding.transcript_key).unwrap();
+            session.pending_cache_offset = Some(offset);
+            session.pending_cache_checkpoint = Some(PendingCacheCheckpoint {
+                token: "old".into(),
+                source_generation,
+                offset,
+            });
+            offset
+        };
+        {
+            let mut state = manager.inner.state.lock();
+            let source_generation = {
+                let session = state.sessions.get_mut(&binding.transcript_key).unwrap();
+                let AgentSessionCore::Codex(core) = &mut session.core else {
+                    unreachable!()
+                };
+                core.bind_source("/rollout".into(), "1:2".into(), bytes.len() as u64)
+                    .source_generation
+            };
+            state.checkpoints.insert(
+                "new".into(),
+                PendingCheckpoint {
+                    session_key: binding.transcript_key.clone(),
+                    source_generation,
+                    offset,
+                },
+            );
+            let session = state.sessions.get_mut(&binding.transcript_key).unwrap();
+            session.pending_cache_checkpoint = Some(PendingCacheCheckpoint {
+                token: "new".into(),
+                source_generation,
+                offset,
+            });
+        }
+
+        assert!(!manager.confirm_cache("old"));
+        {
+            let state = manager.inner.state.lock();
+            let session = &state.sessions[&binding.transcript_key];
+            assert_eq!(session.pending_cache_offset, Some(offset));
+            assert_eq!(
+                session
+                    .pending_cache_checkpoint
+                    .as_ref()
+                    .map(|pending| pending.token.as_str()),
+                Some("new")
+            );
+            assert!(state.checkpoints.contains_key("new"));
+        }
+        assert!(manager.confirm_cache("new"));
         let state = manager.inner.state.lock();
         assert_eq!(
             state.sessions[&binding.transcript_key].pending_cache_offset,
@@ -2346,6 +2840,14 @@ mod tests {
             .get(&old.transcript_key)
             .unwrap()
             .operation_epoch;
+        let old_sync_generation = manager
+            .inner
+            .state
+            .lock()
+            .sessions
+            .get(&old.transcript_key)
+            .unwrap()
+            .sync_generation;
         let replacement = manager
             .bind_codex(
                 "terminal".into(),
@@ -2357,6 +2859,7 @@ mod tests {
         manager.fail_session(
             old.transcript_key,
             old_epoch,
+            old_sync_generation,
             "late callback".to_owned(),
             SessionFailureKind::Transient,
         );
@@ -2371,18 +2874,16 @@ mod tests {
         let binding = manager
             .bind_codex("terminal".into(), SESSION.into())
             .unwrap();
-        let operation_epoch = manager
-            .inner
-            .state
-            .lock()
-            .sessions
-            .get(&binding.transcript_key)
-            .unwrap()
-            .operation_epoch;
+        let (operation_epoch, sync_generation) = {
+            let state = manager.inner.state.lock();
+            let session = state.sessions.get(&binding.transcript_key).unwrap();
+            (session.operation_epoch, session.sync_generation)
+        };
 
         manager.fail_session(
             binding.transcript_key.clone(),
             operation_epoch,
+            sync_generation,
             "Codex has not created this rollout yet.".to_owned(),
             SessionFailureKind::SourceUnavailable,
         );

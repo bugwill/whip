@@ -89,6 +89,10 @@ import type { PaneScrollInfo } from '../types';
 
 const FRAME_CHUNK_SIZE = 16_384;
 const TRANSCRIPT_CHUNK_SIZE = 16_384;
+const EINK_FRAME_BATCH_WINDOW_MS = 100;
+const EINK_FRAME_BATCH_MAX_BYTES = 64 * 1024;
+const EINK_FRAME_BATCH_MAX_FRAMES = 32;
+const EINK_INTERACTION_WINDOW_MS = 500;
 const WEBVIEW_CONTAINER_STYLE = { backgroundColor: 'transparent' } as const;
 const IOS_TERMINAL_ASSET_DIRECTORY = IOS_TERMINAL_ASSETS?.directoryURL || '';
 const runtimeProcess: unknown = process;
@@ -157,6 +161,14 @@ interface RendererEntry {
   contentState: TerminalRendererContentState;
   frameSequence: TerminalFrameSequence;
   repaintRequested: boolean;
+  needsFullBaseline: boolean;
+  pendingEinkWrites: Array<{
+    script: string;
+    inboundTraceCookie: number | null;
+  }>;
+  pendingEinkBytes: number;
+  einkBatchTimer: ReturnType<typeof setTimeout> | null;
+  einkImmediateUntilMs: number;
   fontPreference: number;
   fontSize: number;
   protocolState: TerminalProtocolState;
@@ -331,6 +343,71 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     webView.current?.injectJavaScript(`${script} true;`);
   }, []);
 
+  const flushEinkWrites = useCallback((entry: RendererEntry) => {
+    if (entry.einkBatchTimer !== null) {
+      clearTimeout(entry.einkBatchTimer);
+      entry.einkBatchTimer = null;
+    }
+    if (entry.pendingEinkWrites.length === 0) return;
+    const pending = entry.pendingEinkWrites.splice(0);
+    entry.pendingEinkBytes = 0;
+    for (const write of pending) {
+      terminalInboundWebViewInjectionStarted(write.inboundTraceCookie);
+    }
+    try {
+      inject(pending.map(write => write.script).join(''));
+    } finally {
+      for (const write of pending) {
+        terminalInboundWebViewInjectionEnded(write.inboundTraceCookie);
+      }
+    }
+  }, [inject]);
+
+  const dispatchFrameScript = useCallback((
+    entry: RendererEntry,
+    script: string,
+    inboundTraceCookie: number | null,
+    byteLength: number,
+    immediate = false,
+  ) => {
+    const canBatch = isEink && entry.target.session.kind !== 'ssh';
+    if (!canBatch) {
+      // A profile switch can race a passive configuration effect. Drain any
+      // queue created under the prior E-Ink policy before this immediate write.
+      flushEinkWrites(entry);
+      terminalInboundWebViewInjectionStarted(inboundTraceCookie);
+      try {
+        inject(script);
+      } finally {
+        terminalInboundWebViewInjectionEnded(inboundTraceCookie);
+      }
+      return;
+    }
+    const interactionWindowActive = Date.now() < entry.einkImmediateUntilMs;
+    entry.pendingEinkWrites.push({ script, inboundTraceCookie });
+    entry.pendingEinkBytes += Math.max(0, byteLength);
+    if (
+      immediate
+      || interactionWindowActive
+      || entry.pendingEinkBytes >= EINK_FRAME_BATCH_MAX_BYTES
+      || entry.pendingEinkWrites.length >= EINK_FRAME_BATCH_MAX_FRAMES
+    ) {
+      flushEinkWrites(entry);
+      return;
+    }
+    if (entry.einkBatchTimer === null) {
+      entry.einkBatchTimer = setTimeout(() => {
+        entry.einkBatchTimer = null;
+        flushEinkWrites(entry);
+      }, EINK_FRAME_BATCH_WINDOW_MS);
+    }
+  }, [flushEinkWrites, inject, isEink]);
+
+  const markEinkImmediate = useCallback((entry: RendererEntry) => {
+    if (!isEink || entry.target.session.kind === 'ssh') return;
+    entry.einkImmediateUntilMs = Date.now() + EINK_INTERACTION_WINDOW_MS;
+  }, [isEink]);
+
   const relinquishController = useCallback((
     entry: RendererEntry,
     releaseBridge: boolean,
@@ -351,11 +428,27 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     );
   }, []);
 
+  const releaseEinkController = useCallback((entry: RendererEntry, reason: string) => {
+    if (!isEink || entry.target.session.kind === 'ssh') return;
+    flushEinkWrites(entry);
+    entry.needsFullBaseline = true;
+    entry.resetOnNextFrame = true;
+    entry.frameSequence.reset();
+    entry.repaintRequested = false;
+    entry.einkImmediateUntilMs = 0;
+    if (hostReady.current && entry.contentState.hasRenderedState) {
+      inject(`window.herdrSnapshot(${JSON.stringify(entry.target.key)}, ${JSON.stringify(reason)}, true);`);
+    }
+    relinquishController(entry, true);
+  }, [flushEinkWrites, inject, isEink, relinquishController]);
+
   const disposeEntry = useCallback((
     key: string,
     entry: RendererEntry,
     closeBridge: boolean,
   ) => {
+    flushEinkWrites(entry);
+    entry.einkImmediateUntilMs = 0;
     resumeScrolls.current.delete(key);
     abandonTerminalRendererReadinessTrace(entry.readinessTrace);
     entry.readinessTrace = null;
@@ -378,11 +471,11 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       const snapshot = !closeBridge
         && entry.target.session.kind !== 'ssh'
         && entry.contentState.hasRenderedState
-        ? `window.herdrSnapshot(${serializedKey}, "eviction"); `
+        ? `window.herdrSnapshot(${serializedKey}, "eviction", true); `
         : '';
       inject(`${snapshot}window.herdrRemove(${serializedKey});`);
     }
-  }, [inject, relinquishController]);
+  }, [flushEinkWrites, inject, relinquishController]);
 
   const pruneEntries = useCallback((protectedKeys: ReadonlySet<string>, reservedSlots = 0) => {
     const evictions = terminalRendererEvictionKeys(
@@ -448,6 +541,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   }, [inject]);
 
   const requestFullFrame = useCallback((entry: RendererEntry) => {
+    flushEinkWrites(entry);
     if (entry.repaintRequested) return;
     const dimensions = entry.arbitration.latestDimensions();
     if (!dimensions) return;
@@ -471,7 +565,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       entry.repaintRequested = false;
       reportError(entry.target, String(reason));
     }).finally(() => endAppPerformanceTrace(trace));
-  }, []);
+  }, [flushEinkWrites]);
 
   const cancelResumeScroll = useCallback((entry: RendererEntry) => {
     resumeScrolls.current.delete(entry.target.key);
@@ -576,7 +670,10 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         return;
       }
       if (sequence.reset) entry.resetOnNextFrame = true;
-      if (frame.full) entry.repaintRequested = false;
+      if (frame.full) {
+        entry.repaintRequested = false;
+        entry.needsFullBaseline = false;
+      }
     }
     const key = JSON.stringify(entry.target.key);
     const serializedInputTraceCookie = inputTraceCookie === null
@@ -592,28 +689,29 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     const serializedInboundTraceCookie = inboundTraceCookie === null
       ? 'null'
       : String(inboundTraceCookie);
-    const injectTracedFrame = (script: string) => {
-      terminalInboundWebViewInjectionStarted(inboundTraceCookie);
-      try {
-        inject(script);
-      } finally {
-        terminalInboundWebViewInjectionEnded(inboundTraceCookie);
-      }
+    const injectTracedFrame = (script: string, immediate = false) => {
+      dispatchFrameScript(
+        entry,
+        script,
+        inboundTraceCookie,
+        terminalFrameByteLength(frame),
+        immediate || inputTraceCookie !== null || resizeTraceCookie !== null,
+      );
     };
     if (frame.encoding === 'utf8') {
       if (typeof frame.bytes === 'string') {
-        injectTracedFrame(`${resetScript}window.herdrWrite(${key}, ${JSON.stringify(frame.bytes)}, ${serializedInputTraceCookie}, ${serializedResizeTraceCookie}, ${serializedInboundTraceCookie});`);
+        injectTracedFrame(`${resetScript}window.herdrWrite(${key}, ${JSON.stringify(frame.bytes)}, ${serializedInputTraceCookie}, ${serializedResizeTraceCookie}, ${serializedInboundTraceCookie});`, true);
         return;
       }
       // The direct SSH shell delivers raw UTF-8 as an ArrayBuffer. Keep the
       // bytes intact across the React Native -> WebView boundary instead of
       // dropping the frame when it is not already a JavaScript string.
       const encoded = arrayBufferToBase64(frame.bytes);
-      injectTracedFrame(`${resetScript}window.herdrWriteBase64Chunk(${key}, ${frame.seq}, ${JSON.stringify(encoded)}, true, ${serializedInputTraceCookie}, ${serializedResizeTraceCookie}, ${serializedInboundTraceCookie});`);
+      injectTracedFrame(`${resetScript}window.herdrWriteBase64Chunk(${key}, ${frame.seq}, ${JSON.stringify(encoded)}, true, ${serializedInputTraceCookie}, ${serializedResizeTraceCookie}, ${serializedInboundTraceCookie});`, true);
       return;
     }
     if (typeof frame.bytes === 'string' && typeof frame.final === 'boolean') {
-      injectTracedFrame(`${resetScript}window.herdrWriteBase64Chunk(${key}, ${frame.seq}, ${JSON.stringify(frame.bytes)}, ${frame.final}, ${serializedInputTraceCookie}, ${serializedResizeTraceCookie}, ${serializedInboundTraceCookie});`);
+      injectTracedFrame(`${resetScript}window.herdrWriteBase64Chunk(${key}, ${frame.seq}, ${JSON.stringify(frame.bytes)}, ${frame.final}, ${serializedInputTraceCookie}, ${serializedResizeTraceCookie}, ${serializedInboundTraceCookie});`, frame.full);
       return;
     }
     terminalInboundBase64Started(inboundTraceCookie);
@@ -638,12 +736,18 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     // A frame can require multiple chunks, but it crosses into the WebView once.
     const script = `${resetScript}${writes.join('')}`;
     terminalInboundScriptBuildEnded(inboundTraceCookie);
-    injectTracedFrame(script);
-  }, [inject, requestFullFrame]);
+    injectTracedFrame(script, frame.full);
+  }, [dispatchFrameScript, requestFullFrame]);
 
   const connectEntry = useCallback((entry: RendererEntry, showConnecting = true) => {
     // Herdr's direct attachment holds the pane's resize lock until released.
-    if (entry.target.session.kind !== 'ssh' && appState.current !== 'active') return;
+    if (
+      entry.target.session.kind !== 'ssh'
+      && (
+        appState.current !== 'active'
+        || (isEink && (!visible || entry.target.key !== activeKey.current))
+      )
+    ) return;
     if (entry.arbitration.state.yielded) return;
     // Opening the remote terminal before xterm has measured the WebView starts
     // it at HerdrClient's 80x24 fallback and immediately sends a second resize.
@@ -722,10 +826,11 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       for (const waiter of entry.writableWaiters.splice(0)) waiter.resolve();
       if (
         retained
-        && !entry.contentState.hasLiveState
+        && (entry.needsFullBaseline || !entry.contentState.hasLiveState)
         && entry.target.session.kind !== 'ssh'
       ) {
         entry.frameSequence.reset();
+        entry.needsFullBaseline = true;
         requestFullFrame(entry);
       }
     }).catch(reason => {
@@ -743,6 +848,8 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     relinquishController,
     requestFullFrame,
     settleResumeConnection,
+    isEink,
+    visible,
   ]);
 
   const ensureEntry = useCallback((target: TerminalRenderTarget | null | undefined): RendererEntry | null => {
@@ -763,6 +870,11 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         contentState: new TerminalRendererContentState(),
         frameSequence: new TerminalFrameSequence(),
         repaintRequested: false,
+        needsFullBaseline: false,
+        pendingEinkWrites: [],
+        pendingEinkBytes: 0,
+        einkBatchTimer: null,
+        einkImmediateUntilMs: 0,
         fontPreference: preferences.fontSize,
         fontSize: target.session.fontSize ?? preferences.fontSize,
         protocolState: {
@@ -789,8 +901,15 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   const activeCall = useCallback((method: string, args: unknown[] = []) => {
     const key = activeKey.current;
     if (!key) return;
+    const entry = entries.current.get(key);
+    if (entry) {
+      if (method === 'herdrScroll' || method === 'herdrScrollToVisualBottom') {
+        markEinkImmediate(entry);
+      }
+      flushEinkWrites(entry);
+    }
     inject(`window.${method}(${[JSON.stringify(key), ...args.map(value => JSON.stringify(value))].join(', ')});`);
-  }, [inject]);
+  }, [flushEinkWrites, inject, markEinkImmediate]);
 
   const waitForWritable = useCallback((entry: RendererEntry): Promise<void> => {
     const terminalId = entry.target.session.terminalId;
@@ -811,7 +930,19 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     operation: () => void | Promise<void>,
     newUserInput = true,
   ) => {
+    markEinkImmediate(entry);
+    flushEinkWrites(entry);
     if (newUserInput) cancelResumeScroll(entry);
+    // A cached, non-foreground E-Ink pane has deliberately released its
+    // SCREEN subscription. Targeted native operations (queued paste/input)
+    // must not wait for a controller that this host is forbidden to attach.
+    if (
+      isEink
+      && entry.target.session.kind !== 'ssh'
+      && entry.target.key !== activeKey.current
+    ) {
+      return Promise.resolve(operation());
+    }
     const terminalId = entry.target.session.terminalId;
     const writable = entry.controllerAttached
       && !entry.connecting
@@ -844,7 +975,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       },
       send: operation,
     }).finally(() => endAppPerformanceTrace(coldWaitTrace));
-  }, [cancelResumeScroll, connectEntry, waitForWritable]);
+  }, [cancelResumeScroll, connectEntry, flushEinkWrites, isEink, markEinkImmediate, waitForWritable]);
 
   const reportQueuedInput = useCallback((entry: RendererEntry, data: string) => {
     const target = entry.target.session.status === 'connected'
@@ -934,6 +1065,8 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       const entry = key ? entries.current.get(key) : null;
       if (!entry) return;
       cancelResumeScroll(entry);
+      markEinkImmediate(entry);
+      flushEinkWrites(entry);
       const currentViewport = visualViewportRef.current;
       const alternateScreen = currentViewport.alternateScreen === true
         || entry.alternateScreen;
@@ -1001,7 +1134,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         throw reason;
       });
     },
-  }), [activeCall, cancelResumeScroll, connectEntry, enqueueInput, ensureEntry, inject, reportQueuedInput]);
+  }), [activeCall, cancelResumeScroll, connectEntry, enqueueInput, ensureEntry, flushEinkWrites, inject, markEinkImmediate, reportQueuedInput]);
 
   useEffect(() => {
     const valid = new Map(targets.map(target => [target.key, target]));
@@ -1058,6 +1191,9 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
 
   useEffect(() => {
     for (const entry of entries.current.values()) {
+      // A display-profile change swaps batching policy. Drain the old policy
+      // before configuration or subsequent normal-mode writes can be queued.
+      flushEinkWrites(entry);
       if (entry.fontPreference !== preferences.fontSize) {
         entry.fontPreference = preferences.fontSize;
         entry.fontSize = preferences.fontSize;
@@ -1065,7 +1201,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       }
       if (hostReady.current) configureEntry(entry);
     }
-  }, [configureEntry, preferences]);
+  }, [configureEntry, flushEinkWrites, preferences]);
 
   const visualTopInset = visualViewport.insets.top;
   const visualBottomInset = visualViewport.insets.bottom;
@@ -1102,11 +1238,27 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     if (!visible) {
       // Keep only the selected terminal presented and composited behind the
       // foreground app screen. Other cached xterm sessions remain hidden.
+      if (isEink) {
+        for (const entry of entries.current.values()) {
+          releaseEinkController(entry, 'hide');
+        }
+        // Remove every cached pane from the WebView presentation layer while
+        // retaining xterm state (and the raw SSH parser, which stays attached).
+        inject('window.herdrActivate(null);');
+        return;
+      }
       inject(`window.herdrActivate(${JSON.stringify(activeTargetKey)}); window.herdrBlur(${JSON.stringify(activeTargetKey)});`);
       return;
     }
+    if (isEink) {
+      for (const entry of entries.current.values()) {
+        if (entry.target.key !== activeTargetKey) releaseEinkController(entry, 'background');
+      }
+      const activeEntry = entries.current.get(activeTargetKey);
+      if (activeEntry) connectEntry(activeEntry, false);
+    }
     inject(`window.herdrActivate(${JSON.stringify(activeTargetKey)});`);
-  }, [activeTargetKey, inject, visible]);
+  }, [activeTargetKey, connectEntry, inject, isEink, releaseEinkController, visible]);
 
   useEffect(() => {
     let previous = AppState.currentState;
@@ -1115,16 +1267,6 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       previous = state;
       appState.current = state;
       if (state !== 'active') {
-        if (wasActive && hostReady.current) {
-          for (const entry of entries.current.values()) {
-            if (
-              entry.target.session.kind !== 'ssh'
-              && entry.contentState.hasRenderedState
-            ) {
-              inject(`window.herdrSnapshot(${JSON.stringify(entry.target.key)}, "background");`);
-            }
-          }
-        }
         if (wasActive) {
           // Release Herdr's resize lock, preserving Chat and the host connection.
           resumeScrolls.current.clear();
@@ -1152,7 +1294,14 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
               });
             }
             if (entry.target.session.kind !== 'ssh') {
-              relinquishController(entry, true);
+              if (isEink) releaseEinkController(entry, 'background');
+              else {
+                flushEinkWrites(entry);
+                if (hostReady.current && entry.contentState.hasRenderedState) {
+                  inject(`window.herdrSnapshot(${JSON.stringify(entry.target.key)}, "background", true);`);
+                }
+                relinquishController(entry, true);
+              }
             }
           }
           // Evicted renderers can still have warm native bridges holding locks.
@@ -1189,6 +1338,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         resume.restoring = false;
       }
       for (const entry of entries.current.values()) {
+        if (isEink && entry.target.key !== activeKey.current) continue;
         if (entry.connecting) continue;
         if (
           !entry.controllerAttached
@@ -1211,8 +1361,11 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     return () => subscription.remove();
   }, [
     connectEntry,
+    flushEinkWrites,
     inject,
+    isEink,
     preferences.pauseResizeInBackground,
+    releaseEinkController,
     relinquishController,
     settleResumeConnection,
     visible,
@@ -1227,7 +1380,8 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         && entry.target.session.kind !== 'ssh'
         && entry.contentState.hasRenderedState
       ) {
-        inject(`window.herdrSnapshot(${JSON.stringify(entry.target.key)}, "detach");`);
+        flushEinkWrites(entry);
+        inject(`window.herdrSnapshot(${JSON.stringify(entry.target.key)}, "detach", true);`);
       }
       relinquishController(entry, false);
     }
@@ -1236,7 +1390,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     }
     serializationTraces.current.clear();
     entries.current.clear();
-  }, [inject, relinquishController]);
+  }, [flushEinkWrites, inject, relinquishController]);
 
   const handleMessage = async (event: WebViewMessageEvent) => {
     const message = parseTerminalWebMessage(event.nativeEvent.data);
@@ -1246,6 +1400,11 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       hostReady.current = true;
       for (const entry of entries.current.values()) {
         if (reloaded) {
+          if (entry.einkBatchTimer !== null) clearTimeout(entry.einkBatchTimer);
+          entry.einkBatchTimer = null;
+          entry.pendingEinkWrites = [];
+          entry.pendingEinkBytes = 0;
+          entry.einkImmediateUntilMs = 0;
           entry.rendererReady = false;
           entry.sizeReady = false;
           entry.pendingResize = null;
@@ -1349,9 +1508,10 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       }
       if (
         entry.controllerAttached
-        && !entry.contentState.hasLiveState
+        && (entry.needsFullBaseline || !entry.contentState.hasLiveState)
         && entry.target.session.kind !== 'ssh'
       ) {
+        entry.frameSequence.reset();
         requestFullFrame(entry);
       }
       connectEntry(entry);
@@ -1465,6 +1625,8 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         || entry.arbitration.state.yielded
       ) return;
       cancelResumeScroll(entry);
+      markEinkImmediate(entry);
+      flushEinkWrites(entry);
       reportScroll(entry.target, message.direction, message.lines);
       try {
         await entry.target.client.terminal.scrollTerminal(

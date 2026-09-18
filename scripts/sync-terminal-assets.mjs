@@ -13,9 +13,12 @@ const { installAndroidImeBridge, terminalInputDelta } = androidImeBridge;
 const { createTerminalPasteBridge } = terminalClipboardPaste;
 const { createTerminalOfflineCache } = terminalOfflineCache;
 const {
+  terminalCellAtPoint,
+  terminalMousePointForAction,
   terminalManualEditRange,
   terminalVisibleCellCount,
   terminalCursorTapInput,
+  handleTerminalStationaryTap,
   handleKeyboardClosedStationaryTap,
   setTerminalKeyboardInputEnabled,
   terminalMouseClickInput,
@@ -245,7 +248,8 @@ const terminalSessionHtml = `<!doctype html>
     #terminal-geometry { position: relative; z-index: 1; box-sizing: border-box; height: calc(100% - var(--terminal-geometry-bottom, 0px)); overflow: visible; transform: translateY(var(--terminal-visual-offset, 0px)); will-change: transform; }
     #terminal { position: relative; box-sizing: border-box; }
     #terminal-visual-debug { position: fixed; z-index: 30; top: 104px; right: 8px; display: none; max-width: calc(100% - 16px); padding: 5px 7px; border: 1px solid #7aa2f7aa; border-radius: 7px; background: #16161ed9; color: #c0caf5; font: 700 9px/1.35 monospace; white-space: pre-wrap; pointer-events: none; }
-    .xterm { height: 100%; }
+    /* FitAddon subtracts padding on .xterm when calculating terminal columns. */
+    .xterm { box-sizing: border-box; height: 100%; padding: 0 16px; }
     .xterm-viewport, .xterm-screen { background-color: transparent !important; }
     html[data-display-profile='eink'], html[data-display-profile='eink'] body, html[data-display-profile='eink'] #terminals, html[data-display-profile='eink'] .terminal-session, html[data-display-profile='eink'] #terminal-geometry, html[data-display-profile='eink'] #terminal, html[data-display-profile='eink'] .xterm, html[data-display-profile='eink'] .xterm-viewport, html[data-display-profile='eink'] .xterm-screen { background-color: #ffffff !important; }
     .xterm-viewport { overflow-y: hidden !important; scrollbar-width: none !important; }
@@ -281,8 +285,11 @@ const terminalSessionHtml = `<!doctype html>
     ${installAndroidImeBridge.toString()}
     ${createTerminalPasteBridge.toString()}
     ${createTerminalOfflineCache.toString()}
+    ${terminalCellAtPoint.toString()}
+    ${terminalMousePointForAction.toString()}
     ${terminalManualEditRange.toString()}
     ${terminalVisibleCellCount.toString()}
+    ${handleTerminalStationaryTap.toString()}
     ${handleKeyboardClosedStationaryTap.toString()}
     ${terminalCursorTapInput.toString()}
     ${setTerminalKeyboardInputEnabled.toString()}
@@ -654,8 +661,49 @@ const terminalSessionHtml = `<!doctype html>
     });
     ${osc8LinkFromData.toString()}
     const osc8Links = new Set();
+    const osc8CellHrefsById = new Map();
     let osc8LinkSequence = 0;
     let openOsc8Link = null;
+    const osc8CellUrlId = (row, column) => {
+      const cell = terminal.buffer.active.getLine(row)?.getCell(column);
+      const urlId = cell?.extended?.urlId;
+      return Number.isInteger(urlId) ? urlId : 0;
+    };
+    const releaseOsc8CellIds = link => {
+      if (link.idsReleased) return;
+      link.idsReleased = true;
+      for (const urlId of link.urlIds || []) {
+        const entry = osc8CellHrefsById.get(urlId);
+        if (!entry || entry.href !== link.href) continue;
+        if (entry.references <= 1) osc8CellHrefsById.delete(urlId);
+        else entry.references -= 1;
+      }
+      link.urlIds?.clear();
+    };
+    const rememberOsc8CellIds = link => {
+      link.urlIds = new Set();
+      const startRow = link.marker.line;
+      const endRow = link.endMarker?.line ?? -1;
+      if (startRow < 0 || endRow < startRow || link.endColumn === null) return;
+      for (let row = startRow; row <= endRow; row += 1) {
+        const startColumn = row === startRow ? link.startColumn : 0;
+        const endColumn = row === endRow ? link.endColumn : terminal.cols;
+        for (let column = Math.max(0, startColumn); column < Math.min(terminal.cols, endColumn); column += 1) {
+          const urlId = osc8CellUrlId(row, column);
+          if (!urlId) continue;
+          if (link.urlIds.has(urlId)) continue;
+          link.urlIds.add(urlId);
+          const entry = osc8CellHrefsById.get(urlId);
+          if (entry && entry.href === link.href) entry.references += 1;
+          else osc8CellHrefsById.set(urlId, { href: link.href, references: 1 });
+        }
+      }
+    };
+    const osc8CellMatchesLink = (link, row, column) => {
+      const urlId = osc8CellUrlId(row, column);
+      const entry = osc8CellHrefsById.get(urlId);
+      return urlId > 0 && link.urlIds?.has(urlId) && entry?.href === link.href;
+    };
     const finishOsc8Link = () => {
       if (!openOsc8Link) return;
       const link = openOsc8Link;
@@ -664,7 +712,11 @@ const terminalSessionHtml = `<!doctype html>
       if (!endMarker) return;
       link.endMarker = endMarker;
       link.endColumn = terminal.buffer.active.cursorX;
-      endMarker.onDispose(() => osc8Links.delete(link));
+      rememberOsc8CellIds(link);
+      endMarker.onDispose(() => {
+        osc8Links.delete(link);
+        releaseOsc8CellIds(link);
+      });
     };
     const clearOsc8Links = () => {
       openOsc8Link = null;
@@ -673,6 +725,7 @@ const terminalSessionHtml = `<!doctype html>
         link.endMarker?.dispose();
       }
       osc8Links.clear();
+      osc8CellHrefsById.clear();
       osc8LinkSequence = 0;
     };
     terminal.parser.registerOscHandler(8, data => {
@@ -701,6 +754,7 @@ const terminalSessionHtml = `<!doctype html>
           openOsc8Link = link;
           marker.onDispose(() => {
             osc8Links.delete(link);
+            releaseOsc8CellIds(link);
             if (openOsc8Link === link) openOsc8Link = null;
           });
         }
@@ -784,7 +838,7 @@ const terminalSessionHtml = `<!doctype html>
       window.herdrWriteBase64(encoded, pendingInputCookie, pendingResizeCookie, pendingInboundCookie);
     };
     window.herdrSetRenderDrop = enabled => { renderDrop = enabled === true; };
-    window.herdrSnapshot = reason => offlineCache.snapshot(reason || 'lifecycle', true);
+    window.herdrSnapshot = (reason, force) => offlineCache.snapshot(reason || 'lifecycle', force === true);
     window.herdrReset = () => {
       pendingFrames.clear();
       offlineTranscriptChunks = [];
@@ -890,27 +944,30 @@ const terminalSessionHtml = `<!doctype html>
       const screen = terminal.element?.querySelector('.xterm-screen');
       if (!screen) return null;
       const bounds = screen.getBoundingClientRect();
-      if (bounds.width <= 0 || bounds.height <= 0) return null;
       const clientX = Number.isFinite(point?.clientX) ? point.clientX : bounds.left + bounds.width / 2;
       const clientY = Number.isFinite(point?.clientY) ? point.clientY : bounds.top + bounds.height / 2;
-      return {
-        col: Math.max(0, Math.min(terminal.cols - 1, Math.floor((clientX - bounds.left) / bounds.width * terminal.cols))),
-        row: Math.max(0, Math.min(terminal.rows - 1, Math.floor((clientY - bounds.top) / bounds.height * terminal.rows))),
-      };
+      return terminalCellAtPoint({ clientX, clientY }, bounds, terminal.cols, terminal.rows);
     };
     window.herdrSetForcedMouseInput = enabled => {
       forcedMouseInput = enabled === true;
     };
-    const dispatchTerminalMouse = (action, point) => {
+    const dispatchTerminalMouse = (action, point, fallbackPoint = null) => {
       if (offlineScrollback || !terminalMouseCaptured() || !terminal.element) return false;
+      const dispatchPoint = terminalMousePointForAction(
+        action,
+        point,
+        fallbackPoint,
+        terminalMouseCell,
+      );
+      if (!dispatchPoint) return false;
       const eventType = action === 'down' ? 'mousedown' : action === 'move' ? 'mousemove' : 'mouseup';
       terminal.element.dispatchEvent(new MouseEvent(eventType, {
         bubbles: true,
         cancelable: true,
         button: 0,
         buttons: action === 'up' ? 0 : 1,
-        clientX: point.clientX,
-        clientY: point.clientY,
+        clientX: dispatchPoint.clientX,
+        clientY: dispatchPoint.clientY,
       }));
       return true;
     };
@@ -1118,14 +1175,29 @@ const terminalSessionHtml = `<!doctype html>
     ${mergeTerminalLinks.toString()}
     ${osc8LinkAt.toString()}
     ${terminalLinkAt.toString()}
-    const terminalRows = () => {
+    const terminalRows = (startRow = 0, endRow = terminal.buffer.active.length) => {
       const rows = [];
-      for (let row = 0; row < terminal.buffer.active.length; row += 1) {
+      const firstRow = Math.max(0, Math.min(terminal.buffer.active.length, Math.floor(startRow)));
+      const lastRow = Math.max(firstRow, Math.min(terminal.buffer.active.length, Math.floor(endRow)));
+      for (let row = firstRow; row < lastRow; row += 1) {
         const bufferLine = terminal.buffer.active.getLine(row);
-        if (!bufferLine) continue;
+        const text = bufferLine?.translateToString(false) || '';
+        const cellColumns = [0];
+        if (bufferLine) {
+          for (let column = 0; column < terminal.cols; column += 1) {
+            const cell = bufferLine.getCell(column);
+            const width = cell?.getWidth?.() || 0;
+            if (!width) continue;
+            const chars = cell.getChars?.() || ' ';
+            for (let offset = 0; offset < chars.length; offset += 1) {
+              cellColumns.push(column + width);
+            }
+          }
+        }
         rows.push({
-          text: bufferLine.translateToString(false),
-          isWrapped: bufferLine.isWrapped,
+          text,
+          isWrapped: Boolean(bufferLine?.isWrapped),
+          cellColumns: cellColumns.length === text.length + 1 ? cellColumns : undefined,
         });
       }
       return rows;
@@ -1238,11 +1310,13 @@ const terminalSessionHtml = `<!doctype html>
     const bufferCellAt = (x, y) => {
       const screen = terminal.element?.querySelector('.xterm-screen');
       const rect = screen?.getBoundingClientRect();
-      if (!rect) return null;
-      const col = Math.max(0, Math.min(terminal.cols - 1, Math.floor((x - rect.left) / (rect.width / terminal.cols))));
-      const viewportRow = Math.max(0, Math.min(terminal.rows - 1, Math.floor((y - rect.top) / (rect.height / terminal.rows))));
-      const row = terminal.buffer.active.viewportY + viewportRow;
-      return { col, row };
+      return terminalCellAtPoint(
+        { clientX: x, clientY: y },
+        rect,
+        terminal.cols,
+        terminal.rows,
+        terminal.buffer.active.viewportY,
+      );
     };
     const moveCursorAtPoint = point => {
       if (offlineScrollback) return false;
@@ -1398,26 +1472,53 @@ const terminalSessionHtml = `<!doctype html>
     const urlAtPoint = (x, y) => {
       const cell = bufferCellAt(x, y);
       if (!cell) return null;
-      return osc8LinkAt(osc8Links, cell.row, cell.col)
-        || terminalLinkAt(terminalRows(), terminal.cols, cell.row, cell.col);
+      const linkWindow = 128;
+      const firstRow = Math.max(0, cell.row - linkWindow);
+      const lastRow = Math.min(terminal.buffer.active.length, cell.row + linkWindow + 1);
+      return osc8LinkAt(osc8Links, cell.row, cell.col, osc8CellMatchesLink)
+        || terminalLinkAt(
+          terminalRows(firstRow, lastRow),
+          terminal.cols,
+          cell.row,
+          cell.col,
+          firstRow,
+        );
     };
     let touch = null;
     let pinch = null;
     let longPressTimer = null;
+    let syntheticClickGuardTimer = null;
+    let suppressSyntheticClick = false;
     const doubleTapTimeoutMs = 300;
     const doubleTapDistancePx = 24;
     const touchDistance = touches => Math.hypot(
       touches[1].clientX - touches[0].clientX,
       touches[1].clientY - touches[0].clientY,
     );
-    document.getElementById('terminal').addEventListener('touchstart', event => {
+    const terminalSurface = document.getElementById('terminal');
+    const armSyntheticClickGuard = () => {
+      suppressSyntheticClick = true;
+      if (syntheticClickGuardTimer) clearTimeout(syntheticClickGuardTimer);
+      syntheticClickGuardTimer = setTimeout(() => {
+        suppressSyntheticClick = false;
+        syntheticClickGuardTimer = null;
+      }, 750);
+    };
+    terminalSurface.addEventListener('click', event => {
+      if (!suppressSyntheticClick) return;
+      suppressSyntheticClick = false;
+      if (syntheticClickGuardTimer) clearTimeout(syntheticClickGuardTimer);
+      syntheticClickGuardTimer = null;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, { capture: true });
+    terminalSurface.addEventListener('touchstart', event => {
       if (event.target.closest?.('#selection-toolbar')) return;
+      armSyntheticClickGuard();
+      event.preventDefault();
+      event.stopPropagation();
       if (keyboardEnabled && event.touches.length === 1) terminal.focus();
-      if (!keyboardEnabled) {
-        event.preventDefault();
-        event.stopPropagation();
-        terminal.blur();
-      }
+      if (!keyboardEnabled) terminal.blur();
       if (event.touches.length === 2) {
         if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
         event.preventDefault();
@@ -1445,6 +1546,7 @@ const terminalSessionHtml = `<!doctype html>
         if (terminalMouseCaptured() && keyboardEnabled) {
           touch.longPressed = true;
           touch.mouseDragging = dispatchTerminalMouse('down', { clientX: touch.x, clientY: touch.y });
+          if (touch.mouseDragging) touch.lastMousePoint = { clientX: touch.x, clientY: touch.y };
           lastTap = null;
           return;
         }
@@ -1465,7 +1567,7 @@ const terminalSessionHtml = `<!doctype html>
         }
       }, 420);
     }, { capture: true, passive: false });
-    document.getElementById('terminal').addEventListener('touchmove', event => {
+    terminalSurface.addEventListener('touchmove', event => {
       if (pinch && event.touches.length === 2) {
         event.preventDefault();
         event.stopPropagation();
@@ -1489,6 +1591,9 @@ const terminalSessionHtml = `<!doctype html>
         event.preventDefault();
         event.stopPropagation();
         dispatchTerminalMouse('move', point);
+        if (terminalMouseCell(point)) {
+          touch.lastMousePoint = { clientX: point.clientX, clientY: point.clientY };
+        }
         touch.lastX = point.clientX;
         touch.lastY = point.clientY;
         touch.moved = true;
@@ -1513,7 +1618,9 @@ const terminalSessionHtml = `<!doctype html>
       touch.lastY = point.clientY;
       scrollTerminalPixels(deltaPx, point);
     }, { capture: true, passive: false });
-    document.getElementById('terminal').addEventListener('touchend', event => {
+    terminalSurface.addEventListener('touchend', event => {
+      if (event.target.closest?.('#selection-toolbar')) return;
+      armSyntheticClickGuard();
       if (pinch) {
         event.preventDefault();
         event.stopPropagation();
@@ -1527,12 +1634,14 @@ const terminalSessionHtml = `<!doctype html>
         return;
       }
       if (!touch) return;
+      event.preventDefault();
+      event.stopPropagation();
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       const point = event.changedTouches[0];
       if (touch.mouseDragging) {
         event.preventDefault();
         event.stopPropagation();
-        if (point) dispatchTerminalMouse('up', point);
+        dispatchTerminalMouse('up', point || touch.lastMousePoint, touch.lastMousePoint);
         touch = null;
         return;
       }
@@ -1541,10 +1650,29 @@ const terminalSessionHtml = `<!doctype html>
         event.stopPropagation();
         if (!keyboardEnabled && point) showToolbar(point.clientX, point.clientY);
       }
+      if (!touch.moved && !touch.longPressed && point) {
+        const link = urlAtPoint(point.clientX, point.clientY);
+        if (link) {
+          handleTerminalStationaryTap({
+            point,
+            keyboardEnabled,
+            urlAtPoint: () => link,
+            terminalMouseInputEnabled: () => false,
+            dispatchTerminalClick,
+            send,
+            clearInteractiveSelection,
+            moveCursor: () => false,
+          });
+          event.stopImmediatePropagation();
+          lastTap = null;
+          touch = null;
+          return;
+        }
+      }
       if (!touch.moved && !touch.longPressed && point && !keyboardEnabled) {
         const tappedCell = bufferCellAt(point.clientX, point.clientY);
         const buffer = terminal.buffer.active;
-        if (!offlineScrollback && !urlAtPoint(point.clientX, point.clientY)
+        if (!offlineScrollback
           && tappedCell && (tappedCell.row === buffer.baseY + buffer.cursorY
             || terminalCursorTapInput(buffer, terminal.cols, tappedCell,
               terminal.modes.applicationCursorKeysMode,
@@ -1553,9 +1681,10 @@ const terminalSessionHtml = `<!doctype html>
         }
         event.preventDefault();
         event.stopPropagation();
-        handleKeyboardClosedStationaryTap({
+        handleTerminalStationaryTap({
           point,
-          urlAtPoint,
+          keyboardEnabled: false,
+          urlAtPoint: () => null,
           terminalMouseInputEnabled,
           dispatchTerminalClick,
           send,
@@ -1577,21 +1706,32 @@ const terminalSessionHtml = `<!doctype html>
           lastTap = null;
         } else {
           lastTap = doubleTapAction === 'none' ? null : now;
-          if (!offlineScrollback && (terminalMouseInputEnabled()
-            ? dispatchTerminalClick(point) : moveCursorAtPoint(point))) {
-            event.preventDefault();
+          if (handleTerminalStationaryTap({
+            point,
+            keyboardEnabled: true,
+            urlAtPoint: () => null,
+            terminalMouseInputEnabled: () => !offlineScrollback && terminalMouseInputEnabled(),
+            dispatchTerminalClick,
+            send,
+            clearInteractiveSelection,
+            moveCursor: moveCursorAtPoint,
+          })) {
             event.stopImmediatePropagation();
           }
         }
       }
       touch = null;
     }, { capture: true, passive: false });
-    document.getElementById('terminal').addEventListener('touchcancel', () => {
+    terminalSurface.addEventListener('touchcancel', event => {
+      if (event.target.closest?.('#selection-toolbar')) return;
+      armSyntheticClickGuard();
+      event.preventDefault();
+      event.stopPropagation();
       if (touch?.mouseDragging) {
         dispatchTerminalMouse('up', {
           clientX: touch.lastX ?? touch.x,
           clientY: touch.lastY ?? touch.y,
-        });
+        }, touch.lastMousePoint);
       }
       if (longPressTimer) clearTimeout(longPressTimer);
       longPressTimer = null;

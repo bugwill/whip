@@ -24,7 +24,7 @@ function osc8LinkFromData(data) {
   }
 }
 
-function terminalLinkCandidates(rows, columns) {
+function terminalLinkCandidates(rows, columns, rowBase = 0) {
   const logicalLines = [];
   let logicalLine = null;
 
@@ -38,15 +38,20 @@ function terminalLinkCandidates(rows, columns) {
     const nextIsWrapped = Boolean(rows[index + 1]?.isWrapped);
     const text = nextIsWrapped ? row.text : row.text.trimEnd();
     logicalLine.segments.push({
-      row: index,
+      row: rowBase + index,
       column: 0,
       start: logicalLine.text.length,
       end: logicalLine.text.length + text.length,
+      cellColumns: row.cellColumns,
     });
     logicalLine.text += text;
+    const trimmedLength = row.text.trimEnd().length;
+    const trimmedEndColumn = Number.isInteger(row.cellColumns?.[trimmedLength])
+      ? row.cellColumns[trimmedLength]
+      : trimmedLength;
     logicalLine.endsAtColumnBoundary = !nextIsWrapped
       && columns > 0
-      && row.text.trimEnd().length >= columns;
+      && trimmedEndColumn >= columns;
   }
   if (logicalLine) logicalLines.push(logicalLine);
 
@@ -91,6 +96,7 @@ function terminalLinkCandidates(rows, columns) {
           column: segment.column + overlapStart - segment.start,
           start: appendedAt + overlapStart - continuationStart,
           end: appendedAt + overlapEnd - continuationStart,
+          cellColumns: segment.cellColumns,
         });
       }
       text += continuation;
@@ -116,11 +122,16 @@ function terminalLinkCandidates(rows, columns) {
           cells: segments.flatMap(segment => {
             const overlapStart = Math.max(segment.start, start);
             const overlapEnd = Math.min(segment.end, end);
-            return overlapStart < overlapEnd ? [{
-              row: segment.row,
-              start: segment.column + overlapStart - segment.start,
-              end: segment.column + overlapEnd - segment.start,
-            }] : [];
+            if (overlapStart >= overlapEnd) return [];
+            const startOffset = segment.column + overlapStart - segment.start;
+            const endOffset = segment.column + overlapEnd - segment.start;
+            const startColumn = Number.isInteger(segment.cellColumns?.[startOffset])
+              ? segment.cellColumns[startOffset]
+              : startOffset;
+            const endColumn = Number.isInteger(segment.cellColumns?.[endOffset])
+              ? segment.cellColumns[endOffset]
+              : endOffset;
+            return [{ row: segment.row, start: startColumn, end: endColumn }];
           }),
         });
       } catch {}
@@ -163,7 +174,7 @@ function mergeTerminalLinks(rows, columns, osc8Links) {
   return links;
 }
 
-function osc8LinkAt(osc8Links, row, column) {
+function osc8LinkAt(osc8Links, row, column, cellMatchesLink = () => true) {
   let match = null;
   for (const link of osc8Links) {
     const startRow = link.marker.line;
@@ -171,13 +182,14 @@ function osc8LinkAt(osc8Links, row, column) {
     if (startRow < 0 || endRow < startRow || link.endColumn === null) continue;
     const afterStart = row > startRow || (row === startRow && column >= link.startColumn);
     const beforeEnd = row < endRow || (row === endRow && column < link.endColumn);
-    if (afterStart && beforeEnd && (!match || link.sequence > match.sequence)) match = link;
+    if (afterStart && beforeEnd && cellMatchesLink(link, row, column)
+      && (!match || link.sequence > match.sequence)) match = link;
   }
   return match?.href || null;
 }
 
-function terminalLinkAt(rows, columns, row, column) {
-  return terminalLinkCandidates(rows, columns).find(candidate =>
+function terminalLinkAt(rows, columns, row, column, rowBase = 0) {
+  return terminalLinkCandidates(rows, columns, rowBase).find(candidate =>
     candidate.cells.some(range =>
       range.row === row && column >= range.start && column < range.end
     )
