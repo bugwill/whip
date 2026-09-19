@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254" role="img" aria-labelledby="title desc">
+  <title id="title">Two-tab terminal logo</title>
+  <desc id="desc">A terminal window with two tabs and a greater-than underscore prompt.</desc>
+
+  <defs>
+    <mask id="terminal-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="1254" height="1254">
+      <rect width="1254" height="1254" fill="#fff"/>
+      <rect x="198" y="436" width="860" height="586" rx="42" fill="#000"/>
+    </mask>
+  </defs>
+
+  <g fill="#000" mask="url(#terminal-cutout)">
+    <rect x="128" y="366" width="999" height="725" rx="72"/>
+
+    <path d="M200 453V280c0-47 38-85 85-85h245c38 0 72 22 87 57l39 90c13 30 43 49 76 49H200z"/>
+
+    <path d="M675 244h270c34 0 65 20 79 51l20 48H705c-29 0-52-23-52-52v-15c0-18 10-32 22-32z"/>
+  </g>
+
+  <path d="M422 643 590 750 422 857" fill="none" stroke="#000" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M654 850h182" fill="none" stroke="#000" stroke-width="54" stroke-linecap="round"/>
+</svg>

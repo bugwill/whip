@@ -461,6 +461,8 @@ export const en = {
   'settings.reopenTerminalCopy': 'Open the last terminal when Herdr starts.',
   'settings.useModifierKeyIcons': 'Use icons for terminal keys',
   'settings.useModifierKeyIconsCopy': 'Show symbols instead of CTRL, SHIFT, ALT, ESC, TAB, and ENTER.',
+  'settings.tuiMouseInputWhenKeyboardEnabled': 'Open TUI mouse input with the keyboard',
+  'settings.tuiMouseInputWhenKeyboardEnabledCopy': 'Automatically enable TUI mouse input when the software keyboard opens. You can still toggle it from the toolbar.',
   'settings.terminalHistory': 'Input history',
   'settings.terminalHistoryCopy': 'Review or remove text saved from composer and paste actions.',
   'settings.terminalHistoryCount': '{{count}} entries',

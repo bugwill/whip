@@ -202,7 +202,9 @@ function terminalCursorTapInput(buffer, cols, target, applicationCursorKeys = fa
 }
 
 function terminalMouseInputSequence(action, column, row) {
-  const button = action === 'wheel-up' ? 64 : action === 'wheel-down' ? 65 : 0;
+  const button = action === 'wheel-up' ? 64
+    : action === 'wheel-down' ? 65
+      : action === 'drag' ? 32 : 0;
   const suffix = action === 'release' ? 'm' : 'M';
   const sgrColumn = Math.max(0, Math.min(0xffff, Math.round(Number(column) || 0))) + 1;
   const sgrRow = Math.max(0, Math.min(0xffff, Math.round(Number(row) || 0))) + 1;

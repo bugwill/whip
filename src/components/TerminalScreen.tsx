@@ -28,7 +28,7 @@ import {
   Keyboard as KeyboardIcon,
   MessageCircle,
   Minimize2,
-  MousePointer2,
+  Mouse,
   Option,
   Paperclip,
   Search,
@@ -74,10 +74,8 @@ import { useDisplayAnimationType, useDisplayProfile } from '@/src/lib/displayPro
 import { cn } from '@/src/lib/utils';
 import { retryDelay } from '../lib/retryDelay';
 import {
-  claimTerminalMouseWarning,
   fixedTerminalControls,
   scrollableTerminalControls,
-  terminalControlIsVisible,
   TERMINAL_CONTROL_HIT_SLOP,
   TERMINAL_ICON_CONTROL_CLASS,
   TERMINAL_TEXT_CONTROL_CLASS,
@@ -133,7 +131,6 @@ import {
   type OverlayScrollbarDragEvent,
 } from './OverlayScrollbar';
 import { AnimatedAgentStatusGlyph, useReducedMotion } from './app-ui';
-import { AppAlertPopup } from './AppAlertPopup';
 import { Button, type ButtonProps } from './ui/button';
 import { Icon } from './ui/icon';
 import { Input } from './ui/input';
@@ -451,6 +448,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     const renderer = useRef<TerminalRendererHandle | null>(null);
     const activeTargetRef = useRef(activeTarget);
     const keyboardViewportRef = useRef<View | null>(null);
+    const dockViewportRef = useRef<View | null>(null);
     const handledPasteRequest = useRef(0);
     const composeAttachmentsByTargetRef = useRef(
       new Map<string, ComposeAttachment[]>(),
@@ -530,14 +528,22 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       }, delay);
     };
     const [forcedMouseInput, setForcedMouseInput] = useState(false);
-    const [forcedMouseInputWarningOpen, setForcedMouseInputWarningOpen] =
-      useState(false);
     const [keyboardVisible, setKeyboardVisible] = useState(false);
+    const setForcedMouseInputEnabled = useCallback((enabled: boolean) => {
+      renderer.current?.setForcedMouseInput(enabled);
+      setForcedMouseInput(enabled);
+    }, []);
     // Track the IME even while terminal input is disabled or focus is transferring.
     // Measure the unshifted viewport, since the controls move by this inset.
     const { inset: keyboardInset, remeasure: remeasureKeyboard } = useKeyboardInset(keyboardViewportRef, {
       enabled: visible,
       onVisibilityChange: setKeyboardVisible,
+      getKeyboardTop: Platform.OS === 'android' ? getTerminalImeTopInWindow : undefined,
+    });
+    // The Portal has its own coordinate space; measure its actual host rather
+    // than applying the terminal viewport's overlap to a different ancestor.
+    const { inset: dockKeyboardInset, remeasure: remeasureDockKeyboard } = useKeyboardInset(dockViewportRef, {
+      enabled: visible && Boolean(session),
       getKeyboardTop: Platform.OS === 'android' ? getTerminalImeTopInWindow : undefined,
     });
     const [alternateScreen, setAlternateScreen] = useState(false);
@@ -706,15 +712,8 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     ]);
 
     useEffect(() => {
-      setForcedMouseInput(false);
-      renderer.current?.setForcedMouseInput(false);
-    }, [activeTarget?.key, status]);
-
-    useEffect(() => {
-      if (!keyboardEnabled || !forcedMouseInput) return;
-      renderer.current?.setForcedMouseInput(false);
-      setForcedMouseInput(false);
-    }, [forcedMouseInput, keyboardEnabled]);
+      setForcedMouseInputEnabled(false);
+    }, [activeTarget?.key, setForcedMouseInputEnabled, status]);
 
     const cacheTargetKey = activeTarget?.key || '';
     const offlineSnapshot = offlineBackendRef.current.snapshot(cacheTargetKey);
@@ -1603,6 +1602,9 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
               const enabled = !keyboardEnabled;
               if (enabled && status === 'connected' && !composeOpen) {
                 renderer.current?.setKeyboardEnabled(true);
+                if (preferences.tuiMouseInputWhenKeyboardEnabled) {
+                  setForcedMouseInputEnabled(true);
+                }
               }
               setKeyboardEnabled(enabled);
               if (enabled) {
@@ -1630,10 +1632,6 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       }
       if (control === 'mouse') {
         const disabled = status !== 'connected' || session?.kind === 'ssh';
-        const setEnabled = (enabled: boolean) => {
-          renderer.current?.setForcedMouseInput(enabled);
-          setForcedMouseInput(enabled);
-        };
         return (
           <TerminalControlButton
             key={control}
@@ -1655,17 +1653,14 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             onPress={() => {
               onControlUse(control);
               if (forcedMouseInput) {
-                setEnabled(false);
+                setForcedMouseInputEnabled(false);
                 return;
               }
-              setEnabled(true);
-              if (claimTerminalMouseWarning()) {
-                setForcedMouseInputWarningOpen(true);
-              }
+              setForcedMouseInputEnabled(true);
             }}
           >
             <View className={TERMINAL_ICON_BOX_CLASS}>
-              <MousePointer2
+              <Mouse
                 size={TERMINAL_ICON_SIZE}
                 color={forcedMouseInput ? appColors.primary : appColors.text}
               />
@@ -2088,6 +2083,9 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           <TerminalRendererHost
             onKeyboardRequested={() => {
               if (!visible || status !== 'connected' || composeOpen || searchOpen || historyOpen || chatViewEnabled) return;
+              if (preferences.tuiMouseInputWhenKeyboardEnabled) {
+                setForcedMouseInputEnabled(true);
+              }
               setKeyboardEnabled(true);
               renderer.current?.setKeyboardEnabled(true);
               renderer.current?.focus();
@@ -2103,7 +2101,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             offlineScroll={offlineSnapshot.scroll}
             onReady={() => {
               setReady(true);
-              setForcedMouseInput(false);
+              setForcedMouseInputEnabled(false);
             }}
             onInput={async (target, data) => {
               await sendInput(data, target, true);
@@ -2307,14 +2305,18 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             </View>
           </View>
         )}
-        {visible && composeOpen && !composeExpanded && (
-          <Portal name={`terminal-composer-${terminalId}`}>
-            <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+        {visible && session && (
+          <Portal name={`terminal-dock-${terminalId}`}>
+            <View ref={dockViewportRef} collapsable={false} onLayout={remeasureDockKeyboard}
+              testID="terminal-dock-viewport" pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+            <View testID="terminal-input-dock" pointerEvents="box-none"
+              style={{ position: 'absolute', left: 0, right: 0, bottom: dockKeyboardInset }}>
+              {composeOpen && !composeExpanded && (
               <View
-                className="absolute inset-x-0 border-t border-terminal-divider bg-transparent p-2"
+                className="border-t border-terminal-divider bg-transparent p-2"
                 style={{
                   backgroundColor: appColors.canvas,
-                  bottom: controlBarHeight + keyboardInset,
+                  flexShrink: 0,
                 }}
                 onLayout={event => {
                   const height = Math.round(event.nativeEvent.layout.height);
@@ -2333,8 +2335,12 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                   showSoftInputOnFocus={keyboardEnabled}
                   onFocus={() => {
                     remeasureKeyboard();
+                    remeasureDockKeyboard();
                     setTimeout(() => {
-                      if (visibleRef.current && composeOpenRef.current) remeasureKeyboard();
+                      if (visibleRef.current && composeOpenRef.current) {
+                        remeasureKeyboard();
+                        remeasureDockKeyboard();
+                      }
                     }, 80);
                   }}
                   multiline
@@ -2385,13 +2391,12 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                   }
                 />
               </View>
-            </View>
-          </Portal>
-        )}
+              )}
         <View
           collapsable={false}
-          className="absolute inset-x-0 bottom-0 z-30"
-          style={{ backgroundColor: appColors.canvas, transform: [{ translateY: -keyboardInset }] }}
+          testID="terminal-control-bar"
+          // Normal-flow siblings ensure the composer cannot overlap controls.
+          style={{ backgroundColor: appColors.canvas, flexShrink: 0 }}
           onLayout={event => {
             const height = Math.round(event.nativeEvent.layout.height);
             if (height <= 0) return;
@@ -2406,8 +2411,12 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           }}>
             {fixedTerminalControls.map(renderTerminalControl)}
             <TerminalDirectionPad onDirection={direction => {
-              onControlUse('up');
-              reportBackgroundFailure(sendInput(TERMINAL_KEYS[direction]![1]), TERMINAL_INPUT_CONTEXT);
+              onControlUse(direction);
+              if (renderer.current?.sendArrow(direction)) return;
+              reportBackgroundFailure(
+                sendInput(TERMINAL_KEYS[direction]![1]),
+                TERMINAL_INPUT_CONTEXT,
+              );
             }} />
           </View>
           <ScrollView
@@ -2419,18 +2428,14 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             contentContainerClassName="items-center gap-[5px] px-1.5 pt-[7px]"
             contentContainerStyle={{ paddingBottom: 7 + bottomSafeAreaInset }}
           >
-            {controlOrder
-              .filter(control =>
-                terminalControlIsVisible(
-                  control,
-                  keyboardEnabled,
-                  chatViewEnabled,
-                ),
-              )
-              .map(renderTerminalControl)}
+            {controlOrder.map(renderTerminalControl)}
           </ScrollView>
           </View>
         </View>
+            </View>
+            </View>
+          </Portal>
+        )}
         {visible && composeOpen && composeExpanded && (
           <Modal
             animationType={animationType}
@@ -2606,13 +2611,6 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             </View>
           </View>
         </Modal>
-        <AppAlertPopup
-          actionLabel={t('common.close')}
-          message={t('terminal.forceMouseInputWarning')}
-          title={t('terminal.forceMouseInputTitle')}
-          visible={forcedMouseInputWarningOpen}
-          onClose={() => setForcedMouseInputWarningOpen(false)}
-        />
       </View>
     );
   },

@@ -1,36 +1,99 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { PanResponder, View } from 'react-native';
 import { Move } from 'lucide-react-native';
 import { useTheme } from '../theme';
 
 type Direction = 'up' | 'down' | 'left' | 'right';
 
-/** Drag distance produces arrow steps; lifting or cancelling ends the gesture. */
+const PAD_WIDTH = 44;
+const PAD_HEIGHT = 36;
+const DEAD_ZONE = 18;
+const MOVE_SLOP = 5;
+const AUTO_REPEAT_DELAY_MS = 450;
+const AUTO_REPEAT_INTERVAL_MS = 100;
+
+function directionFromDisplacement(dx: number, dy: number): Direction | null {
+  if (Math.hypot(dx, dy) < DEAD_ZONE) return null;
+  return Math.abs(dx) > Math.abs(dy)
+    ? (dx > 0 ? 'right' : 'left')
+    : (dy > 0 ? 'down' : 'up');
+}
+
+/** A compact tap-and-joystick surface for terminal cursor movement. */
 export function TerminalDirectionPad({ onDirection }: { onDirection: (direction: Direction) => void }) {
   const { colors } = useTheme();
   const callback = useRef(onDirection);
   callback.current = onDirection;
-  const anchor = useRef({ x: 0, y: 0 });
+  const activeDirection = useRef<Direction | null>(null);
+  const moved = useRef(false);
+  const repeatTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repeatInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => () => {
+    if (repeatTimeout.current !== null) clearTimeout(repeatTimeout.current);
+    if (repeatInterval.current !== null) clearInterval(repeatInterval.current);
+  }, []);
+
   const pan = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onStartShouldSetPanResponderCapture: () => true,
     onMoveShouldSetPanResponder: () => true,
     onShouldBlockNativeResponder: () => true,
     onPanResponderTerminationRequest: () => false,
-    onPanResponderGrant: () => { anchor.current = { x: 0, y: 0 }; },
-    onPanResponderMove: (_event, gesture) => {
-      const dx = gesture.dx - anchor.current.x;
-      const dy = gesture.dy - anchor.current.y;
-      const horizontal = Math.abs(dx) > Math.abs(dy);
-      const distance = horizontal ? dx : dy;
-      const steps = Math.min(8, Math.floor(Math.abs(distance) / 18));
-      if (!steps) return;
-      const direction = horizontal ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
-      for (let i = 0; i < steps; i += 1) callback.current(direction);
-      anchor.current = { x: gesture.dx, y: gesture.dy };
+    onPanResponderGrant: () => {
+      moved.current = false;
+      activeDirection.current = null;
+      if (repeatTimeout.current !== null) clearTimeout(repeatTimeout.current);
+      if (repeatInterval.current !== null) clearInterval(repeatInterval.current);
+      repeatTimeout.current = null;
+      repeatInterval.current = null;
     },
-    onPanResponderRelease: () => { anchor.current = { x: 0, y: 0 }; },
-    onPanResponderTerminate: () => { anchor.current = { x: 0, y: 0 }; },
+    onPanResponderMove: (_event, gesture) => {
+      if (Math.max(Math.abs(gesture.dx), Math.abs(gesture.dy)) >= MOVE_SLOP) {
+        moved.current = true;
+      }
+      const direction = directionFromDisplacement(gesture.dx, gesture.dy);
+      if (direction === activeDirection.current) return;
+
+      if (repeatTimeout.current !== null) clearTimeout(repeatTimeout.current);
+      if (repeatInterval.current !== null) clearInterval(repeatInterval.current);
+      repeatTimeout.current = null;
+      repeatInterval.current = null;
+      activeDirection.current = direction;
+      if (!direction) return;
+
+      callback.current(direction);
+      repeatTimeout.current = setTimeout(() => {
+        repeatTimeout.current = null;
+        callback.current(direction);
+        repeatInterval.current = setInterval(() => {
+          if (activeDirection.current === direction) callback.current(direction);
+        }, AUTO_REPEAT_INTERVAL_MS);
+      }, AUTO_REPEAT_DELAY_MS);
+    },
+    onPanResponderRelease: event => {
+      if (!moved.current) {
+        const x = event.nativeEvent.locationX;
+        const y = event.nativeEvent.locationY;
+        const direction = directionFromDisplacement(
+          x - PAD_WIDTH / 2,
+          y - PAD_HEIGHT / 2,
+        );
+        if (direction) callback.current(direction);
+      }
+      activeDirection.current = null;
+      if (repeatTimeout.current !== null) clearTimeout(repeatTimeout.current);
+      if (repeatInterval.current !== null) clearInterval(repeatInterval.current);
+      repeatTimeout.current = null;
+      repeatInterval.current = null;
+    },
+    onPanResponderTerminate: () => {
+      activeDirection.current = null;
+      if (repeatTimeout.current !== null) clearTimeout(repeatTimeout.current);
+      if (repeatInterval.current !== null) clearInterval(repeatInterval.current);
+      repeatTimeout.current = null;
+      repeatInterval.current = null;
+    },
   }), []);
   return (
     // Do not use the shared active: control classes here. NativeWind upgrades

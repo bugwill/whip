@@ -395,6 +395,7 @@ export function SettingsSection(props: SettingsSectionProps) {
         <SettingRow title={t('settings.keepScreenOn')} copy={t('settings.keepScreenOnCopy')} value={props.keepScreenOn} onChange={props.onKeepScreenOnChange} divided />
         <SettingRow title={t('settings.reopenTerminal')} copy={t('settings.reopenTerminalCopy')} value={props.reopenTerminalOnLaunch} onChange={props.onReopenTerminalOnLaunchChange} divided />
         <SettingRow title={t('settings.useModifierKeyIcons')} copy={t('settings.useModifierKeyIconsCopy')} value={props.terminalPreferences.useModifierKeyIcons} onChange={value => props.onTerminalPreferencesChange({ ...props.terminalPreferences, useModifierKeyIcons: value })} divided />
+        <SettingRow title={t('settings.tuiMouseInputWhenKeyboardEnabled')} copy={t('settings.tuiMouseInputWhenKeyboardEnabledCopy')} value={props.terminalPreferences.tuiMouseInputWhenKeyboardEnabled} onChange={value => props.onTerminalPreferencesChange({ ...props.terminalPreferences, tuiMouseInputWhenKeyboardEnabled: value })} divided />
         <ActionRow
           title={t('settings.terminalHistory')}
           copy={t('settings.terminalHistoryCopy')}

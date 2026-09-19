@@ -16,14 +16,40 @@ export function useKeyboardInset(
   const [inset, setInset] = useState(0);
   const measurementRevision = useRef(0);
   const keyboardTopRef = useRef<number | null>(null);
+  const keyboardHeightRef = useRef(0);
   const keyboardVisibleRef = useRef(false);
+  const viewportBottomRef = useRef<number | null>(null);
+  const measureViewportBottom = useCallback(() => {
+    measuredViewRef.current?.measureInWindow((_x, y, _width, height) => {
+      viewportBottomRef.current = Math.ceil(y + height);
+    });
+  }, [measuredViewRef]);
   const remeasure = useCallback(() => {
-    if (!enabled || !keyboardVisibleRef.current) return;
+    // Keep a pre-IME bottom coordinate. Android may report a full-window
+    // keyboard frame while the activity is using adjustNothing; in that case
+    // the measured overlap is zero even though the IME covers the viewport.
+    if (!enabled) return;
+    if (!keyboardVisibleRef.current) {
+      measureViewportBottom();
+      return;
+    }
     const revision = ++measurementRevision.current;
     const measure = (keyboardTop: number) => {
       measuredViewRef.current?.measureInWindow((_x, y, _width, height) => {
         if (revision !== measurementRevision.current) return;
-        setInset(Math.max(0, Math.ceil(y + height - keyboardTop)));
+        const viewportBottom = Math.ceil(y + height);
+        const overlap = Math.max(0, viewportBottom - keyboardTop);
+        const baselineBottom = viewportBottomRef.current;
+        const frameDescribesOverlay =
+          keyboardHeightRef.current > 0 &&
+          baselineBottom !== null &&
+          viewportBottom >= baselineBottom - 2 &&
+          keyboardTop >= baselineBottom - 2;
+        setInset(
+          frameDescribesOverlay
+            ? Math.max(overlap, Math.ceil(keyboardHeightRef.current))
+            : overlap,
+        );
       });
     };
     // Keep the existing frame event responsive; WindowInsets corrects it once
@@ -36,9 +62,10 @@ export function useKeyboardInset(
         measure(nativeTop);
       }), 'keyboard-inset-native-ime-top');
     }
-  }, [enabled, getKeyboardTop, measuredViewRef]);
+  }, [enabled, getKeyboardTop, measureViewportBottom, measuredViewRef]);
   const resetInset = useCallback(() => {
     keyboardTopRef.current = null;
+    keyboardHeightRef.current = 0;
     keyboardVisibleRef.current = false;
     measurementRevision.current += 1;
     setInset(0);
@@ -54,26 +81,28 @@ export function useKeyboardInset(
       return;
     }
 
-    const measure = (keyboardTop: number) => {
+    const measure = (keyboardTop: number, keyboardHeight = keyboardHeightRef.current) => {
       keyboardTopRef.current = keyboardTop;
+      if (keyboardHeight > 0) keyboardHeightRef.current = keyboardHeight;
       keyboardVisibleRef.current = true;
       reportVisibility(true);
       remeasure();
     };
     const show = Keyboard.addListener('keyboardDidShow', event => {
-      measure(event.endCoordinates.screenY);
+      measure(event.endCoordinates.screenY, event.endCoordinates.height);
     });
     const hide = Keyboard.addListener('keyboardDidHide', () => {
       resetInset();
       reportVisibility(false);
     });
     const frame = Keyboard.addListener('keyboardDidChangeFrame', event => {
-      if (keyboardTopRef.current !== null) measure(event.endCoordinates.screenY);
+      if (keyboardTopRef.current !== null)
+        measure(event.endCoordinates.screenY, event.endCoordinates.height);
     });
 
     // The IME may have opened before subscription, with no further show event.
     const metrics = Keyboard.metrics?.();
-    if (metrics) measure(metrics.screenY);
+    if (metrics) measure(metrics.screenY, metrics.height);
     else {
       const visible = Keyboard.isVisible?.() ?? false;
       keyboardVisibleRef.current = visible;

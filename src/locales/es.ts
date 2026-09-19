@@ -450,6 +450,8 @@ export const es = {
   'settings.reopenTerminalCopy': 'Abra la última terminal cuando se inicie Herdr.',
   'settings.useModifierKeyIcons': 'Usar íconos para teclas de terminal',
   'settings.useModifierKeyIconsCopy': 'Muestra símbolos en lugar de CTRL, SHIFT, ALT, ESC, TAB y ENTER.',
+  'settings.tuiMouseInputWhenKeyboardEnabled': 'Abrir la entrada de mouse TUI con el teclado',
+  'settings.tuiMouseInputWhenKeyboardEnabledCopy': 'Activa automáticamente la entrada de mouse TUI cuando se abre el teclado. También puedes cambiarla desde la barra de herramientas.',
   'settings.terminalHistory': 'Historial de entrada',
   'settings.terminalHistoryCopy': 'Revisar o eliminar texto guardado del compositor y pegar acciones.',
   'settings.terminalHistoryCount': '{{count}} entradas',

@@ -25,12 +25,19 @@ test('applies Shift to characters and terminal navigation keys', () => {
   expect(applyTerminalModifiers('\u001b[A', 'off', 'off', 'armed')).toBe('\u001b[1;2A');
 });
 
+test('applies Ctrl and Alt modifiers to CSI and application cursor arrows', () => {
+  expect(applyTerminalModifiers('\u001b[A', 'armed', 'off')).toBe('\u001b[1;5A');
+  expect(applyTerminalModifiers('\u001bOA', 'off', 'armed')).toBe('\u001b[1;3A');
+  expect(applyTerminalModifiers('\u001b[5~', 'armed', 'armed')).toBe('\u001b[5;7~');
+});
+
 test('encodes text and modified keys when Kitty report-all mode is active', () => {
   expect(applyTerminalModifiers('a', 'off', 'off', 'off', true)).toBe('\u001b[97;1:1;97u');
   expect(applyTerminalModifiers('a', 'off', 'off', 'armed', true)).toBe('\u001b[97:65;2:1;65u');
   expect(applyTerminalModifiers('c', 'armed', 'off', 'off', true)).toBe('\u001b[99;5:1u');
   expect(applyTerminalModifiers('\r', 'off', 'off', 'armed', true)).toBe('\u001b[13;2:1u');
   expect(applyTerminalModifiers('\u001b[A', 'off', 'off', 'armed', true)).toBe('\u001b[1;2:1A');
+  expect(applyTerminalModifiers('\u001bOA', 'off', 'off', 'off', true)).toBe('\u001b[1;1:1A');
 });
 
 test('preserves already encoded terminal protocols in Kitty report-all mode', () => {

@@ -10,6 +10,8 @@ export function applyTerminalModifiers(
   if (kittyKeyboardReportAll) {
     return applyKittyKeyboardReportAll(data, ctrl, alt, shift);
   }
+  const navigation = applyLegacyNavigationModifiers(data, ctrl, alt, shift);
+  if (navigation !== null) return navigation;
   let value = shift === 'off' ? data : applyShift(data);
   if (ctrl !== 'off' && value.length === 1) {
     value = String.fromCharCode(value.toUpperCase().charCodeAt(0) % 32);
@@ -32,6 +34,10 @@ function applyKittyKeyboardReportAll(
   const csiBody = data.startsWith('\u001b[') ? data.slice(2) : '';
   const csiKey = csiBody.match(/^(?:1;\d+)?([ABCDHF])$/);
   if (csiKey) return `\u001b[1;${modifierField}${csiKey[1]}`;
+  const ss3Key = data.startsWith('\u001bO') && data.length === 3 ? data[2] : '';
+  if (ss3Key && 'ABCDHF'.includes(ss3Key)) {
+    return `\u001b[1;${modifierField}${ss3Key}`;
+  }
   const pageKey = csiBody.match(/^([56])(?:;\d+)?~$/);
   if (pageKey) return `\u001b[${pageKey[1]};${modifierField}~`;
   if (data === '\u001b[Z') return `\u001b[9;${modifierField}u`;
@@ -100,4 +106,26 @@ function applyShift(data: string): string {
   if (data.length !== 1) return data;
   if (data >= 'a' && data <= 'z') return data.toUpperCase();
   return SHIFTED_CHARACTERS[data] || data;
+}
+
+function applyLegacyNavigationModifiers(
+  data: string,
+  ctrl: TerminalModifierState,
+  alt: TerminalModifierState,
+  shift: TerminalModifierState,
+): string | null {
+  const modifier = 1
+    + (shift === 'off' ? 0 : 1)
+    + (alt === 'off' ? 0 : 2)
+    + (ctrl === 'off' ? 0 : 4);
+  if (modifier === 1) return null;
+
+  const cursor = data.startsWith('\u001b[') || data.startsWith('\u001bO')
+    ? data.length === 3 ? data[2] : ''
+    : '';
+  if (cursor && 'ABCDHF'.includes(cursor)) return `\u001b[1;${modifier}${cursor}`;
+  const page = data.startsWith('\u001b[') && data.length === 4
+    && '56'.includes(data[2]) && data[3] === '~' ? data[2] : '';
+  if (page) return `\u001b[${page};${modifier}~`;
+  return null;
 }

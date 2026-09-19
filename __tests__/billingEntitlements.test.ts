@@ -184,6 +184,7 @@ describe('Whip billing entitlements', () => {
       terminal: {
         fullscreen: true,
         useModifierKeyIcons: false,
+        tuiMouseInputWhenKeyboardEnabled: true,
         volumeUpAction: 'none',
         volumeDownAction: 'none',
         fontSize: 8,

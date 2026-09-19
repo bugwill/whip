@@ -1,5 +1,4 @@
 import {
-  claimTerminalMouseWarning,
   fixedTerminalControls,
   scrollableTerminalControls,
   defaultTerminalControlOrder,
@@ -15,9 +14,9 @@ import {
 } from '../src/lib/terminalControls';
 
 test('fixed controls stay in requested order and never enter the scrolling rail', () => {
-  expect(fixedTerminalControls).toEqual(['home', 'keyboard', 'compose', 'tab', 'esc']);
+  expect(fixedTerminalControls).toEqual(['home', 'mouse', 'keyboard', 'compose', 'tab', 'esc']);
   const order = scrollableTerminalControls({ home: 999, keyboard: 999, paste: 8, mouse: 9, ctrl: 8 });
-  expect(order.slice(0, 3)).toEqual(['mouse', 'ctrl', 'paste']);
+  expect(order.slice(0, 2)).toEqual(['ctrl', 'paste']);
   for (const fixed of [...fixedTerminalControls, 'up', 'down', 'left', 'right']) expect(order).not.toContain(fixed);
   expect(scrollableTerminalControls({ paste: 20 })[0]).toBe('paste');
 });
@@ -43,7 +42,7 @@ test('terminal controls use compact faces with 44pt native touch height', () => 
 
 test('starts with common controls and keeps secondary navigation at the right end', () => {
   expect(defaultTerminalControlOrder.slice(0, 16)).toEqual([
-    'keyboard', 'mouse', 'ctrl', 'shift', 'esc', 'tab', 'paste', 'history',
+    'mouse', 'keyboard', 'ctrl', 'shift', 'esc', 'tab', 'paste', 'history',
     'compose', 'chat', 'attach', 'files', 'links', 'up', 'left', 'right',
   ]);
   expect(defaultTerminalControlOrder.slice(-4)).toEqual(['page-down', 'alt', 'find', 'home']);
@@ -60,10 +59,10 @@ test('orders frequently used terminal controls first and keeps stable ties', () 
   expect(order.indexOf('esc')).toBeLessThan(order.indexOf('tab'));
 });
 
-test('pins mouse immediately after keyboard regardless of usage', () => {
+test('pins mouse immediately before keyboard regardless of usage', () => {
   const order = orderTerminalControls({ mouse: 100, paste: 50, keyboard: 1 });
 
-  expect(order.indexOf('mouse')).toBe(order.indexOf('keyboard') + 1);
+  expect(order.indexOf('mouse')).toBe(order.indexOf('keyboard') - 1);
 });
 
 test.each([
@@ -87,16 +86,11 @@ test('does not swap arrow controls from other buttons', () => {
   expect(terminalArrowControlCanSwap('tab')).toBe(false);
 });
 
-test('shows forced mouse input only in terminal view with the software keyboard disabled', () => {
+test('keeps TUI mouse input visible while keyboard and chat UI are active', () => {
   expect(terminalControlIsVisible('mouse', false, false)).toBe(true);
-  expect(terminalControlIsVisible('mouse', true, false)).toBe(false);
-  expect(terminalControlIsVisible('mouse', false, true)).toBe(false);
+  expect(terminalControlIsVisible('mouse', true, false)).toBe(true);
+  expect(terminalControlIsVisible('mouse', false, true)).toBe(true);
   expect(terminalControlIsVisible('paste', true, true)).toBe(true);
-});
-
-test('shows the TUI tapping warning only once per app module lifecycle', () => {
-  expect(claimTerminalMouseWarning()).toBe(true);
-  expect(claimTerminalMouseWarning()).toBe(false);
 });
 
 test('increments one persisted control without losing other usage', () => {

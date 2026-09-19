@@ -1,8 +1,8 @@
 import { APP_GLASS_FLOATING_CONTROL_CLASS } from './appGlass';
 
 export const defaultTerminalControlOrder = [
-  'keyboard',
   'mouse',
+  'keyboard',
   'ctrl',
   'shift',
   'esc',
@@ -33,7 +33,7 @@ export const defaultTerminalControlOrder = [
 export type TerminalControlId = typeof defaultTerminalControlOrder[number];
 export type TerminalControlUsage = Partial<Record<TerminalControlId, number>>;
 
-export const fixedTerminalControls = ['home', 'keyboard', 'compose', 'tab', 'esc'] as const;
+export const fixedTerminalControls = ['home', 'mouse', 'keyboard', 'compose', 'tab', 'esc'] as const;
 
 /** The four arrows are represented by the fixed direction pad, not rail keys. */
 export function scrollableTerminalControls(usage: TerminalControlUsage): TerminalControlId[] {
@@ -59,7 +59,6 @@ const terminalControlSwapTargets: Partial<
   down: 'up',
 };
 const MAX_USAGE_COUNT = 1_000_000;
-let terminalMouseWarningShown = false;
 
 export function orderTerminalControls(usage: TerminalControlUsage): TerminalControlId[] {
   const ordered = [...defaultTerminalControlOrder].sort((left, right) => (
@@ -68,7 +67,7 @@ export function orderTerminalControls(usage: TerminalControlUsage): TerminalCont
   ));
   const mouseIndex = ordered.indexOf('mouse');
   ordered.splice(mouseIndex, 1);
-  ordered.splice(ordered.indexOf('keyboard') + 1, 0, 'mouse');
+  ordered.splice(ordered.indexOf('keyboard'), 0, 'mouse');
   return ordered;
 }
 
@@ -94,16 +93,12 @@ export function terminalArrowControlCanSwap(
 }
 
 export function terminalControlIsVisible(
-  control: TerminalControlId,
-  keyboardEnabled: boolean,
-  chatViewEnabled: boolean,
+  _control: TerminalControlId,
+  _keyboardEnabled: boolean,
+  _chatViewEnabled: boolean,
 ): boolean {
-  return control !== 'mouse' || (!keyboardEnabled && !chatViewEnabled);
-}
-
-export function claimTerminalMouseWarning(): boolean {
-  if (terminalMouseWarningShown) return false;
-  terminalMouseWarningShown = true;
+  // TUI mouse input is user-controlled. Keep its control visible while the
+  // keyboard or chat overlay is active so its state can be changed manually.
   return true;
 }
 

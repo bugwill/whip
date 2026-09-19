@@ -450,6 +450,8 @@ export const zhHans = {
   'settings.reopenTerminalCopy': 'Herdr 启动时打开最后一个终端。',
   'settings.useModifierKeyIcons': '使用终端键图标',
   'settings.useModifierKeyIconsCopy': '显示符号而不是 CTRL、SHIFT、ALT、ESC、TAB 和 ENTER。',
+  'settings.tuiMouseInputWhenKeyboardEnabled': '键盘弹出时默认打开 TUI',
+  'settings.tuiMouseInputWhenKeyboardEnabledCopy': '软件键盘打开时自动启用 TUI 鼠标输入，也可以在工具栏中手动切换。',
   'settings.terminalHistory': '输入历史记录',
   'settings.terminalHistoryCopy': '查看或删除从编辑器和粘贴操作中保存的文本。',
   'settings.terminalHistoryCount': '{{count}} 条目',

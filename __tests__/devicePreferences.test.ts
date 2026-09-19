@@ -51,6 +51,7 @@ test('terminal preference defaults match the mobile renderer', () => {
   expect(defaultDevicePreferences.terminal).toEqual({
     fullscreen: true,
     useModifierKeyIcons: false,
+    tuiMouseInputWhenKeyboardEnabled: true,
     volumeUpAction: 'none',
     volumeDownAction: 'none',
     fontSize: 12,
@@ -146,6 +147,7 @@ test('migrates the old 11px mobile default to the usable 8px geometry', async ()
     terminal: {
       fullscreen: true,
       useModifierKeyIcons: false,
+      tuiMouseInputWhenKeyboardEnabled: true,
       volumeUpAction: 'none',
       volumeDownAction: 'none',
       fontSize: 12,
@@ -313,6 +315,18 @@ test('uses modifier key text by default and allows modifier key icons to be enab
   mockGetItem.mockResolvedValueOnce(JSON.stringify({ terminal: { useModifierKeyIcons: 'yes' } }));
   await expect(loadDevicePreferences()).resolves.toMatchObject({
     terminal: { useModifierKeyIcons: false },
+  });
+});
+
+test('defaults TUI mouse input on with the keyboard and persists an explicit choice', async () => {
+  mockGetItem.mockResolvedValueOnce(JSON.stringify({ terminal: { tuiMouseInputWhenKeyboardEnabled: false } }));
+  await expect(loadDevicePreferences()).resolves.toMatchObject({
+    terminal: { tuiMouseInputWhenKeyboardEnabled: false },
+  });
+
+  mockGetItem.mockResolvedValueOnce(JSON.stringify({ terminal: { tuiMouseInputWhenKeyboardEnabled: 'yes' } }));
+  await expect(loadDevicePreferences()).resolves.toMatchObject({
+    terminal: { tuiMouseInputWhenKeyboardEnabled: true },
   });
 });
 

@@ -4,6 +4,7 @@ const {
   setTerminalKeyboardInputEnabled,
   terminalCellAtPoint,
   terminalMousePointForAction,
+  terminalMouseInputSequence,
   terminalMouseClickInput,
   terminalMouseWheelInput,
 } = require('../scripts/terminal-touch-behavior.cjs') as {
@@ -38,6 +39,11 @@ const {
     fallbackPoint: { clientX: number; clientY: number } | null,
     cellAtPoint: (point: { clientX: number; clientY: number }) => { col: number; row: number } | null,
   ) => { clientX: number; clientY: number } | null;
+  terminalMouseInputSequence: (
+    action: 'press' | 'drag' | 'release',
+    column: number,
+    row: number,
+  ) => string;
   setTerminalKeyboardInputEnabled: (
     terminal: {
       textarea: { readOnly: boolean; inputMode: string };
@@ -181,6 +187,10 @@ test('encodes forced TUI clicks and wheel input with SGR cell coordinates', () =
     '\u001b[<64;12;7M\u001b[<64;12;7M',
   );
   expect(terminalMouseWheelInput('down', 1, 11, 6)).toBe('\u001b[<65;12;7M');
+});
+
+test('encodes forced TUI drag motion with the SGR motion bit', () => {
+  expect(terminalMouseInputSequence('drag', 11, 6)).toBe('\u001b[<32;12;7M');
 });
 
 test('keyboard-disabled xterm remains focusable for mouse handling without opening the IME', () => {

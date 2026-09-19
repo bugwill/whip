@@ -79,6 +79,7 @@ const mockAppState = jest.requireMock('react-native').AppState as {
 const preferences: TerminalPreferences = {
   fullscreen: true,
   useModifierKeyIcons: false,
+  tuiMouseInputWhenKeyboardEnabled: true,
   volumeUpAction: 'none',
   volumeDownAction: 'none',
   fontSize: 14,

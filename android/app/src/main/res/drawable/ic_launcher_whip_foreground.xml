@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Generated from assets/whip-logo.svg. Do not edit by hand. -->
+<!-- Generated from logo.svg. Do not edit by hand. -->
 <bitmap xmlns:android="http://schemas.android.com/apk/res/android"
     android:src="@drawable/ic_launcher_whip_foreground_image"
     android:gravity="fill" />

@@ -105,6 +105,19 @@ test('normal keyboard show and hide measure overlap and report visibility', () =
   expect(onVisibilityChange).toHaveBeenLastCalledWith(false);
 });
 
+test('uses the keyboard frame when adjustNothing leaves the viewport full size', () => {
+  render();
+  // onLayout records the viewport bottom before the IME opens.
+  act(() => result.remeasure());
+  measure();
+
+  // Android can report the IME frame at the viewport bottom while the IME is
+  // actually overlaying the unchanged activity window.
+  show(800);
+  measure();
+  expect(result.inset).toBe(300);
+});
+
 test('layout changes remeasure after Android resizes the window', () => {
   render();
   show();

@@ -450,6 +450,8 @@ export const ja = {
   'settings.reopenTerminalCopy': 'Herdr の開始時に最後のターミナルを開きます。',
   'settings.useModifierKeyIcons': '端末キーのアイコンを使用する',
   'settings.useModifierKeyIconsCopy': 'CTRL、SHIFT、ALT、ESC、TAB、および ENTER の代わりにシンボルを表示します。',
+  'settings.tuiMouseInputWhenKeyboardEnabled': 'キーボード表示時に TUI マウス入力を有効にする',
+  'settings.tuiMouseInputWhenKeyboardEnabledCopy': 'ソフトウェアキーボードを開いたときに TUI マウス入力を自動的に有効にします。ツールバーから手動で切り替えられます。',
   'settings.terminalHistory': '入力履歴',
   'settings.terminalHistoryCopy': 'コンポーザーおよび貼り付けアクションから保存されたテキストを確認または削除します。',
   'settings.terminalHistoryCount': '{{count}} エントリ',

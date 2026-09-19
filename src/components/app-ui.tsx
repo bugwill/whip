@@ -118,13 +118,21 @@ export function WhipMark({
   accessibilityLabel?: string;
 }) {
   return (
-    <LocalSvg
+    <View
       accessibilityLabel={accessibilityLabel}
       accessible={Boolean(accessibilityLabel)}
-      asset={bundledAsset(require('../../assets/whip-logo.svg'))}
-      height={size}
-      width={size}
-    />
+      style={{
+        alignItems: 'center',
+        height: size,
+        justifyContent: 'center',
+        width: size,
+      }}>
+      <LocalSvg
+        asset={bundledAsset(require('../../logo.svg'))}
+        height={size * 0.86}
+        width={size * 0.86}
+      />
+    </View>
   );
 }
 

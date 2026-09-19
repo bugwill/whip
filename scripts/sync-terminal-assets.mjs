@@ -951,8 +951,17 @@ const terminalSessionHtml = `<!doctype html>
     window.herdrSetForcedMouseInput = enabled => {
       forcedMouseInput = enabled === true;
     };
+    window.herdrSendArrow = direction => {
+      const suffix = direction === 'up' ? 'A'
+        : direction === 'down' ? 'B'
+          : direction === 'left' ? 'D'
+            : direction === 'right' ? 'C' : '';
+      if (!suffix) return;
+      const prefix = terminal.modes.applicationCursorKeysMode ? '\u001bO' : '\u001b[';
+      send({ type: 'input', data: prefix + suffix });
+    };
     const dispatchTerminalMouse = (action, point, fallbackPoint = null) => {
-      if (offlineScrollback || !terminalMouseCaptured() || !terminal.element) return false;
+      if (offlineScrollback || !terminal.element) return false;
       const dispatchPoint = terminalMousePointForAction(
         action,
         point,
@@ -960,6 +969,19 @@ const terminalSessionHtml = `<!doctype html>
         terminalMouseCell,
       );
       if (!dispatchPoint) return false;
+      if (forcedMouseInput) {
+        const cell = terminalMouseCell(dispatchPoint);
+        if (!cell) return false;
+        const mouseAction = action === 'down'
+          ? 'press'
+          : action === 'move' ? 'drag' : 'release';
+        send({
+          type: 'input',
+          data: terminalMouseInputSequence(mouseAction, cell.col, cell.row),
+        });
+        return true;
+      }
+      if (!terminalMouseCaptured()) return false;
       const eventType = action === 'down' ? 'mousedown' : action === 'move' ? 'mousemove' : 'mouseup';
       terminal.element.dispatchEvent(new MouseEvent(eventType, {
         bubbles: true,
@@ -1051,7 +1073,14 @@ const terminalSessionHtml = `<!doctype html>
       terminalBoundaryScrollState = result;
       const rowDelta = result.rowScrollDelta;
       if (rowDelta !== 0) {
-        if (offlineScrollback || localScrollback) {
+        if (terminalMouseInputEnabled() && dispatchTerminalWheel(
+          rowDelta > 0 ? 'up' : 'down',
+          Math.abs(rowDelta),
+          point,
+        )) {
+          // Mouse-capture applications own one-finger scrolling. Do not also
+          // move the local/remote scrollback underneath them.
+        } else if (offlineScrollback || localScrollback) {
           terminal.scrollLines(-rowDelta);
         } else {
           remoteVisualScrollOffset = result.offsetFromBottom;
@@ -1543,7 +1572,7 @@ const terminalSessionHtml = `<!doctype html>
       touch = { x: point.clientX, y: point.clientY, lastY: point.clientY, moved: false, longPressed: false, selection: null };
       longPressTimer = setTimeout(() => {
         if (!touch || touch.moved) return;
-        if (terminalMouseCaptured() && keyboardEnabled) {
+        if (terminalMouseInputEnabled()) {
           touch.longPressed = true;
           touch.mouseDragging = dispatchTerminalMouse('down', { clientX: touch.x, clientY: touch.y });
           if (touch.mouseDragging) touch.lastMousePoint = { clientX: touch.x, clientY: touch.y };
@@ -1986,6 +2015,7 @@ const terminalHtml = `<!doctype html>
     window.herdrSetEditableRegion = (key, region) => call(key, 'herdrSetEditableRegion', [region]);
     window.herdrClearEditableRegion = key => call(key, 'herdrClearEditableRegion');
     window.herdrSetForcedMouseInput = (key, enabled) => call(key, 'herdrSetForcedMouseInput', [enabled]);
+    window.herdrSendArrow = (key, direction) => call(key, 'herdrSendArrow', [direction]);
     window.herdrSetRenderDrop = (key, enabled) => call(key, 'herdrSetRenderDrop', [enabled]);
     window.herdrSnapshot = (key, reason) => call(key, 'herdrSnapshot', [reason]);
     window.herdrFit = key => call(key, 'herdrFit');

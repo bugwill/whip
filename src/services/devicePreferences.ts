@@ -54,6 +54,7 @@ export type AgentAlertLevel = (typeof agentAlertLevels)[number];
 export interface TerminalPreferences {
   fullscreen: boolean;
   useModifierKeyIcons: boolean;
+  tuiMouseInputWhenKeyboardEnabled: boolean;
   volumeUpAction: TerminalVolumeKeyAction;
   volumeDownAction: TerminalVolumeKeyAction;
   fontSize: number;
@@ -138,6 +139,7 @@ export const defaultDevicePreferences: DevicePreferences = {
   terminal: {
     fullscreen: true,
     useModifierKeyIcons: false,
+    tuiMouseInputWhenKeyboardEnabled: true,
     volumeUpAction: 'none',
     volumeDownAction: 'none',
     fontSize: 12,
@@ -319,6 +321,9 @@ function parseDevicePreferences(
           ? terminal.fullscreen
           : defaultDevicePreferences.terminal.fullscreen,
         useModifierKeyIcons: terminal.useModifierKeyIcons === true,
+        tuiMouseInputWhenKeyboardEnabled: typeof terminal.tuiMouseInputWhenKeyboardEnabled === 'boolean'
+          ? terminal.tuiMouseInputWhenKeyboardEnabled
+          : defaultDevicePreferences.terminal.tuiMouseInputWhenKeyboardEnabled,
         volumeUpAction: parseTerminalVolumeKeyAction(
           terminal.volumeUpAction,
           defaultDevicePreferences.terminal.volumeUpAction,

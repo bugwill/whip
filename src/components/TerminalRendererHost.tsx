@@ -196,6 +196,7 @@ export interface TerminalRendererHandle {
   fit: () => void;
   focus: () => void;
   input: (data: string) => boolean;
+  sendArrow: (direction: 'up' | 'down' | 'left' | 'right') => boolean;
   paste: (data: string) => void;
   retry: () => void;
   scanLinks: () => void;
@@ -900,15 +901,15 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
 
   const activeCall = useCallback((method: string, args: unknown[] = []) => {
     const key = activeKey.current;
-    if (!key) return;
+    if (!key) return false;
     const entry = entries.current.get(key);
-    if (entry) {
-      if (method === 'herdrScroll' || method === 'herdrScrollToVisualBottom') {
-        markEinkImmediate(entry);
-      }
-      flushEinkWrites(entry);
+    if (!entry) return false;
+    if (method === 'herdrScroll' || method === 'herdrScrollToVisualBottom') {
+      markEinkImmediate(entry);
     }
+    flushEinkWrites(entry);
     inject(`window.${method}(${[JSON.stringify(key), ...args.map(value => JSON.stringify(value))].join(', ')});`);
+    return true;
   }, [flushEinkWrites, inject, markEinkImmediate]);
 
   const waitForWritable = useCallback((entry: RendererEntry): Promise<void> => {
@@ -1019,6 +1020,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       );
       return true;
     },
+    sendArrow: direction => activeCall('herdrSendArrow', [direction]),
     paste: data => {
       const key = activeKey.current;
       const entry = key ? entries.current.get(key) : null;

@@ -450,6 +450,8 @@ export const zhHant: Record<string, string> = {
   'settings.reopenTerminalCopy': 'Herdr 啟動時開啟上次使用的終端機。',
   'settings.useModifierKeyIcons': '終端機按鍵使用圖示',
   'settings.useModifierKeyIconsCopy': '以符號取代 CTRL、SHIFT、ALT、ESC、TAB 和 ENTER。',
+  'settings.tuiMouseInputWhenKeyboardEnabled': '鍵盤彈出時預設開啟 TUI',
+  'settings.tuiMouseInputWhenKeyboardEnabledCopy': '軟體鍵盤開啟時自動啟用 TUI 滑鼠輸入，也可以在工具列中手動切換。',
   'settings.terminalHistory': '輸入記錄',
   'settings.terminalHistoryCopy': '檢視或移除從輸入編輯器與貼上操作儲存的文字。',
   'settings.terminalHistoryCount': '{{count}} 個項目',
