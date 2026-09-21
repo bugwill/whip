@@ -52,6 +52,16 @@ class HerdrBackgroundModule(
   override fun getName(): String = "HerdrBackground"
 
   @ReactMethod
+  fun updateHostStatus(sessionId: String, state: String, signal: String) {
+    mainHandler.post { HerdrBackgroundService.updateHostStatus(sessionId, state, signal) }
+  }
+
+  @ReactMethod
+  fun removeHostStatus(sessionId: String) {
+    mainHandler.post { HerdrBackgroundService.removeHostStatus(sessionId) }
+  }
+
+  @ReactMethod
   fun startChatSpeech(token: String, label: String, promise: Promise) {
     mainHandler.post {
       try {

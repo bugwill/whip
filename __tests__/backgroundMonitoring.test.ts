@@ -3,6 +3,8 @@ jest.mock('react-native', () => ({
     HerdrBackground: {
       start: jest.fn(() => Promise.resolve()),
       stop: jest.fn(() => Promise.resolve()),
+      updateHostStatus: jest.fn(),
+      removeHostStatus: jest.fn(),
       armPersistentAlert: jest.fn(() => Promise.resolve()),
       dismissPersistentAlert: jest.fn(() => Promise.resolve()),
     },
@@ -15,16 +17,22 @@ import { NativeModules } from 'react-native';
 import {
   startBackgroundMonitoring,
   stopBackgroundMonitoring,
+  updateBackgroundHostStatus,
+  removeBackgroundHostStatus,
 } from '../src/services/backgroundMonitoring';
 
 const native = NativeModules.HerdrBackground as {
   start: jest.Mock;
   stop: jest.Mock;
+  updateHostStatus: jest.Mock;
+  removeHostStatus: jest.Mock;
 };
 
 beforeEach(() => {
   native.start.mockClear();
   native.stop.mockClear();
+  native.updateHostStatus.mockClear();
+  native.removeHostStatus.mockClear();
 });
 
 test('starts Android monitoring with the typed effective power mode', async () => {
@@ -38,4 +46,13 @@ test('starts Android monitoring with the typed effective power mode', async () =
 test('stops monitoring through the shared service without choosing speech ownership', async () => {
   await stopBackgroundMonitoring();
   expect(native.stop).toHaveBeenCalledTimes(1);
+});
+
+test('forwards runtime health and removal to the persistent notification', () => {
+  updateBackgroundHostStatus('session-1', 'connected', 'connection');
+  updateBackgroundHostStatus('session-1', '', 'heartbeat');
+  removeBackgroundHostStatus('session-1');
+  expect(native.updateHostStatus).toHaveBeenNthCalledWith(1, 'session-1', 'connected', 'connection');
+  expect(native.updateHostStatus).toHaveBeenNthCalledWith(2, 'session-1', '', 'heartbeat');
+  expect(native.removeHostStatus).toHaveBeenCalledWith('session-1');
 });

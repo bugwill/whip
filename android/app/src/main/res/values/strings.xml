@@ -5,6 +5,12 @@
     <string name="herdr_background_channel">Herdr background monitoring</string>
     <string name="herdr_background_channel_description">Shows when Herdr is keeping remote sessions connected</string>
     <string name="herdr_background_title">Herdr is monitoring in the background</string>
+    <string name="herdr_background_checking">Checking %1$d host(s)</string>
+    <string name="herdr_background_connecting">Connecting to %1$d host(s)</string>
+    <string name="herdr_background_reconnecting">Connection interrupted · reconnecting (%1$d host(s))</string>
+    <string name="herdr_background_stream_closed">Agent events interrupted (%1$d host(s))</string>
+    <string name="herdr_background_unverified">Connection not recently verified (%1$d host(s))</string>
+    <string name="herdr_background_connected">Connected · monitoring %1$d host(s)</string>
     <plurals name="herdr_background_hosts">
         <item quantity="one">Watching %1$d remote host over SSH</item>
         <item quantity="other">Watching %1$d remote hosts over SSH</item>

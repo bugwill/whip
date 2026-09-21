@@ -50,6 +50,7 @@ import {
   waitForRuntimeDestruction,
 } from '../lib/sessionRuntimePolicy';
 import { bestEffortCleanup } from '../services/backgroundOperations';
+import { removeBackgroundHostStatus, updateBackgroundHostStatus } from '../services/backgroundMonitoring';
 import { HerdrClient } from '../services/HerdrClient';
 import {
   networkErrorKind,
@@ -266,6 +267,7 @@ export function useSessionConnectionLifecycle({
           return;
         }
         if (event.type === 'connection-state') {
+          updateBackgroundHostStatus(sessionId, event.state, 'connection');
           recordNetworkDiagnostic(
             event.state === 'failed' ? 'error' : 'info',
             'native-connection-state',
@@ -311,6 +313,7 @@ export function useSessionConnectionLifecycle({
           return;
         }
         if (event.type === 'latency-measured') {
+          updateBackgroundHostStatus(sessionId, '', 'heartbeat');
           handleLatencyMeasurement(sessionId, runtime, event.measurement);
           return;
         }
@@ -333,10 +336,12 @@ export function useSessionConnectionLifecycle({
           return;
         }
         if (event.type === 'event-stream-closed') {
+          updateBackgroundHostStatus(sessionId, '', 'stream-closed');
           scheduleEventReconnect(sessionId, event.reason);
           return;
         }
         if (event.type === 'event-stream-restored') {
+          updateBackgroundHostStatus(sessionId, '', 'stream-restored');
           recordNetworkDiagnostic('info', 'event-stream-restored-native', {
             sessionId,
             generation: event.generation,
@@ -376,6 +381,7 @@ export function useSessionConnectionLifecycle({
         runtimesRef.current.delete(sessionId);
         destruction = destroyRuntime(sessionId, runtime);
       }
+      removeBackgroundHostStatus(sessionId);
       clearLatency(sessionId);
       navigation.clearSessionView(sessionId);
       const view = appCoreRef.current.closeSession(sessionId);

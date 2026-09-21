@@ -4,6 +4,8 @@ import type { BackgroundPowerMode } from './devicePreferences';
 interface HerdrBackgroundNativeModule {
   start(hostCount: number, powerMode: BackgroundPowerMode): Promise<void>;
   stop(): Promise<void>;
+  updateHostStatus(sessionId: string, state: string, signal: string): void;
+  removeHostStatus(sessionId: string): void;
   armPersistentAlert(
     notificationIdentifier: string,
     channelId: string,
@@ -34,6 +36,14 @@ export async function stopBackgroundMonitoring(): Promise<void> {
   const module = nativeModule();
   if (!module) return;
   await module.stop();
+}
+
+export function updateBackgroundHostStatus(sessionId: string, state: string, signal = ''): void {
+  nativeModule()?.updateHostStatus(sessionId, state, signal);
+}
+
+export function removeBackgroundHostStatus(sessionId: string): void {
+  nativeModule()?.removeHostStatus(sessionId);
 }
 
 export async function armPersistentAgentAlert(

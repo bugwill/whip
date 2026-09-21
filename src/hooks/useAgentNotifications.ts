@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 
-import { dismissAgentAlerts, prepareAlerts } from '../services/alerts';
+import { prepareAlerts } from '../services/alerts';
 import { reportBackgroundFailure } from '../services/backgroundOperations';
 import {
   operationalErrorDetails,
   recordOperationalDiagnostic,
 } from '../services/operationalDiagnostics';
 
-/** Owns notification setup, response delivery, and foreground cleanup. */
+/** Owns notification setup and response delivery. */
 export function useAgentNotifications() {
   const [response, setResponse] =
     useState<Notifications.NotificationResponse | null>(null);
@@ -39,19 +38,6 @@ export function useAgentNotifications() {
       active = false;
       subscription.remove();
     };
-  }, []);
-
-  useEffect(() => {
-    let previousState = AppState.currentState;
-    const subscription = AppState.addEventListener('change', state => {
-      const returnedToForeground =
-        previousState !== 'active' && state === 'active';
-      previousState = state;
-      if (returnedToForeground) {
-        reportBackgroundFailure(dismissAgentAlerts(), 'agent-alerts-dismiss');
-      }
-    });
-    return () => subscription.remove();
   }, []);
 
   const wasHandled = useCallback(

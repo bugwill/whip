@@ -1626,9 +1626,6 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
               const enabled = !keyboardEnabled;
               if (enabled && status === 'connected' && !composeOpen) {
                 renderer.current?.setKeyboardEnabled(true);
-                if (preferences.tuiMouseInputWhenKeyboardEnabled) {
-                  setForcedMouseInputEnabled(true);
-                }
               }
               setKeyboardEnabled(enabled);
               if (enabled) {
@@ -2107,9 +2104,6 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           <TerminalRendererHost
             onKeyboardRequested={() => {
               if (!visible || status !== 'connected' || composeOpen || searchOpen || historyOpen || chatViewEnabled) return;
-              if (preferences.tuiMouseInputWhenKeyboardEnabled) {
-                setForcedMouseInputEnabled(true);
-              }
               setKeyboardEnabled(true);
               renderer.current?.setKeyboardEnabled(true);
               renderer.current?.focus();
