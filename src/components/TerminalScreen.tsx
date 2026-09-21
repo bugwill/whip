@@ -502,6 +502,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     const expandedViewportRef = useRef<View | null>(null);
     const { inset: expandedKeyboardInset, remeasure: remeasureExpandedKeyboard } = useKeyboardInset(expandedViewportRef, {
       enabled: visible && composeOpen && composeExpanded,
+      additionalOffset: preferences?.imeToolbarCompensation,
     });
     const [composerHeight, setComposerHeight] = useState(0);
     const [controlBarHeight, setControlBarHeight] = useState(
@@ -539,12 +540,14 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       enabled: visible,
       onVisibilityChange: setKeyboardVisible,
       getKeyboardTop: Platform.OS === 'android' ? getTerminalImeTopInWindow : undefined,
+      additionalOffset: preferences?.imeToolbarCompensation,
     });
     // The Portal has its own coordinate space; measure its actual host rather
     // than applying the terminal viewport's overlap to a different ancestor.
     const { inset: dockKeyboardInset, remeasure: remeasureDockKeyboard } = useKeyboardInset(dockViewportRef, {
       enabled: visible && Boolean(session),
       getKeyboardTop: Platform.OS === 'android' ? getTerminalImeTopInWindow : undefined,
+      additionalOffset: preferences?.imeToolbarCompensation,
     });
     const [alternateScreen, setAlternateScreen] = useState(false);
     const [reportedTitle, setReportedTitle] = useState('');
@@ -584,6 +587,8 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       keyboardVisible,
     });
     composeOpenRef.current = composeOpen;
+    const effectiveControlBarBottomInset =
+      dockKeyboardInset > 0 || keyboardVisible ? 0 : bottomSafeAreaInset;
     const viewportLayout = useMemo(
       () =>
         terminalViewportLayout({
@@ -1369,6 +1374,8 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       await setTerminalComposerOverlay(terminalId, false).catch(reason =>
         setError(String(reason)),
       );
+      remeasureKeyboard();
+      remeasureDockKeyboard();
     };
 
     const openCompose = () => {
@@ -1385,11 +1392,28 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           // The native window may have changed from resize to overlay while
           // this IME was already open; measure again after the layout settles.
           remeasureKeyboard();
+          remeasureDockKeyboard();
           setTimeout(() => {
-            if (visibleRef.current && composeOpenRef.current) remeasureKeyboard();
+            if (visibleRef.current && composeOpenRef.current) {
+              remeasureKeyboard();
+              remeasureDockKeyboard();
+            }
           }, 80);
+          setTimeout(() => {
+            if (visibleRef.current && composeOpenRef.current) {
+              remeasureKeyboard();
+              remeasureDockKeyboard();
+            }
+          }, 250);
         });
     };
+
+    useEffect(() => {
+      if (visible && composeOpen) {
+        remeasureKeyboard();
+        remeasureDockKeyboard();
+      }
+    }, [composeOpen, visible, remeasureKeyboard, remeasureDockKeyboard]);
 
     const expandCompose = () => {
       renderer.current?.blur();
@@ -2342,6 +2366,12 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                         remeasureDockKeyboard();
                       }
                     }, 80);
+                    setTimeout(() => {
+                      if (visibleRef.current && composeOpenRef.current) {
+                        remeasureKeyboard();
+                        remeasureDockKeyboard();
+                      }
+                    }, 250);
                   }}
                   multiline
                   numberOfLines={3}
@@ -2407,7 +2437,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
         >
           <View className="flex-row items-start">
           <View testID="terminal-fixed-controls" style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 0, gap: 5,
-            paddingLeft: 6, paddingRight: 6, paddingTop: 7, paddingBottom: 7 + bottomSafeAreaInset,
+            paddingLeft: 6, paddingRight: 6, paddingTop: 7, paddingBottom: 7 + effectiveControlBarBottomInset,
           }}>
             {fixedTerminalControls.map(renderTerminalControl)}
             <TerminalDirectionPad onDirection={direction => {
@@ -2426,7 +2456,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             showsHorizontalScrollIndicator={false}
             className="min-w-0 flex-1"
             contentContainerClassName="items-center gap-[5px] px-1.5 pt-[7px]"
-            contentContainerStyle={{ paddingBottom: 7 + bottomSafeAreaInset }}
+            contentContainerStyle={{ paddingBottom: 7 + effectiveControlBarBottomInset }}
           >
             {controlOrder.map(renderTerminalControl)}
           </ScrollView>

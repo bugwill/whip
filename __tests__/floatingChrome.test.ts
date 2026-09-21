@@ -16,22 +16,22 @@ describe('floating chrome geometry', () => {
     const singlePaneChromeInset = terminalSessionChromeHeight(1);
     const multiPaneChromeInset = terminalSessionChromeHeight(2);
 
-    expect(singlePaneChromeInset).toBe(143);
-    expect(multiPaneChromeInset).toBe(143);
+    expect(singlePaneChromeInset).toBe(128);
+    expect(multiPaneChromeInset).toBe(128);
     expect(
       terminalBottomChromeClearance({
         sessionChromeInset: singlePaneChromeInset,
         sessionChromeVisible: true,
         terminalBottomInset,
       }),
-    ).toBe(227);
+    ).toBe(212);
     expect(
       terminalBottomChromeClearance({
         sessionChromeInset: multiPaneChromeInset,
         sessionChromeVisible: true,
         terminalBottomInset,
       }),
-    ).toBe(227);
+    ).toBe(212);
     expect(
       terminalBottomChromeClearance({
         sessionChromeInset: multiPaneChromeInset,
@@ -45,14 +45,14 @@ describe('floating chrome geometry', () => {
         sessionChromeVisible: true,
         terminalBottomInset,
       }),
-    ).toBe(239);
+    ).toBe(224);
     expect(
       terminalLatestButtonBottom({
         sessionChromeInset: multiPaneChromeInset,
         sessionChromeVisible: true,
         terminalBottomInset,
       }),
-    ).toBe(239);
+    ).toBe(224);
     expect(
       terminalLatestButtonBottom({
         sessionChromeInset: multiPaneChromeInset,
@@ -89,10 +89,10 @@ describe('floating chrome geometry', () => {
       sessionChromeInset: terminalSessionChromeHeight(2),
       sessionChromeVisible: true,
     });
-    expect(insets).toEqual({ top: 0, bottom: 227 });
+    expect(insets).toEqual({ top: 0, bottom: 212 });
     expect(insetContentPadding(insets, { top: 16, bottom: 24 })).toEqual({
       top: 16,
-      bottom: 251,
+      bottom: 236,
     });
   });
 

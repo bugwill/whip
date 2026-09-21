@@ -497,6 +497,8 @@ export const ja = {
   'settings.cachedTerminalsCopy': '2 より大きい整数を入力してください。古いターミナル ビューは、再度開くと再構築されます。',
   'settings.blinkingCursor': 'カーソルの点滅',
   'settings.blinkingCursorCopy': 'ペインがアクティブなときに端末カーソルをアニメーション化します。',
+  'settings.imeToolbarCompensation': 'IMEツールバー余白調整',
+  'settings.imeToolbarCompensationCopy': 'Sogouなどのサードパーティ製IMEの候補バーによる下部コントロールの隠れを防ぐ余白。',
   'settings.backgroundDimming': '背景の調光',
   'settings.backgroundImage': '背景画像',
   'settings.backgroundImageCopy': '非公開で保存され、Android バックアップに含まれます。',

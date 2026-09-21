@@ -23,6 +23,7 @@ let result: ReturnType<typeof useKeyboardInset>;
 let measurements: Measurement[];
 let listeners: Map<string, (event: KeyboardEvent) => void>;
 let getKeyboardTop: (() => Promise<number | null>) | undefined;
+let additionalOffset: number | undefined;
 const onVisibilityChange = jest.fn();
 const measuredViewRef = {
   current: {
@@ -31,7 +32,7 @@ const measuredViewRef = {
 };
 
 function Harness({ enabled = true }: { enabled?: boolean }) {
-  result = useKeyboardInset(measuredViewRef, { enabled, onVisibilityChange, getKeyboardTop });
+  result = useKeyboardInset(measuredViewRef, { enabled, onVisibilityChange, getKeyboardTop, additionalOffset });
   return null;
 }
 
@@ -73,6 +74,7 @@ function measure(index = measurements.length - 1) {
 
 beforeEach(() => {
   getKeyboardTop = undefined;
+  additionalOffset = undefined;
   measurements = [];
   listeners = new Map();
   onVisibilityChange.mockClear();
@@ -273,3 +275,40 @@ test('keyboard events still work when cached state APIs are unavailable', () => 
   measure();
   expect(result.inset).toBe(300);
 });
+
+test('additionalOffset increases inset when keyboard is shown', () => {
+  additionalOffset = 50;
+  render();
+  expect(result.inset).toBe(0);
+  show();
+  measure();
+  expect(result.inset).toBe(350);
+  hide();
+  expect(result.inset).toBe(0);
+});
+
+test('changing additionalOffset while keyboard is visible updates inset', () => {
+  additionalOffset = 50;
+  render();
+  show();
+  measure();
+  expect(result.inset).toBe(350);
+  additionalOffset = 70;
+  render();
+  measure();
+  expect(result.inset).toBe(370);
+});
+
+test('additionalOffset is maintained even after Android resizes the window', () => {
+  additionalOffset = 75;
+  render();
+  show();
+  measure();
+  expect(result.inset).toBe(375);
+  act(() => result.remeasure());
+  act(() => measurements[measurements.length - 1](0, 0, 400, 500));
+  expect(result.inset).toBe(75);
+  hide();
+  expect(result.inset).toBe(0);
+});
+

@@ -508,6 +508,8 @@ export const en = {
   'settings.cachedTerminalsCopy': 'Enter an integer greater than 2. Older terminal views are rebuilt when reopened.',
   'settings.blinkingCursor': 'Blinking cursor',
   'settings.blinkingCursorCopy': 'Animate the terminal cursor while the pane is active.',
+  'settings.imeToolbarCompensation': 'IME toolbar offset',
+  'settings.imeToolbarCompensationCopy': 'Extra clearance for custom candidate bars (e.g. Sogou IME) so terminal controls remain visible.',
   'settings.backgroundDimming': 'Background dimming',
   'settings.backgroundImage': 'Background image',
   'settings.backgroundImageCopy': 'Stored privately and included in Android backup.',

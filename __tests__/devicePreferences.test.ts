@@ -64,6 +64,7 @@ test('terminal preference defaults match the mobile renderer', () => {
     visualHints: false,
     backgroundImageUri: null,
     backgroundDimming: 60,
+    imeToolbarCompensation: 0,
   });
   expect(defaultDevicePreferences.terminalControlUsage).toEqual({});
   expect(defaultDevicePreferences.agentAlertLevel).toBe('persistent');
@@ -160,6 +161,7 @@ test('migrates the old 11px mobile default to the usable 8px geometry', async ()
       visualHints: false,
       backgroundImageUri: null,
       backgroundDimming: 60,
+      imeToolbarCompensation: 0,
     },
   });
 });
@@ -168,6 +170,11 @@ test('loads and bounds the persistent alert duration', async () => {
   mockGetItem.mockResolvedValueOnce(JSON.stringify({ persistentAlertDurationSeconds: 45 }));
   await expect(loadDevicePreferences()).resolves.toMatchObject({
     persistentAlertDurationSeconds: 45,
+  });
+
+  mockGetItem.mockResolvedValueOnce(JSON.stringify({ persistentAlertDurationSeconds: 0 }));
+  await expect(loadDevicePreferences()).resolves.toMatchObject({
+    persistentAlertDurationSeconds: 1,
   });
 
   mockGetItem.mockResolvedValueOnce(JSON.stringify({ persistentAlertDurationSeconds: 90 }));
@@ -472,6 +479,23 @@ test('only enables the experimental app glass preference for an explicit boolean
 
   mockGetItem.mockResolvedValueOnce(JSON.stringify({ appGlassEnabled: 'yes' }));
   await expect(loadDevicePreferences()).resolves.toMatchObject({ appGlassEnabled: false });
+});
+
+test('loads and bounds the imeToolbarCompensation preference', async () => {
+  mockGetItem.mockResolvedValueOnce(JSON.stringify({ terminal: { imeToolbarCompensation: 50 } }));
+  await expect(loadDevicePreferences()).resolves.toMatchObject({
+    terminal: expect.objectContaining({ imeToolbarCompensation: 50 }),
+  });
+
+  mockGetItem.mockResolvedValueOnce(JSON.stringify({ terminal: { imeToolbarCompensation: 200 } }));
+  await expect(loadDevicePreferences()).resolves.toMatchObject({
+    terminal: expect.objectContaining({ imeToolbarCompensation: 150 }),
+  });
+
+  mockGetItem.mockResolvedValueOnce(JSON.stringify({ terminal: { imeToolbarCompensation: -10 } }));
+  await expect(loadDevicePreferences()).resolves.toMatchObject({
+    terminal: expect.objectContaining({ imeToolbarCompensation: 0 }),
+  });
 });
 
 test('persists new preferences under the v3 key', async () => {

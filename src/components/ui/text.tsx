@@ -1,4 +1,5 @@
 import { cn } from '@/src/lib/utils';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 import { guiFontFamilyForClasses } from '@/src/lib/guiFonts';
 import { Slot } from '@rn-primitives/slot';
 import { cva, type VariantProps } from 'class-variance-authority';
@@ -44,15 +45,16 @@ const TextClassContext = React.createContext<string | undefined>(undefined);
 function Text({ className, asChild = false, variant = 'default', style, ...props }:
   React.ComponentProps<typeof RNText> & React.RefAttributes<typeof RNText> & TextVariantProps & { asChild?: boolean }) {
   const textClass = React.useContext(TextClassContext);
+  const { isEink } = useDisplayProfile();
   const Component = asChild ? Slot : RNText;
   const resolvedClassName = cn(textVariants({ variant }), textClass, className);
-  const fontFamily = guiFontFamilyForClasses(resolvedClassName);
+  const fontFamily = guiFontFamilyForClasses(resolvedClassName, isEink);
   return (
     <Component
       className={resolvedClassName}
       role={variant ? ROLE[variant] : undefined}
       aria-level={variant ? ARIA_LEVEL[variant] : undefined}
-      style={fontFamily ? [{ fontFamily }, style] : style}
+      style={fontFamily ? [{ fontFamily }, style, isEink ? { opacity: 1 } : undefined] : style}
       {...props}
     />
   );

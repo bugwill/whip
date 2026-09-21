@@ -1,19 +1,16 @@
 export type StatusMotionKind = 'spin' | 'pulse' | 'static';
 export type StatusTone = 'success' | 'destructive' | 'warning' | 'muted';
 
-export const AGENT_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
-
 const SPINNING_STATUSES = new Set(['working', 'running', 'connecting', 'reconnecting', 'syncing']);
 const PULSING_STATUSES = new Set(['blocked', 'waiting']);
 
-export function agentStatusGlyph(status: string, spinnerFrame = 0): string {
-  if (status === 'working' || status === 'running') {
-    return AGENT_SPINNER_FRAMES[Math.abs(spinnerFrame) % AGENT_SPINNER_FRAMES.length];
-  }
-  if (status === 'blocked') return '◉';
-  if (status === 'done') return '●';
-  if (status === 'idle') return '✓';
-  return '○';
+/** Matches Herdr's static Symbols indicator style. */
+export function agentStatusGlyph(status: string): string {
+  if (status === 'working' || status === 'running') return '◐';
+  if (status === 'blocked') return '×';
+  if (status === 'done') return '✓';
+  if (status === 'idle') return '○';
+  return '·';
 }
 
 export function shouldMountNativeAgentSpinner(
@@ -21,9 +18,9 @@ export function shouldMountNativeAgentSpinner(
   animationsEnabled: boolean,
   reduceMotion: boolean,
 ): boolean {
-  return (status === 'working' || status === 'running')
-    && animationsEnabled
-    && !reduceMotion;
+  // Agent indicators use Herdr's static Symbols style. Generic connection
+  // indicators may still animate through statusMotionKind/useStatusMotion.
+  return false;
 }
 
 export function statusMotionKind(status: string): StatusMotionKind {

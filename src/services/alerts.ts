@@ -41,6 +41,7 @@ const tabDismissalGenerations = new Map<string, number>();
 let alertDismissalGeneration = 0;
 let persistentAgentNotificationId: string | null = null;
 let speakingAgentAlertTargets: AgentAlertTargets | null = null;
+let alertSetupPromise: Promise<void> | null = null;
 
 export type AgentAlertDelivery = AgentAlertLevel | 'brief';
 
@@ -59,7 +60,20 @@ Notifications.setNotificationHandler({
   },
 });
 
-export async function prepareAlerts(): Promise<void> {
+export function prepareAlerts(): Promise<void> {
+  if (alertSetupPromise) return alertSetupPromise;
+
+  const setup = prepareAlertsOnce();
+  const trackedSetup = setup.finally(() => {
+    // Only share the in-flight setup. A later explicit preparation can still
+    // refresh channels or retry after a transient Android service failure.
+    if (alertSetupPromise === trackedSetup) alertSetupPromise = null;
+  });
+  alertSetupPromise = trackedSetup;
+  return trackedSetup;
+}
+
+async function prepareAlertsOnce(): Promise<void> {
   if (Platform.OS === 'android') {
     try {
       await Notifications.setNotificationChannelAsync(PERSISTENT_CHANNEL_ID, {
@@ -89,7 +103,16 @@ export async function prepareAlerts(): Promise<void> {
     }
   }
   try {
-    await Notifications.requestPermissionsAsync();
+    const permissions = await Notifications.requestPermissionsAsync();
+    if (
+      permissions?.status
+      && permissions.status !== Notifications.PermissionStatus.GRANTED
+    ) {
+      recordOperationalDiagnostic('warn', 'Notification', 'notification-permission-denied', {
+        stage: 'permissions',
+        status: permissions.status,
+      });
+    }
   } catch (error) {
     recordNotificationFailure('error', 'notification-setup-failed', error, {
       stage: 'permissions',
@@ -106,6 +129,9 @@ export async function alertAgent(
   delivery: AgentAlertDelivery = 'persistent',
   persistentAlertTimeoutMs: number = DEFAULT_PERSISTENT_ALERT_TIMEOUT_MS,
 ): Promise<void> {
+  // App startup prepares channels and permissions asynchronously. Wait for an
+  // in-flight setup so the first status transition cannot race channel creation.
+  if (alertSetupPromise) await alertSetupPromise;
   if (isChatSpeechTarget(target.hostId, target.paneId)) return;
   const dismissalGeneration = alertDismissalGeneration;
   const paneTargetKey = agentAlertTargetKey(target.hostId, target.paneId);

@@ -521,7 +521,9 @@ test('all three rails retain full original names and content-sized buttons in ho
 
 test('tab and pane markers stay fixed, agent chips have icons, and pane plus splits the selected pane', async () => {
   const host = setup('codex');
+  host.pane.agent_status = 'done';
   const ordinary = { ...host.pane, pane_id: 'pane-2', terminal_id: 'terminal-2', agent: undefined, display_agent: undefined, agent_session: undefined };
+  ordinary.agent_status = 'idle';
   host.props.snapshot = { ...host.props.snapshot, panes: [host.pane, ordinary] };
   await act(async () => { renderer = create(<SessionScreen {...host.props} />); });
 
@@ -531,6 +533,9 @@ test('tab and pane markers stay fixed, agent chips have icons, and pane plus spl
   expect(paneRow.findAllByProps({ accessibilityLabel: 'session.pane' })[0].find(node => String(node.type) === 'PanelRightOpen')).toBeTruthy();
   const agentChip = paneRow.findAll(node => node.props.accessibilityLabel === 'session.openPane')[0];
   expect(agentChip.find(node => String(node.type) === 'Bot')).toBeTruthy();
+  expect(agentChip.find(node => String(node.type) === 'AgentGlyph').props.status).toBe('done');
+  expect(paneRow.findAll(node => node.props.accessibilityLabel === 'session.openPane')[1]
+    .find(node => String(node.type) === 'AgentGlyph').props.status).toBe('idle');
   const groupMarker = paneRow.findAllByProps({ accessibilityLabel: 'session.pane' })[1];
   expect(groupMarker.find(node => String(node.type) === 'SquareTerminal')).toBeTruthy();
   expect(groupMarker.findAll(node => String(node.type) === 'Text')).toHaveLength(0);

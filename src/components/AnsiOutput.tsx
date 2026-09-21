@@ -26,7 +26,7 @@ export function AnsiOutput({ value }: Props) {
       style={[styles.scroll, { backgroundColor: background }]}
       contentContainerStyle={styles.content}
       onContentSizeChange={() => scrollView.current?.scrollToEnd({ animated: false })}>
-      <Text selectable allowFontScaling={false} style={[styles.text, { color: colors.text }]}>
+      <Text selectable allowFontScaling={false} style={[styles.text, { color: colors.text, fontWeight: isEink ? '500' : '400' }]}>
         {segments.map((segment, index) => {
           const style = resolvedStyle(segment.style);
           return (
@@ -36,7 +36,7 @@ export function AnsiOutput({ value }: Props) {
               style={{
                 color: isEink ? einkAnsiForeground(style.foreground, colors.text) : style.foreground || colors.text,
                 backgroundColor: isEink ? colors.canvas : style.background || background,
-                fontWeight: style.bold ? '700' : '400',
+                fontWeight: style.bold ? '700' : isEink ? '500' : '400',
                 fontStyle: style.italic ? 'italic' : 'normal',
                 textDecorationLine: style.underline ? 'underline' : 'none',
                 opacity: isEink || !style.dim ? 1 : 0.68,

@@ -1,8 +1,10 @@
 import { cn } from '@/src/lib/utils';
+import { useDisplayProfile } from '@/src/lib/displayProfile';
 import { guiFontFamilyForClasses } from '@/src/lib/guiFonts';
 import { Platform, TextInput } from 'react-native';
 
 function Input({ className, style, ...props }: React.ComponentProps<typeof TextInput> & React.RefAttributes<TextInput>) {
+  const { isEink } = useDisplayProfile();
   const resolvedClassName = cn(
     'dark:bg-input/30 border-input bg-background text-foreground flex h-11 w-full min-w-0 flex-row items-center rounded-md border px-3 py-2 text-base leading-5 shadow-none',
     props.editable === false && cn('opacity-50', Platform.select({ web: 'disabled:pointer-events-none disabled:cursor-not-allowed' })),
@@ -12,7 +14,7 @@ function Input({ className, style, ...props }: React.ComponentProps<typeof TextI
     }),
     className
   );
-  const fontFamily = guiFontFamilyForClasses(resolvedClassName);
+  const fontFamily = guiFontFamilyForClasses(resolvedClassName, isEink);
   return (
     <TextInput
       className={resolvedClassName}

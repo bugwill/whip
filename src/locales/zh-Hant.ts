@@ -497,6 +497,8 @@ export const zhHant: Record<string, string> = {
   'settings.cachedTerminalsCopy': '請輸入大於 2 的整數；較舊的終端機畫面會在重新開啟時重建。',
   'settings.blinkingCursor': '閃爍游標',
   'settings.blinkingCursorCopy': '窗格使用中時讓終端機游標閃爍。',
+  'settings.imeToolbarCompensation': '輸入法工具列避讓高度',
+  'settings.imeToolbarCompensationCopy': '為搜狗輸入法等第三方輸入法頂部候選/工具列提供額外避讓高度，防止遮擋底部工具列。',
   'settings.backgroundDimming': '背景暗度',
   'settings.backgroundImage': '背景圖片',
   'settings.backgroundImageCopy': '以私人方式儲存並包含在 Android 備份中。',

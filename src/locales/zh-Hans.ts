@@ -497,6 +497,8 @@ export const zhHans = {
   'settings.cachedTerminalsCopy': '输入大于 2 的整数。重新打开时会重建旧的终端视图。',
   'settings.blinkingCursor': '光标闪烁',
   'settings.blinkingCursorCopy': '在窗格处于活动状态时为终端光标设置动画。',
+  'settings.imeToolbarCompensation': '输入法候选栏避让高度',
+  'settings.imeToolbarCompensationCopy': '为搜狗输入法等第三方输入法顶部候选/工具栏提供额外避让高度，防止遮挡底部工具栏。',
   'settings.backgroundDimming': '背景调暗',
   'settings.backgroundImage': '背景图片',
   'settings.backgroundImageCopy': '私密存储并包含在 Android 备份中。',

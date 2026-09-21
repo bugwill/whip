@@ -102,20 +102,19 @@ pub(super) fn set_monitoring_state(
                 let changed_notification = changed.notified();
                 tokio::pin!(changed_notification);
                 changed_notification.as_mut().enable();
-                let (active, visible, is_eink, force_probe) = {
+                let (visible, is_eink, force_probe) = {
                     let monitoring = inner.monitoring.lock();
                     (
-                        monitoring.app_active,
                         monitoring.hosts_visible && !monitoring.access_locked,
                         monitoring.is_eink,
                         monitoring.force_probe,
                     )
                 };
-                if !active {
-                    drop(inner);
-                    changed_notification.as_mut().await;
-                    continue;
-                }
+
+                // The Android foreground service keeps the process alive while
+                // the app is backgrounded. Continue health/reconciliation work
+                // there so remote agent state changes can reach the JS alert
+                // layer. Visible latency probing remains gated by `visible`.
 
                 let now = Instant::now();
                 let intervals = monitoring_intervals(is_eink);

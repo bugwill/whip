@@ -1,17 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <title>Whip — AI Agents Anywhere</title>
-  <desc>Monochrome e-ink optimized Android app logo.</desc>
-  <rect x="32" y="32" width="960" height="960" rx="190" fill="#E6E6E6"/>
-  <g fill="#222222" stroke="#222222" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="502" y="132" width="20" height="82" rx="10"/><circle cx="512" cy="125" r="32"/>
-    <path d="M350 304 C320 310 304 338 304 374 C304 397 311 415 324 428 L350 428 Z"/><path d="M674 304 C704 310 720 338 720 374 C720 397 713 415 700 428 L674 428 Z"/>
-    <path d="M356 428 L356 344 C356 268 416 214 512 214 C608 214 668 268 668 344 L668 428" fill="none" stroke-width="20"/><rect x="395" y="272" width="234" height="142" rx="58"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254" role="img" aria-labelledby="title desc">
+  <title id="title">Two-tab terminal logo</title>
+  <desc id="desc">A terminal window with two tabs and a greater-than underscore prompt.</desc>
+
+  <defs>
+    <linearGradient id="logo-foreground" x1="240" y1="220" x2="1040" y2="1060" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#183B70"/>
+      <stop offset="1" stop-color="#38245F"/>
+    </linearGradient>
+    <mask id="terminal-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="1254" height="1254">
+      <rect width="1254" height="1254" fill="#fff"/>
+      <rect x="198" y="436" width="860" height="586" rx="42" fill="#000"/>
+    </mask>
+  </defs>
+
+  <rect width="1254" height="1254" fill="#B8C7E6"/>
+
+  <g fill="url(#logo-foreground)" mask="url(#terminal-cutout)">
+    <rect x="128" y="366" width="999" height="725" rx="72"/>
+    <path d="M200 453V280c0-47 38-85 85-85h245c38 0 72 22 87 57l39 90c13 30 43 49 76 49H200z"/>
+    <path d="M675 244h270c34 0 65 20 79 51l20 48H705c-29 0-52-23-52-52v-15c0-18 10-32 22-32z"/>
   </g>
-  <g fill="none" stroke="#E6E6E6" stroke-width="16" stroke-linecap="round"><path d="M433 348 Q462 311 491 348"/><path d="M533 348 Q562 311 591 348"/></g>
-  <g fill="#E6E6E6" stroke="#222222" stroke-width="18"><path d="M323 452 C323 415 349 390 382 390 C415 390 438 414 438 452 Z"/><path d="M586 452 C586 414 609 390 642 390 C675 390 701 415 701 452 Z"/></g>
-  <rect x="186" y="438" width="652" height="240" rx="42" fill="#E6E6E6" stroke="#222222" stroke-width="18"/>
-  <g fill="#222222"><circle cx="236" cy="486" r="16"/><circle cx="280" cy="486" r="16"/><circle cx="324" cy="486" r="16"/></g>
-  <path d="M244 538 L294 586 L244 634" fill="none" stroke="#222222" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/><rect x="337" y="615" width="86" height="22" rx="6" fill="#222222"/>
-  <text x="512" y="835" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="150" font-weight="700" letter-spacing="-8" fill="#222222">Whip</text>
-  <text x="512" y="904" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="29" font-weight="400" letter-spacing="10" fill="#222222">AI AGENTS ANYWHERE</text>
+
+  <path d="M422 643 590 750 422 857" fill="none" stroke="url(#logo-foreground)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M654 850h182" fill="none" stroke="url(#logo-foreground)" stroke-width="54" stroke-linecap="round"/>
 </svg>

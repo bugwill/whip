@@ -164,6 +164,7 @@ const props: Props = {
     visualHints: false,
     backgroundImageUri: null,
     backgroundDimming: 0,
+    imeToolbarCompensation: 0,
   },
   controlUsage: {},
   historyEntries: [],
@@ -565,6 +566,22 @@ describe.each(['android', 'ios'] as const)(
       expect(bar.props.style.flexShrink).toBe(0);
       expect(dock.props.style.bottom).toBe(keyboardHeight);
       expect(ui('TerminalRendererHost').parent?.props.style.marginBottom).toBe(controlBarHeight + 220);
+    });
+
+    test('imeToolbarCompensation lifts composer dock and layout above the soft keyboard', async () => {
+      mount({
+        preferences: {
+          ...props.preferences,
+          imeToolbarCompensation: 50,
+        },
+      });
+      emitKeyboard(true);
+      await press('compose');
+      const dock = renderer.root.findByProps({ testID: 'terminal-input-dock' });
+      expect(dock.props.style.bottom).toBe(keyboardHeight + 50);
+      expect(ui('TerminalRendererHost').parent?.props.style.marginBottom).toBe(
+        controlBarHeight + keyboardHeight + 50,
+      );
     });
 
     test('composer focus lifts controls when an already-open IME stops resizing the window', async () => {

@@ -60,12 +60,10 @@ class HerdrSoftInputModule(
           return@runOnUiThread
         }
         val insets = decor.rootWindowInsets
-        if (insets == null || !insets.isVisible(WindowInsets.Type.ime())) {
-          promise.resolve(null)
-          return@runOnUiThread
-        }
-        val imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
-        if (imeBottom <= 0 || decor.height <= 0) {
+        val imeInsets = insets?.getInsets(WindowInsets.Type.ime())
+        val imeBottom = imeInsets?.bottom ?: 0
+        val isVisible = (insets?.isVisible(WindowInsets.Type.ime()) == true) || imeBottom > 0
+        if (!isVisible || imeBottom <= 0 || decor.height <= 0) {
           promise.resolve(null)
           return@runOnUiThread
         }
@@ -74,6 +72,19 @@ class HerdrSoftInputModule(
       } catch (error: Throwable) {
         promise.reject("E_IME_INSETS", error)
       }
+    }
+  }
+
+  @ReactMethod
+  fun getDefaultInputMethod(promise: Promise) {
+    try {
+      val defaultIme = android.provider.Settings.Secure.getString(
+        context.contentResolver,
+        android.provider.Settings.Secure.DEFAULT_INPUT_METHOD,
+      )
+      promise.resolve(defaultIme ?: "")
+    } catch (_: Throwable) {
+      promise.resolve("")
     }
   }
 

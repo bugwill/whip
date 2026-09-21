@@ -34,12 +34,13 @@ interface Props {
 }
 
 export function useWhipMarkdownStyle(variant: Props['variant'] = 'default'): MarkdownStyle {
-  const { colors } = useTheme();
+  const { colors, isEink } = useTheme();
+  const regularFontFamily = isEink ? guiFontFamilies.medium : guiFontFamilies.regular;
   return useMemo<MarkdownStyle>(
     () => ({
       paragraph: {
         color: colors.text,
-        fontFamily: guiFontFamilies.regular,
+        fontFamily: regularFontFamily,
         fontSize: 14,
         lineHeight: 22,
         marginBottom: 10,
@@ -98,7 +99,7 @@ export function useWhipMarkdownStyle(variant: Props['variant'] = 'default'): Mar
       },
       blockquote: {
         color: colors.textSecondary,
-        fontFamily: guiFontFamilies.regular,
+        fontFamily: regularFontFamily,
         borderColor: colors.primary,
         borderWidth: 3,
         gapWidth: 12,
@@ -108,7 +109,7 @@ export function useWhipMarkdownStyle(variant: Props['variant'] = 'default'): Mar
       },
       list: {
         color: colors.text,
-        fontFamily: guiFontFamilies.regular,
+        fontFamily: regularFontFamily,
         bulletColor: colors.primary,
         markerColor: colors.primary,
         markerFontWeight: '600',
@@ -136,7 +137,7 @@ export function useWhipMarkdownStyle(variant: Props['variant'] = 'default'): Mar
       },
       em: {
         color: colors.text,
-        fontFamily: guiFontFamilies.regular,
+        fontFamily: regularFontFamily,
         fontStyle: 'italic',
       },
       code: {
@@ -184,7 +185,7 @@ export function useWhipMarkdownStyle(variant: Props['variant'] = 'default'): Mar
       },
       table: {
         color: colors.text,
-        fontFamily: guiFontFamilies.regular,
+        fontFamily: regularFontFamily,
         borderColor: colors.divider,
         borderRadius: 10,
         borderWidth: 1,
@@ -226,7 +227,7 @@ export function useWhipMarkdownStyle(variant: Props['variant'] = 'default'): Mar
         },
       } : {}),
     }),
-    [colors, variant],
+    [colors, regularFontFamily, variant],
   );
 }
 

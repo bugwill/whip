@@ -7,11 +7,12 @@ interface KeyboardInsetOptions {
   enabled?: boolean;
   onVisibilityChange?: (visible: boolean) => void;
   getKeyboardTop?: () => Promise<number | null>;
+  additionalOffset?: number;
 }
 
 export function useKeyboardInset(
   measuredViewRef: RefObject<View | null>,
-  { enabled = true, onVisibilityChange, getKeyboardTop }: KeyboardInsetOptions = {},
+  { enabled = true, onVisibilityChange, getKeyboardTop, additionalOffset = 0 }: KeyboardInsetOptions = {},
 ) {
   const [inset, setInset] = useState(0);
   const measurementRevision = useRef(0);
@@ -19,6 +20,8 @@ export function useKeyboardInset(
   const keyboardHeightRef = useRef(0);
   const keyboardVisibleRef = useRef(false);
   const viewportBottomRef = useRef<number | null>(null);
+  const additionalOffsetRef = useRef(Math.max(0, additionalOffset));
+  additionalOffsetRef.current = Math.max(0, additionalOffset);
   const measureViewportBottom = useCallback(() => {
     measuredViewRef.current?.measureInWindow((_x, y, _width, height) => {
       viewportBottomRef.current = Math.ceil(y + height);
@@ -45,11 +48,12 @@ export function useKeyboardInset(
           baselineBottom !== null &&
           viewportBottom >= baselineBottom - 2 &&
           keyboardTop >= baselineBottom - 2;
-        setInset(
-          frameDescribesOverlay
-            ? Math.max(overlap, Math.ceil(keyboardHeightRef.current))
-            : overlap,
-        );
+        const rawInset = frameDescribesOverlay
+          ? Math.max(overlap, Math.ceil(keyboardHeightRef.current))
+          : overlap;
+        const isKeyboardActive = keyboardVisibleRef.current;
+        const offset = isKeyboardActive ? additionalOffsetRef.current : 0;
+        setInset(isKeyboardActive ? rawInset + offset : 0);
       });
     };
     // Keep the existing frame event responsive; WindowInsets corrects it once
@@ -73,6 +77,12 @@ export function useKeyboardInset(
   const reportVisibility = useEffectEvent((visible: boolean) => {
     onVisibilityChange?.(visible);
   });
+
+  useEffect(() => {
+    if (keyboardVisibleRef.current) {
+      remeasure();
+    }
+  }, [additionalOffset, remeasure]);
 
   useEffect(() => {
     if (!enabled) {

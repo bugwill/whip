@@ -7,7 +7,18 @@ export type DisplayProfile = 'normal' | 'eink';
 // Bigme exposes the model name through Android's Build constants. Keep this
 // list deliberately small: a false positive is more disruptive than leaving
 // E-Ink mode available to a manual setting.
-const EINK_MODEL_TOKENS = ['b1051c', 'bigme'];
+const EINK_MODEL_TOKENS = [
+  'b1051c',
+  'b1051',
+  'bigme',
+  'b751',
+  'b251',
+  'ink',
+  'eink',
+  'boox',
+  'onyx',
+  'hisense',
+];
 const getWindowDimensions: () => { width: number; height: number } =
   typeof useWindowDimensions === 'function'
     ? useWindowDimensions

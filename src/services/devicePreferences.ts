@@ -19,7 +19,7 @@ import {
   MIN_XTERM_CACHE_CAPACITY,
 } from '../lib/terminalRendererLru';
 import type { AppTab } from '../types';
-import type { DisplayProfilePreference } from '../lib/displayProfile';
+import { isLikelyEinkDevice, type DisplayProfilePreference } from '../lib/displayProfile';
 import {
   migrateAppBackgroundImage,
   removeAppBackgroundImage,
@@ -44,9 +44,14 @@ export const LEGACY_DEVICE_PREFERENCES_KEYS = [
   'herdr.device.preferences.v1',
 ];
 
-export const MIN_PERSISTENT_ALERT_DURATION_SECONDS = 5;
+export const MIN_PERSISTENT_ALERT_DURATION_SECONDS = 1;
 export const MAX_PERSISTENT_ALERT_DURATION_SECONDS = 60;
 export const PERSISTENT_ALERT_DURATION_STEP_SECONDS = 5;
+
+export const DEFAULT_IME_TOOLBAR_COMPENSATION = 0;
+export const DEFAULT_EINK_IME_TOOLBAR_COMPENSATION = 75;
+export const MIN_IME_TOOLBAR_COMPENSATION = 0;
+export const MAX_IME_TOOLBAR_COMPENSATION = 150;
 
 export const agentAlertLevels = ['regular', 'persistent'] as const;
 export type AgentAlertLevel = (typeof agentAlertLevels)[number];
@@ -67,6 +72,7 @@ export interface TerminalPreferences {
   visualHints: boolean;
   backgroundImageUri: string | null;
   backgroundDimming: number;
+  imeToolbarCompensation: number;
 }
 
 export type AppearancePreference = 'system' | 'light' | 'dark';
@@ -152,6 +158,9 @@ export const defaultDevicePreferences: DevicePreferences = {
     visualHints: false,
     backgroundImageUri: null,
     backgroundDimming: 60,
+    imeToolbarCompensation: isLikelyEinkDevice()
+      ? DEFAULT_EINK_IME_TOOLBAR_COMPENSATION
+      : DEFAULT_IME_TOOLBAR_COMPENSATION,
   },
   terminalControlUsage: {},
 };
@@ -358,6 +367,22 @@ function parseDevicePreferences(
           100,
           defaultDevicePreferences.terminal.backgroundDimming,
         ),
+        imeToolbarCompensation: (() => {
+          const isEink = isLikelyEinkDevice() || parsed.displayProfile === 'eink';
+          const fallback = isEink
+            ? DEFAULT_EINK_IME_TOOLBAR_COMPENSATION
+            : DEFAULT_IME_TOOLBAR_COMPENSATION;
+          const stored = terminal.imeToolbarCompensation;
+          if (stored === undefined || (isEink && (stored === 0 || stored === 50))) {
+            return fallback;
+          }
+          return clampNumber(
+            stored,
+            MIN_IME_TOOLBAR_COMPENSATION,
+            MAX_IME_TOOLBAR_COMPENSATION,
+            fallback,
+          );
+        })(),
       },
     };
   } catch (error) {

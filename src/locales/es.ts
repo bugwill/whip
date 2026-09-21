@@ -497,6 +497,8 @@ export const es = {
   'settings.cachedTerminalsCopy': 'Ingrese un número entero mayor que 2. Las vistas de terminal más antiguas se reconstruyen cuando se vuelven a abrir.',
   'settings.blinkingCursor': 'Cursor parpadeante',
   'settings.blinkingCursorCopy': 'Anima el cursor del terminal mientras el panel está activo.',
+  'settings.imeToolbarCompensation': 'Compensación de barra de IME',
+  'settings.imeToolbarCompensationCopy': 'Espacio adicional para barras de herramientas personalizadas (ej. Sogou IME) para evitar que tapen los controles.',
   'settings.backgroundDimming': 'Atenuación de fondo',
   'settings.backgroundImage': 'Imagen de fondo',
   'settings.backgroundImageCopy': 'Almacenado de forma privada e incluido en la copia de seguridad Android.',

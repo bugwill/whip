@@ -1,7 +1,11 @@
 import type { AgentInfo, AgentStatus, TabInfo } from '../types';
 
-export function isAgentAlertingStatus(status: AgentStatus): boolean {
-  return status === 'blocked' || status === 'done';
+/** Notify for every Agent status transition that leaves the working state. */
+export function isAgentNotificationTransition(
+  previous: AgentStatus | undefined,
+  current: AgentStatus | undefined,
+): boolean {
+  return previous === 'working' && current !== undefined && current !== 'working';
 }
 
 export function foregroundUsesBriefAlerts(appHasFocus: boolean): boolean {

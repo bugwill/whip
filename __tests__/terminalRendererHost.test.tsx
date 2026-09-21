@@ -92,6 +92,7 @@ const preferences: TerminalPreferences = {
   visualHints: false,
   backgroundImageUri: null,
   backgroundDimming: 0,
+  imeToolbarCompensation: 0,
 };
 
 describe('TerminalRendererHost lifecycle', () => {

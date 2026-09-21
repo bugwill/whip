@@ -197,6 +197,7 @@ describe('Whip billing entitlements', () => {
         visualHints: false,
         backgroundImageUri: 'file:///terminal.jpg',
         backgroundDimming: 45,
+        imeToolbarCompensation: 0,
       },
       terminalControlUsage: {},
     };

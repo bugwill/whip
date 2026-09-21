@@ -8,7 +8,7 @@ import type { useAgentNotifications } from './useAgentNotifications';
 import type { SessionRuntimeStore } from './sessionRuntimeTypes';
 import {
   foregroundUsesBriefAlerts,
-  isAgentAlertingStatus,
+  isAgentNotificationTransition,
   tabNameForAgent,
 } from '../lib/agentStatusEvents';
 import {
@@ -59,9 +59,14 @@ export function useAgentNotificationSideEffects({
       transitions,
     }: AgentStateChange): void => {
       for (const transition of transitions) {
-        const { paneId, current: status } = transition;
+        const { paneId, previous } = transition;
+        // Notifications are driven only by the Agent projection. Pane rows
+        // can describe the same terminal with a stale or aggregated status.
         const agent = snapshot.agents.find(item => item.pane_id === paneId);
-        if (!status || !isAgentAlertingStatus(status)) {
+        const status = agent?.agent_status;
+        // A new Agent run clears an older alert for the same Pane. Keep a
+        // completion alert while the Agent settles in idle after completion.
+        if (!status || status === 'working') {
           reportBackgroundFailure(
             dismissAgentAlertsForPane(sessionId, paneId),
             'pane-alert-dismiss',
@@ -71,7 +76,7 @@ export function useAgentNotificationSideEffects({
           status &&
           agent &&
           alertsEnabledRef.current &&
-          isAgentAlertingStatus(status)
+          isAgentNotificationTransition(previous, status)
         ) {
           const delivery = agentAlertLevelRef.current === 'regular'
             ? 'regular'

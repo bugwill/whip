@@ -320,6 +320,30 @@ test('diagnoses notification initialization rejection', async () => {
   consoleError.mockRestore();
 });
 
+test('waits for notification setup before posting the first alert', async () => {
+  let finishSetup!: () => void;
+  const setupFinished = new Promise<null>(resolve => {
+    finishSetup = () => resolve(null);
+  });
+  jest.mocked(Notifications.setNotificationChannelAsync)
+    .mockImplementationOnce(() => setupFinished);
+
+  const setup = prepareAlerts();
+  const alert = alertAgent(agent, false, {
+    hostId: 'host-1',
+    paneId: agent.pane_id,
+  });
+  await Promise.resolve();
+
+  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+
+  finishSetup();
+  await setup;
+  await alert;
+
+  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+});
+
 test('keeps expected notification dismissal races quiet', async () => {
   const consoleWarn = jest.spyOn(console, 'warn').mockImplementation();
   await alertAgent(agent, false, {

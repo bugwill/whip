@@ -884,6 +884,8 @@ const terminalSessionHtml = `<!doctype html>
     window.herdrConfigure = options => {
       einkMode = options.einkMode === true;
       terminal.options.fontSize = Math.max(einkMode ? 12 : 8, Math.min(24, Number(options.fontSize) || (einkMode ? 12 : 8)));
+      terminal.options.fontWeight = einkMode ? '500' : '400';
+      terminal.options.fontWeightBold = '700';
       // Herdr owns connected-pane history remotely. Do not keep a second
       // 5,000-line copy in xterm on memory-constrained E-Ink devices. Direct
       // SSH shells still use the requested local scrollback.

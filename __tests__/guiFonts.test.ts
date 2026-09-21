@@ -16,4 +16,10 @@ describe('GUI font family', () => {
     expect(guiFontFamilyForClasses('font-mono font-black')).toBe(guiFontFamilies.mono);
     expect(guiFontFamilies.mono).toBe('HerdrTerminalMono');
   });
+
+  it('uses a denser default face for E-Ink while preserving explicit weights', () => {
+    expect(guiFontFamilyForClasses('text-base', true)).toBe(guiFontFamilies.medium);
+    expect(guiFontFamilyForClasses('font-semibold', true)).toBe(guiFontFamilies.semiBold);
+    expect(guiFontFamilyForClasses('font-mono', true)).toBe(guiFontFamilies.mono);
+  });
 });

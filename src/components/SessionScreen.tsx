@@ -1676,9 +1676,10 @@ export function SessionScreen({
           onPress={hapticPress(() => choosePane(pane))}
           onLongPress={hapticPress(() => openRenamePane(pane))}
         >
-          <View
-            className="size-[6px] rounded-full"
-            style={{ backgroundColor: accent }}
+          <AnimatedAgentStatusGlyph
+            status={pane.agent_status}
+            color={accent}
+            size={isTablet ? 14 : 11}
           />
           {agent && <Bot size={isTablet ? 14 : 13} color={active ? colors.activeSurfaceForeground : colors.text} />}
           {agent && (

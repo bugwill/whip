@@ -22,7 +22,7 @@ import Animated, {
   withDelay,
   withTiming,
 } from 'react-native-reanimated';
-import Svg, { Circle, G, Path, Rect } from 'react-native-svg';
+import Svg, { G, Path, Rect } from 'react-native-svg';
 import { LocalSvg } from 'react-native-svg/css';
 import { useTranslation } from 'react-i18next';
 
@@ -265,8 +265,6 @@ export function AnimatedAgentStatusGlyph({
           enabled
           size={size}
         />
-      ) : status === 'blocked' ? (
-        <BlockedAgentStatusGlyph color={color} size={size * 1.1} />
       ) : (
         <Text
           className="text-center"
@@ -280,15 +278,6 @@ export function AnimatedAgentStatusGlyph({
         </Text>
       )}
     </Animated.View>
-  );
-}
-
-function BlockedAgentStatusGlyph({ color, size }: { color: string; size: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
-      <Circle cx={12} cy={12} r={10} fill="none" stroke={color} strokeWidth={2.5} />
-      <Circle cx={12} cy={12} r={3.5} fill={color} />
-    </Svg>
   );
 }
 

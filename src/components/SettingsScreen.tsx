@@ -445,6 +445,22 @@ export function SettingsSection(props: SettingsSectionProps) {
         <ValueRow title={t('settings.scrollback')} value={t('settings.lines', { count: props.terminalPreferences.scrollback })} onDecrease={() => props.onTerminalPreferencesChange({ ...props.terminalPreferences, scrollback: Math.max(1000, props.terminalPreferences.scrollback - 1000) })} onIncrease={() => props.onTerminalPreferencesChange({ ...props.terminalPreferences, scrollback: Math.min(20000, props.terminalPreferences.scrollback + 1000) })} divided />
         <XtermCacheCapacityRow value={props.terminalPreferences.xtermCacheCapacity} onChange={value => props.onTerminalPreferencesChange({ ...props.terminalPreferences, xtermCacheCapacity: value })} />
         <SettingRow title={t('settings.blinkingCursor')} copy={t('settings.blinkingCursorCopy')} value={props.terminalPreferences.cursorBlink} onChange={value => props.onTerminalPreferencesChange({ ...props.terminalPreferences, cursorBlink: value })} divided />
+        <SliderRow
+          title={t('settings.imeToolbarCompensation')}
+          copy={t('settings.imeToolbarCompensationCopy')}
+          value={props.terminalPreferences.imeToolbarCompensation}
+          minimumValue={0}
+          maximumValue={150}
+          step={5}
+          formatValue={value => `${value} dp`}
+          onChange={imeToolbarCompensation =>
+            props.onTerminalPreferencesChange({
+              ...props.terminalPreferences,
+              imeToolbarCompensation,
+            })
+          }
+          divided
+        />
         <BackgroundImageRow
           busy={terminalBackground.busy}
           uri={props.terminalPreferences.backgroundImageUri}
@@ -822,7 +838,7 @@ function ValueRow({ title, copy, value, onDecrease, onIncrease, divided = false,
   return <View className={rowClassName}><View className="min-w-0 flex-1 pr-2">{copy ? <DetailsTitle title={title} copy={copy} /> : <Text className="text-[15px] font-semibold leading-5">{title}</Text>}</View><View className="flex-row items-center"><IconButton icon={Minus} accessibilityLabel={t('settings.decrease', { name: title })} className="size-9" disabled={disabled} onPress={onDecrease} /><Text className={disabled ? 'min-w-[64px] text-center text-xs text-muted-foreground/50' : 'min-w-[64px] text-center text-xs text-muted-foreground'}>{value}</Text><IconButton icon={Plus} accessibilityLabel={t('settings.increase', { name: title })} className="size-9" disabled={disabled} onPress={onIncrease} /></View></View>;
 }
 
-function SliderRow({ title, value, minimumValue, maximumValue, step, formatValue, onChange, fontPreview = false, divided = false, disabled = false, locked = false, onLockedPress }: { title: string; value: number; minimumValue: number; maximumValue: number; step: number; formatValue: (value: number) => string; onChange: (value: number) => void; fontPreview?: boolean; divided?: boolean; disabled?: boolean; locked?: boolean; onLockedPress?: () => unknown }) {
+function SliderRow({ title, copy, value, minimumValue, maximumValue, step, formatValue, onChange, fontPreview = false, divided = false, disabled = false, locked = false, onLockedPress }: { title: string; copy?: string; value: number; minimumValue: number; maximumValue: number; step: number; formatValue: (value: number) => string; onChange: (value: number) => void; fontPreview?: boolean; divided?: boolean; disabled?: boolean; locked?: boolean; onLockedPress?: () => unknown }) {
   const { colors } = useTheme();
   const { t } = useTranslation();
   const formattedValue = formatValue(value);
@@ -836,9 +852,14 @@ function SliderRow({ title, value, minimumValue, maximumValue, step, formatValue
       className={cn('px-3.5 py-3', divided && 'border-t border-border', disabled && 'opacity-50')}
       onPress={locked ? hapticPress(() => { void onLockedPress?.(); }) : undefined}>
       <View className="flex-row items-center justify-between gap-3">
-        <View className="min-w-0 flex-1 flex-row items-center gap-2">
-          <Text className="min-w-0 flex-shrink text-[15px] font-semibold leading-5">{title}</Text>
-          {locked ? <RancherBadge /> : null}
+        <View className="min-w-0 flex-1">
+          <View className="flex-row items-center gap-2">
+            <Text className="min-w-0 flex-shrink text-[15px] font-semibold leading-5">{title}</Text>
+            {locked ? <RancherBadge /> : null}
+          </View>
+          {copy ? (
+            <Text className="mt-0.5 text-xs text-muted-foreground">{copy}</Text>
+          ) : null}
         </View>
         <Text className="font-mono text-xs font-semibold text-primary">{formattedValue}</Text>
       </View>
