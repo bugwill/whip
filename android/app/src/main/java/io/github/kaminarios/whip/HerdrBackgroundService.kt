@@ -96,6 +96,7 @@ class HerdrBackgroundService : Service() {
       .setContentTitle(getString(R.string.herdr_background_title))
       .setContentText(getString(R.string.herdr_background_static))
       .setContentIntent(contentIntent)
+      .setGroup(BACKGROUND_NOTIFICATION_GROUP)
       .setCategory(Notification.CATEGORY_SERVICE)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
@@ -138,6 +139,7 @@ class HerdrBackgroundService : Service() {
     const val POWER_MODE_BALANCED = "balanced"
     const val POWER_MODE_REALTIME = "realtime"
     private const val CHANNEL_ID = "herdr-background-monitoring"
+    private const val BACKGROUND_NOTIFICATION_GROUP = "herdr-background-monitoring"
     private const val NOTIFICATION_ID = 1937
   }
 }

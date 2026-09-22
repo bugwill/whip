@@ -113,6 +113,10 @@ class HerdrBackgroundModule(
           .setContentTitle(title)
           .setContentText(body)
           .setContentIntent(pendingIntent)
+          // Keep actionable Agent alerts out of Android's automatic app-level
+          // notification group. Tapping that synthetic summary only launches
+          // the launcher intent and drops the pane payload.
+          .setGroup(AGENT_NOTIFICATION_GROUP)
           .setAutoCancel(true)
           .setOnlyAlertOnce(true)
           .setCategory(Notification.CATEGORY_MESSAGE)
@@ -419,6 +423,7 @@ class HerdrBackgroundModule(
   companion object {
     private const val TAG = "HerdrPersistentAlert"
     private const val EXPO_NOTIFICATION_ID = 0
+    private const val AGENT_NOTIFICATION_GROUP = "agent-notifications"
     private val ALERT_VIBRATION_PATTERN = longArrayOf(300, 100, 300, 100, 300, 100, 300, 2000)
     const val ACTION_OPEN_AGENT_NOTIFICATION = "io.github.kaminarios.whip.OPEN_AGENT_NOTIFICATION"
     const val EXTRA_AGENT_NOTIFICATION_ID = "agent_notification_id"

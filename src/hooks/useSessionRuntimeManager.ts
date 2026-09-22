@@ -271,6 +271,7 @@ export function useSessionRuntimeManager({
   useAgentNotificationNavigation({
     notifications,
     restoreComplete,
+    state,
     stateRef,
     hosts,
     openPaneTerminal: terminal.openPaneTerminal,

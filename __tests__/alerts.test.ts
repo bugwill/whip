@@ -94,9 +94,17 @@ test('delays the noisy notification and persistent alert until speech finishes',
   options?.onDone?.();
   await pending;
 
-  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  expect(postBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+    'work · codex needs you',
+    'Agent is blocked',
+    'agent-state-v3',
+    'host-1',
+    agent.pane_id,
+    'persistent',
+  );
   expect(armPersistentAgentAlert).toHaveBeenCalledWith(
-    'notification-1',
+    expect.stringMatching(/^agent-/),
     'agent-state-v3',
     30_000,
   );
@@ -110,7 +118,7 @@ test('posts the notification immediately when speech is disabled', async () => {
 
   expect(Speech.stop).not.toHaveBeenCalled();
   expect(Speech.speak).not.toHaveBeenCalled();
-  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  expect(postBackgroundAgentNotification).toHaveBeenCalledTimes(1);
 });
 
 test('posts directly through Android while the app is backgrounded', async () => {
@@ -157,7 +165,7 @@ test('uses the configured persistent alert timeout', async () => {
   }, 'work', 'persistent', 45_000);
 
   expect(armPersistentAgentAlert).toHaveBeenCalledWith(
-    'notification-1',
+    expect.stringMatching(/^agent-/),
     'agent-state-v3',
     45_000,
   );
@@ -169,12 +177,15 @@ test('uses a short vibration without arming a persistent alert for a brief notif
     paneId: agent.pane_id,
   }, 'work', 'brief');
 
-  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
-    content: expect.objectContaining({
-      vibrate: [0, 200],
-    }),
-    trigger: { channelId: 'agent-state-brief-v1' },
-  }));
+  expect(postBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+    'work · codex needs you',
+    'Agent is blocked',
+    'agent-state-brief-v1',
+    'host-1',
+    agent.pane_id,
+    'brief',
+  );
   expect(armPersistentAgentAlert).not.toHaveBeenCalled();
 });
 
@@ -184,16 +195,15 @@ test('uses the regular channel without custom sound, vibration, or persistent fe
     paneId: agent.pane_id,
   }, 'work', 'regular');
 
-  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledWith({
-    content: expect.objectContaining({
-      data: expect.objectContaining({ agentAlertLevel: 'regular' }),
-      priority: 'default',
-    }),
-    trigger: { channelId: 'agent-state-regular-v1' },
-  });
-  const request = jest.mocked(Notifications.scheduleNotificationAsync).mock.calls[0][0];
-  expect(request.content).not.toHaveProperty('sound');
-  expect(request.content).not.toHaveProperty('vibrate');
+  expect(postBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+    'work · codex needs you',
+    'Agent is blocked',
+    'agent-state-regular-v1',
+    'host-1',
+    agent.pane_id,
+    'regular',
+  );
   expect(armPersistentAgentAlert).not.toHaveBeenCalled();
 });
 
@@ -221,7 +231,7 @@ test('still posts the alert when speech reports an error', async () => {
   options?.onError?.(new Error('TTS unavailable'));
   await pending;
 
-  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  expect(postBackgroundAgentNotification).toHaveBeenCalledTimes(1);
 });
 
 test('dismisses delivered agent notifications and persistent feedback', async () => {
@@ -232,15 +242,17 @@ test('dismisses delivered agent notifications and persistent feedback', async ()
 
   await dismissAgentAlerts();
 
-  expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('notification-1');
+  expect(dismissBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+  );
   expect(dismissPersistentAgentAlert).toHaveBeenCalledTimes(1);
   expect(Speech.stop).toHaveBeenCalledTimes(1);
 });
 
 test('dismisses an agent notification that finishes posting during foregrounding', async () => {
-  let finishScheduling: ((identifier: string) => void) | undefined;
-  jest.mocked(Notifications.scheduleNotificationAsync).mockReturnValueOnce(new Promise(resolve => {
-    finishScheduling = resolve;
+  let finishPosting: (() => void) | undefined;
+  jest.mocked(postBackgroundAgentNotification).mockImplementationOnce(() => new Promise(resolve => {
+    finishPosting = resolve;
   }));
   const pendingAlert = alertAgent(agent, false, {
     hostId: 'host-1',
@@ -249,10 +261,12 @@ test('dismisses an agent notification that finishes posting during foregrounding
   await Promise.resolve();
 
   await dismissAgentAlerts();
-  finishScheduling?.('late-notification');
+  finishPosting?.();
   await pendingAlert;
 
-  expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('late-notification');
+  expect(dismissBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+  );
   expect(armPersistentAgentAlert).not.toHaveBeenCalled();
 });
 
@@ -282,9 +296,9 @@ test('cancels a native background alert that finishes posting after pane dismiss
 test('dismisses only notifications for the tab being interacted with', async () => {
   await dismissAgentAlerts();
   jest.clearAllMocks();
-  jest.mocked(Notifications.scheduleNotificationAsync)
-    .mockResolvedValueOnce('tab-1-notification')
-    .mockResolvedValueOnce('tab-2-notification');
+  jest.mocked(postBackgroundAgentNotification)
+    .mockResolvedValueOnce()
+    .mockResolvedValueOnce();
 
   await alertAgent(agent, false, { hostId: 'host-1', paneId: agent.pane_id }, 'work', 'brief');
   await alertAgent(
@@ -298,17 +312,18 @@ test('dismisses only notifications for the tab being interacted with', async () 
 
   await dismissAgentAlertsForTab('host-1', 'tab-1');
 
-  expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('tab-1-notification');
-  expect(Notifications.dismissNotificationAsync).not.toHaveBeenCalledWith('tab-2-notification');
+  expect(dismissBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+  );
   await dismissAgentAlerts();
 });
 
-test('cancels a matching tab alert that finishes scheduling during interaction', async () => {
+test('cancels a matching tab alert that finishes posting during interaction', async () => {
   await dismissAgentAlerts();
   jest.clearAllMocks();
-  let finishScheduling: ((identifier: string) => void) | undefined;
-  jest.mocked(Notifications.scheduleNotificationAsync).mockReturnValueOnce(new Promise(resolve => {
-    finishScheduling = resolve;
+  let finishPosting: (() => void) | undefined;
+  jest.mocked(postBackgroundAgentNotification).mockImplementationOnce(() => new Promise(resolve => {
+    finishPosting = resolve;
   }));
   const pendingAlert = alertAgent(
     agent,
@@ -319,18 +334,20 @@ test('cancels a matching tab alert that finishes scheduling during interaction',
   );
 
   await dismissAgentAlertsForTab('host-1', agent.tab_id);
-  finishScheduling?.('late-tab-notification');
+  finishPosting?.();
   await pendingAlert;
 
-  expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('late-tab-notification');
+  expect(dismissBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+  );
 });
 
 test('dismisses only the resolved pane alert when a tab has multiple agents', async () => {
   await dismissAgentAlerts();
   jest.clearAllMocks();
-  jest.mocked(Notifications.scheduleNotificationAsync)
-    .mockResolvedValueOnce('pane-1-notification')
-    .mockResolvedValueOnce('pane-2-notification');
+  jest.mocked(postBackgroundAgentNotification)
+    .mockResolvedValueOnce()
+    .mockResolvedValueOnce();
 
   await alertAgent(agent, false, { hostId: 'host-1', paneId: 'pane-1' }, 'work', 'brief');
   await alertAgent(
@@ -344,8 +361,9 @@ test('dismisses only the resolved pane alert when a tab has multiple agents', as
 
   await dismissAgentAlertsForPane('host-1', 'pane-1');
 
-  expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('pane-1-notification');
-  expect(Notifications.dismissNotificationAsync).not.toHaveBeenCalledWith('pane-2-notification');
+  expect(dismissBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+  );
   await dismissAgentAlerts();
 });
 
@@ -401,7 +419,7 @@ test('waits for notification setup before posting the first alert', async () => 
   await setup;
   await alert;
 
-  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  expect(postBackgroundAgentNotification).toHaveBeenCalledTimes(1);
 });
 
 test('keeps expected notification dismissal races quiet', async () => {

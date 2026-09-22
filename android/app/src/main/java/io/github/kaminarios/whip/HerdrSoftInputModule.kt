@@ -127,10 +127,18 @@ class HerdrSoftInputModule(
 
   private fun applySoftInputMode(activity: Activity) {
     val currentMode = activity.window.attributes.softInputMode
-    // Terminal and composer geometry is measured from WindowInsets in JS. A
-    // resize here lets a transient/zero-sized IME surface move the whole
-    // React window before the actual keyboard has been drawn.
-    val adjustment = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+    // Overlay owners (the terminal screen while it is visible, or its
+    // composer) measure and reserve the IME inset in JS. Other screens keep
+    // Android's normal resize behavior so ordinary forms are not covered by
+    // the keyboard. This also avoids resizing the React window during the
+    // transient/zero-sized IME surface state while an overlay owns the
+    // window. Keep the overlay mode stable even when the IME surface is still
+    // transitioning.
+    val adjustment = if (overlayOwners.isNotEmpty()) {
+      WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+    } else {
+      WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+    }
     val updatedMode =
       (currentMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST.inv()) or adjustment
     if (currentMode != updatedMode) activity.window.setSoftInputMode(updatedMode)

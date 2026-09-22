@@ -6,6 +6,7 @@ import type { RuntimeAgentStatusTransition } from 'react-native-whip-ssh';
 import type { HostManagementController } from './useHostManagement';
 import type { useAgentNotifications } from './useAgentNotifications';
 import type { SessionRuntimeStore } from './sessionRuntimeTypes';
+import type { LiveHostSessionsState } from '../liveHostSessions';
 import {
   foregroundUsesBriefAlerts,
   isAgentNotificationTransition,
@@ -111,12 +112,15 @@ export function useAgentNotificationSideEffects({
 export function useAgentNotificationNavigation({
   notifications,
   restoreComplete,
+  state,
   stateRef,
   hosts,
   openPaneTerminal,
 }: {
   notifications: ReturnType<typeof useAgentNotifications>;
   restoreComplete: boolean;
+  /** Re-run resolution as host snapshots arrive after a notification tap. */
+  state: LiveHostSessionsState;
   stateRef: SessionRuntimeStore['stateRef'];
   hosts: HostManagementController;
   openPaneTerminal: (
@@ -146,5 +150,5 @@ export function useAgentNotificationNavigation({
   useEffect(() => {
     if (!restoreComplete || !notifications.response) return;
     openNotificationTarget();
-  }, [notifications.response, restoreComplete]);
+  }, [notifications.response, restoreComplete, state]);
 }

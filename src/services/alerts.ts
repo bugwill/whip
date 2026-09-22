@@ -207,13 +207,19 @@ export async function alertAgent(
       content.vibrate = persistent ? ALERT_VIBRATION_PATTERN : BRIEF_VIBRATION_PATTERN;
     }
     let notificationIdentifier: string;
-    const nativeBackgroundDelivery =
-      Platform.OS === 'android' && AppState.currentState !== 'active';
-    const backgroundIdentifier = nativeBackgroundDelivery
+    // Android's Expo notification response path can foreground the Activity
+    // without delivering the notification payload to JS (notably for a
+    // notification created while Whip is already visible).  Use the native
+    // PendingIntent path for every Android Agent alert so the target reaches
+    // MainActivity through WhipAgentNotificationTapped in both foreground and
+    // background.  The Expo path remains the cross-platform fallback and the
+    // fallback for a native post failure.
+    const nativeAndroidDelivery = Platform.OS === 'android';
+    const backgroundIdentifier = nativeAndroidDelivery
       ? createAgentNotificationIdentifier()
       : null;
     recordNetworkDiagnostic('info', 'agent-alert-post-attempt', {
-      path: nativeBackgroundDelivery ? 'native-background' : 'expo',
+      path: nativeAndroidDelivery ? 'native-android' : 'expo',
       delivery,
       channelId,
     });
@@ -231,13 +237,13 @@ export async function alertAgent(
             delivery,
           );
           recordNetworkDiagnostic('info', 'agent-alert-posted', {
-            path: 'native-background',
+            path: 'native-android',
             delivery,
             channelId,
           });
         } catch (error) {
           recordNotificationFailure('error', 'agent-notification-native-post-failed', error, {
-            stage: 'native-background-post',
+            stage: 'native-android-post',
           });
           notificationIdentifier = await Notifications.scheduleNotificationAsync({
             content,

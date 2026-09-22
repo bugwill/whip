@@ -195,6 +195,14 @@ const button = (label: string) =>
       String(node.type) === 'Button' &&
       node.props.accessibilityLabel === `terminal.${label}`,
   );
+function activeSoftInputOwners() {
+  const owners = new Set<string>();
+  for (const [owner, enabled] of jest.mocked(setTerminalComposerOverlay).mock.calls) {
+    if (enabled) owners.add(owner);
+    else owners.delete(owner);
+  }
+  return owners;
+}
 
 function emitKeyboard(visible: boolean, screenY = keyboardFrame.screenY) {
   const frame = { ...keyboardFrame, screenY };
@@ -360,6 +368,46 @@ test('hidden terminal does not dismiss another pane keyboard or accept keyboard 
   terminalHandle.focus.mockClear();
   act(() => { ui('TerminalRendererHost').props.onKeyboardRequested(); });
   expect(terminalHandle.focus).not.toHaveBeenCalled();
+});
+
+test('visible terminal owns the soft-input overlay only for its active identity', () => {
+  mount();
+  const owner = 'terminal-screen:terminal-1';
+  expect(setTerminalComposerOverlay).toHaveBeenCalledWith(owner, true);
+  expect(activeSoftInputOwners()).toEqual(new Set([owner]));
+
+  const nextTarget = {
+    ...target,
+    key: 'target-2',
+    session: { ...target.session, terminalId: 'terminal-2' },
+  };
+  act(() => renderer.update(<TerminalScreen {...props} activeTarget={nextTarget} targets={[nextTarget]} />));
+  expect(setTerminalComposerOverlay).toHaveBeenCalledWith(owner, false);
+  expect(setTerminalComposerOverlay).toHaveBeenCalledWith('terminal-screen:terminal-2', true);
+  expect(activeSoftInputOwners()).toEqual(new Set(['terminal-screen:terminal-2']));
+
+  act(() => renderer.update(<TerminalScreen {...props} activeTarget={nextTarget} targets={[nextTarget]} visible={false} />));
+  expect(setTerminalComposerOverlay).toHaveBeenCalledWith('terminal-screen:terminal-2', false);
+  expect(activeSoftInputOwners()).toEqual(new Set());
+
+  act(() => renderer.update(<TerminalScreen {...props} activeTarget={nextTarget} targets={[nextTarget]} />));
+  expect(setTerminalComposerOverlay).toHaveBeenCalledWith('terminal-screen:terminal-2', true);
+  act(() => renderer.unmount());
+  expect(setTerminalComposerOverlay).toHaveBeenCalledWith('terminal-screen:terminal-2', false);
+  expect(activeSoftInputOwners()).toEqual(new Set());
+});
+
+test('closing the composer releases only its owner while the visible terminal owner remains', async () => {
+  mount();
+  await press('compose');
+  await act(async () => ui('MessageComposer').props.actions.onClose());
+  await act(async () => emitKeyboard(false));
+
+  const calls = jest.mocked(setTerminalComposerOverlay).mock.calls;
+  expect(calls).toContainEqual(['terminal-screen:terminal-1', true]);
+  expect(calls).toContainEqual(['terminal-1', false]);
+  expect(calls).not.toContainEqual(['terminal-screen:terminal-1', false]);
+  expect(activeSoftInputOwners()).toEqual(new Set(['terminal-screen:terminal-1']));
 });
 
 test('terminal input requests enable and focus in one renderer operation', () => {

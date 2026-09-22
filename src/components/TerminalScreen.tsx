@@ -738,6 +738,25 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       );
     }, [targets]);
 
+    // Terminal geometry reserves the IME inset itself while this screen is
+    // visible. Keep this owner separate from the composer owner: closing the
+    // composer must not switch the terminal window back to adjustResize while
+    // direct terminal input is still active.
+    useEffect(() => {
+      if (!visible || !terminalId) return;
+      const owner = `terminal-screen:${terminalId}`;
+      reportBackgroundFailure(
+        setTerminalComposerOverlay(owner, true),
+        'terminal-screen-overlay-sync',
+      );
+      return () => {
+        reportBackgroundFailure(
+          setTerminalComposerOverlay(owner, false),
+          'terminal-screen-overlay-reset',
+        );
+      };
+    }, [terminalId, visible]);
+
     const activeUsesOfflineScroll = Boolean(
       activeTarget &&
         activeTarget.session.kind !== 'ssh' &&
