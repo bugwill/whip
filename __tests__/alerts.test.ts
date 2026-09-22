@@ -12,12 +12,15 @@ jest.mock('expo-speech', () => ({
   stop: jest.fn(),
 }));
 jest.mock('react-native', () => ({
+  AppState: { currentState: 'active' },
   Platform: { OS: 'android' },
   Vibration: { vibrate: jest.fn() },
 }));
 jest.mock('../src/services/backgroundMonitoring', () => ({
   armPersistentAgentAlert: jest.fn(),
+  dismissBackgroundAgentNotification: jest.fn(() => Promise.resolve()),
   dismissPersistentAgentAlert: jest.fn(),
+  postBackgroundAgentNotification: jest.fn(() => Promise.resolve()),
 }));
 jest.mock('../src/i18n', () => ({
   __esModule: true,
@@ -34,6 +37,7 @@ jest.mock('../src/i18n', () => ({
 
 import * as Notifications from 'expo-notifications';
 import * as Speech from 'expo-speech';
+import { AppState } from 'react-native';
 
 import type { AgentInfo } from '../src/types';
 import {
@@ -43,7 +47,12 @@ import {
   dismissAgentAlertsForTab,
   prepareAlerts,
 } from '../src/services/alerts';
-import { armPersistentAgentAlert, dismissPersistentAgentAlert } from '../src/services/backgroundMonitoring';
+import {
+  armPersistentAgentAlert,
+  dismissBackgroundAgentNotification,
+  dismissPersistentAgentAlert,
+  postBackgroundAgentNotification,
+} from '../src/services/backgroundMonitoring';
 import { setChatSpeechFocus } from '../src/services/chatSpeechFocus';
 
 const agent: AgentInfo = {
@@ -64,7 +73,10 @@ beforeEach(() => {
   jest.mocked(Notifications.scheduleNotificationAsync).mockResolvedValue('notification-1');
   jest.mocked(Notifications.dismissNotificationAsync).mockResolvedValue();
   jest.mocked(armPersistentAgentAlert).mockResolvedValue();
+  jest.mocked(dismissBackgroundAgentNotification).mockResolvedValue();
   jest.mocked(dismissPersistentAgentAlert).mockResolvedValue();
+  jest.mocked(postBackgroundAgentNotification).mockResolvedValue();
+  (AppState as { currentState: string }).currentState = 'active';
 });
 
 test('does not announce the focused chat twice while it is being read aloud', async () => {
@@ -111,6 +123,43 @@ test('posts the notification immediately when speech is disabled', async () => {
   expect(Speech.stop).not.toHaveBeenCalled();
   expect(Speech.speak).not.toHaveBeenCalled();
   expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+});
+
+test('posts directly through Android while the app is backgrounded', async () => {
+  (AppState as { currentState: string }).currentState = 'background';
+
+  await alertAgent(agent, false, {
+    hostId: 'host-1',
+    paneId: agent.pane_id,
+  }, 'work', 'persistent');
+
+  expect(postBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+    'work · codex needs you',
+    'Agent is blocked',
+    'agent-state-v3',
+    'host-1',
+    agent.pane_id,
+    'persistent',
+  );
+  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+  expect(armPersistentAgentAlert).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+    'agent-state-v3',
+    30_000,
+  );
+});
+
+test('does not wait for speech before posting a background notification', async () => {
+  (AppState as { currentState: string }).currentState = 'background';
+
+  await alertAgent(agent, true, {
+    hostId: 'host-1',
+    paneId: agent.pane_id,
+  }, 'work', 'persistent');
+
+  expect(Speech.speak).not.toHaveBeenCalled();
+  expect(postBackgroundAgentNotification).toHaveBeenCalledTimes(1);
 });
 
 test('uses the configured persistent alert timeout', async () => {
@@ -216,6 +265,29 @@ test('dismisses an agent notification that finishes posting during foregrounding
   await pendingAlert;
 
   expect(Notifications.dismissNotificationAsync).toHaveBeenCalledWith('late-notification');
+  expect(armPersistentAgentAlert).not.toHaveBeenCalled();
+});
+
+test('cancels a native background alert that finishes posting after pane dismissal', async () => {
+  (AppState as { currentState: string }).currentState = 'background';
+  let finishPosting: (() => void) | undefined;
+  jest.mocked(postBackgroundAgentNotification).mockImplementationOnce(
+    () => new Promise(resolve => {
+      finishPosting = resolve;
+    }),
+  );
+  const pendingAlert = alertAgent(agent, false, {
+    hostId: 'host-1',
+    paneId: agent.pane_id,
+  });
+
+  await dismissAgentAlertsForPane('host-1', agent.pane_id);
+  finishPosting?.();
+  await pendingAlert;
+
+  expect(dismissBackgroundAgentNotification).toHaveBeenCalledWith(
+    expect.stringMatching(/^agent-/),
+  );
   expect(armPersistentAgentAlert).not.toHaveBeenCalled();
 });
 

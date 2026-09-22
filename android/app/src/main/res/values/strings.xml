@@ -11,6 +11,8 @@
     <string name="herdr_background_stream_closed">Agent events interrupted (%1$d host(s))</string>
     <string name="herdr_background_unverified">Connection not recently verified (%1$d host(s))</string>
     <string name="herdr_background_connected">Connected · monitoring %1$d host(s)</string>
+    <string name="herdr_agent_channel">Agent notifications</string>
+    <string name="herdr_agent_regular_channel">Agent notifications</string>
     <plurals name="herdr_background_hosts">
         <item quantity="one">Watching %1$d remote host over SSH</item>
         <item quantity="other">Watching %1$d remote hosts over SSH</item>

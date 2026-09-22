@@ -14,6 +14,13 @@ class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     setTheme(R.style.AppTheme)
     super.onCreate(null)
+    HerdrBackgroundModule.handleAgentNotificationIntent(intent)
+  }
+
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    HerdrBackgroundModule.handleAgentNotificationIntent(intent)
   }
 
   override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

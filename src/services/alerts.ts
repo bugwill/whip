@@ -1,18 +1,25 @@
 import * as Notifications from 'expo-notifications';
 import * as Speech from 'expo-speech';
-import { Platform, Vibration } from 'react-native';
+import { AppState, Platform, Vibration } from 'react-native';
 
 import type { AgentInfo } from '../types';
 import type { AgentNotificationTarget } from '../lib/notificationNavigation';
 import { agentNotificationTitle } from '../lib/agentStatusEvents';
 import type { AgentAlertLevel } from './devicePreferences';
-import { armPersistentAgentAlert, dismissPersistentAgentAlert } from './backgroundMonitoring';
+import {
+  armPersistentAgentAlert,
+  dismissBackgroundAgentNotification,
+  dismissPersistentAgentAlert,
+  postBackgroundAgentNotification,
+} from './backgroundMonitoring';
 import i18n from '../i18n';
 import { isChatSpeechActive, isChatSpeechTarget } from './chatSpeechFocus';
 import {
   operationalErrorDetails,
   recordOperationalDiagnostic,
 } from './operationalDiagnostics';
+import { recordNetworkDiagnostic } from './networkDiagnostics';
+import { createSecureId } from '../lib/secureId';
 
 const PERSISTENT_CHANNEL_ID = 'agent-state-v3';
 const BRIEF_CHANNEL_ID = 'agent-state-brief-v1';
@@ -132,7 +139,15 @@ export async function alertAgent(
   // App startup prepares channels and permissions asynchronously. Wait for an
   // in-flight setup so the first status transition cannot race channel creation.
   if (alertSetupPromise) await alertSetupPromise;
-  if (isChatSpeechTarget(target.hostId, target.paneId)) return;
+  const appState = AppState.currentState;
+  if (isChatSpeechTarget(target.hostId, target.paneId)) {
+    recordNetworkDiagnostic('info', 'agent-alert-skipped', {
+      reason: 'chat-speech-focus',
+      delivery,
+      appState,
+    });
+    return;
+  }
   const dismissalGeneration = alertDismissalGeneration;
   const paneTargetKey = agentAlertTargetKey(target.hostId, target.paneId);
   const tabTargetKey = agentAlertTargetKey(target.hostId, agent.tab_id);
@@ -150,11 +165,24 @@ export async function alertAgent(
     finished: name => i18n.t('alerts.finished', { name }),
   });
   const body = agent.title || i18n.t('alerts.agentState', { status: agent.agent_status });
+  const backgroundAtStart = appState !== 'active';
+
+  recordNetworkDiagnostic('info', 'agent-alert-eligible', {
+    status: agent.agent_status,
+    delivery,
+    appState,
+    nativeBackgroundDelivery: Platform.OS === 'android' && backgroundAtStart,
+    speechRequested: speak,
+    speechSuppressedInBackground: speak && backgroundAtStart,
+  });
 
   incrementAlertCount(pendingPaneAlertCounts, paneTargetKey);
   incrementAlertCount(pendingTabAlertCounts, tabTargetKey);
   try {
-    if (speak && !isChatSpeechActive()) {
+    // A background completion must reach Android immediately. Speech playback
+    // is an app/UI concern and can remain pending when Android backgrounds the
+    // JS runtime, which used to delay or cancel the actual notification.
+    if (speak && !backgroundAtStart && !isChatSpeechActive()) {
       speakingAgentAlertTargets = targets;
       try {
         await speakBeforeAlert(title);
@@ -162,7 +190,14 @@ export async function alertAgent(
         if (speakingAgentAlertTargets === targets) speakingAgentAlertTargets = null;
       }
     }
-    if (wasDismissed()) return;
+    if (wasDismissed()) {
+      recordNetworkDiagnostic('info', 'agent-alert-cancelled', {
+        stage: 'before-post',
+        reason: 'dismissal-generation',
+        delivery,
+      });
+      return;
+    }
     const regular = delivery === 'regular';
     if (Platform.OS !== 'android' && !regular) Vibration.vibrate();
     const persistent = delivery === 'persistent';
@@ -182,11 +217,59 @@ export async function alertAgent(
       content.vibrate = persistent ? ALERT_VIBRATION_PATTERN : BRIEF_VIBRATION_PATTERN;
     }
     let notificationIdentifier: string;
+    const nativeBackgroundDelivery =
+      Platform.OS === 'android' && AppState.currentState !== 'active';
+    const backgroundIdentifier = nativeBackgroundDelivery
+      ? createAgentNotificationIdentifier()
+      : null;
+    recordNetworkDiagnostic('info', 'agent-alert-post-attempt', {
+      path: nativeBackgroundDelivery ? 'native-background' : 'expo',
+      delivery,
+      channelId,
+    });
     try {
-      notificationIdentifier = await Notifications.scheduleNotificationAsync({
-        content,
-        trigger: { channelId },
-      });
+      if (backgroundIdentifier) {
+        notificationIdentifier = backgroundIdentifier;
+        try {
+          await postBackgroundAgentNotification(
+            notificationIdentifier,
+            title,
+            body,
+            channelId,
+            target.hostId,
+            target.paneId,
+            delivery,
+          );
+          recordNetworkDiagnostic('info', 'agent-alert-posted', {
+            path: 'native-background',
+            delivery,
+            channelId,
+          });
+        } catch (error) {
+          recordNotificationFailure('error', 'agent-notification-native-post-failed', error, {
+            stage: 'native-background-post',
+          });
+          notificationIdentifier = await Notifications.scheduleNotificationAsync({
+            content,
+            trigger: { channelId },
+          });
+          recordNetworkDiagnostic('info', 'agent-alert-posted', {
+            path: 'expo-fallback',
+            delivery,
+            channelId,
+          });
+        }
+      } else {
+        notificationIdentifier = await Notifications.scheduleNotificationAsync({
+          content,
+          trigger: { channelId },
+        });
+        recordNetworkDiagnostic('info', 'agent-alert-posted', {
+          path: 'expo',
+          delivery,
+          channelId,
+        });
+      }
     } catch (error) {
       recordNotificationFailure('error', 'agent-notification-schedule-failed', error, {
         stage: 'schedule',
@@ -194,6 +277,11 @@ export async function alertAgent(
       throw error;
     }
     if (wasDismissed()) {
+      recordNetworkDiagnostic('info', 'agent-alert-cancelled', {
+        stage: 'after-post',
+        reason: 'dismissal-generation',
+        delivery,
+      });
       await dismissScheduledNotification(notificationIdentifier, 'stale-generation-cleanup');
       return;
     }
@@ -338,12 +426,29 @@ async function speakBeforeAlert(title: string): Promise<void> {
 }
 
 async function dismissScheduledNotification(identifier: string, stage: string): Promise<void> {
-  try {
-    await Notifications.dismissNotificationAsync(identifier);
-  } catch (error) {
-    if (isExpectedDismissalRace(error)) return;
-    recordNotificationFailure('warn', 'notification-dismiss-failed', error, { stage });
-  }
+  await Promise.all([
+    (async () => {
+      try {
+        await Notifications.dismissNotificationAsync(identifier);
+      } catch (error) {
+        if (isExpectedDismissalRace(error)) return;
+        recordNotificationFailure('warn', 'notification-dismiss-failed', error, { stage });
+      }
+    })(),
+    (async () => {
+      if (Platform.OS !== 'android') return;
+      try {
+        await dismissBackgroundAgentNotification(identifier);
+      } catch (error) {
+        if (isExpectedDismissalRace(error)) return;
+        recordNotificationFailure('warn', 'native-notification-dismiss-failed', error, { stage });
+      }
+    })(),
+  ]);
+}
+
+function createAgentNotificationIdentifier(): string {
+  return createSecureId('agent');
 }
 
 async function dismissPersistentAlert(stage: string): Promise<void> {

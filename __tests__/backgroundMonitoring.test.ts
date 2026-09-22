@@ -5,6 +5,9 @@ jest.mock('react-native', () => ({
       stop: jest.fn(() => Promise.resolve()),
       updateHostStatus: jest.fn(),
       removeHostStatus: jest.fn(),
+      postAgentNotification: jest.fn(() => Promise.resolve()),
+      dismissAgentNotification: jest.fn(() => Promise.resolve()),
+      getInitialAgentNotificationTarget: jest.fn(() => Promise.resolve(null)),
       armPersistentAlert: jest.fn(() => Promise.resolve()),
       dismissPersistentAlert: jest.fn(() => Promise.resolve()),
     },
@@ -26,6 +29,9 @@ const native = NativeModules.HerdrBackground as {
   stop: jest.Mock;
   updateHostStatus: jest.Mock;
   removeHostStatus: jest.Mock;
+  postAgentNotification: jest.Mock;
+  dismissAgentNotification: jest.Mock;
+  getInitialAgentNotificationTarget: jest.Mock;
 };
 
 beforeEach(() => {

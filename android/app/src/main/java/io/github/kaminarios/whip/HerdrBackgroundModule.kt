@@ -1,6 +1,9 @@
 package io.github.kaminarios.whip
 
+import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -49,6 +52,10 @@ class HerdrBackgroundModule(
     }
   }
 
+  init {
+    moduleInstance = this
+  }
+
   override fun getName(): String = "HerdrBackground"
 
   @ReactMethod
@@ -59,6 +66,92 @@ class HerdrBackgroundModule(
   @ReactMethod
   fun removeHostStatus(sessionId: String) {
     mainHandler.post { HerdrBackgroundService.removeHostStatus(sessionId) }
+  }
+
+  @ReactMethod
+  fun postAgentNotification(
+    notificationIdentifier: String,
+    title: String,
+    body: String,
+    channelId: String,
+    hostId: String,
+    paneId: String,
+    delivery: String,
+    promise: Promise,
+  ) {
+    mainHandler.post {
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+          !notificationManager.areNotificationsEnabled()
+        ) {
+          throw IllegalStateException("Whip notifications are disabled")
+        }
+        ensureAgentNotificationChannel(channelId, delivery)
+        val launchIntent = Intent(context, MainActivity::class.java).apply {
+          action = ACTION_OPEN_AGENT_NOTIFICATION
+          putExtra(EXTRA_AGENT_NOTIFICATION_ID, notificationIdentifier)
+          putExtra(EXTRA_AGENT_HOST_ID, hostId)
+          putExtra(EXTRA_AGENT_PANE_ID, paneId)
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+          context,
+          notificationIdentifier.hashCode(),
+          launchIntent,
+          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          Notification.Builder(context, channelId)
+        } else {
+          @Suppress("DEPRECATION")
+          Notification.Builder(context).setPriority(
+            if (delivery == "regular") Notification.PRIORITY_DEFAULT else Notification.PRIORITY_MAX,
+          )
+        }
+        builder
+          .setSmallIcon(R.drawable.ic_notification_whip)
+          .setContentTitle(title)
+          .setContentText(body)
+          .setContentIntent(pendingIntent)
+          .setAutoCancel(true)
+          .setOnlyAlertOnce(true)
+          .setCategory(Notification.CATEGORY_MESSAGE)
+        if (delivery != "regular") {
+          builder
+            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
+            .setVibrate(ALERT_VIBRATION_PATTERN)
+            .setPriority(Notification.PRIORITY_MAX)
+        }
+        notificationManager.notify(notificationIdentifier, EXPO_NOTIFICATION_ID, builder.build())
+        Log.i(TAG, "Agent notification posted natively in background")
+        promise.resolve(null)
+      } catch (error: Throwable) {
+        Log.e(TAG, "Native background Agent notification failed", error)
+        promise.reject("E_AGENT_NOTIFICATION_POST", error)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun dismissAgentNotification(notificationIdentifier: String, promise: Promise) {
+    mainHandler.post {
+      try {
+        notificationManager.cancel(notificationIdentifier, EXPO_NOTIFICATION_ID)
+        promise.resolve(null)
+      } catch (error: Throwable) {
+        promise.reject("E_AGENT_NOTIFICATION_DISMISS", error)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun getInitialAgentNotificationTarget(promise: Promise) {
+    val target = synchronized(agentNotificationLock) {
+      val value = pendingAgentNotificationTarget
+      pendingAgentNotificationTarget = null
+      value
+    }
+    promise.resolve(target?.toMap())
   }
 
   @ReactMethod
@@ -225,7 +318,51 @@ class HerdrBackgroundModule(
       ChatSpeechPlayback.stop()
       stopPersistentAlert()
     }
+    if (moduleInstance === this) moduleInstance = null
     super.invalidate()
+  }
+
+  private fun ensureAgentNotificationChannel(channelId: String, delivery: String) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    if (notificationManager.getNotificationChannel(channelId) != null) return
+    val regular = delivery == "regular"
+    val channel = NotificationChannel(
+      channelId,
+      context.getString(if (regular) R.string.herdr_agent_regular_channel else R.string.herdr_agent_channel),
+      if (regular) NotificationManager.IMPORTANCE_DEFAULT else NotificationManager.IMPORTANCE_HIGH,
+    )
+    if (!regular) {
+      channel.enableVibration(true)
+      channel.vibrationPattern = ALERT_VIBRATION_PATTERN
+      channel.setSound(
+        RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+        android.media.AudioAttributes.Builder()
+          .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+          .build(),
+      )
+    }
+    notificationManager.createNotificationChannel(channel)
+  }
+
+  private data class AgentNotificationTarget(
+    val notificationId: String,
+    val hostId: String,
+    val paneId: String,
+  ) {
+    fun toMap() = Arguments.createMap().apply {
+      putString("notificationId", notificationId)
+      putString("hostId", hostId)
+      putString("paneId", paneId)
+    }
+  }
+
+  private fun emitAgentNotificationTarget(target: AgentNotificationTarget) {
+    try {
+      context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit(AGENT_NOTIFICATION_TAPPED_EVENT, target.toMap())
+    } catch (error: Throwable) {
+      Log.w(TAG, "Could not deliver Agent notification tap to JavaScript", error)
+    }
   }
 
   private fun startLoopingSound() {
@@ -343,6 +480,28 @@ class HerdrBackgroundModule(
     private const val CHAT_SPEECH_STOPPED = "WhipChatSpeechStopped"
     private const val TAG = "HerdrPersistentAlert"
     private const val EXPO_NOTIFICATION_ID = 0
+    private val ALERT_VIBRATION_PATTERN = longArrayOf(300, 100, 300, 100, 300, 100, 300, 2000)
+    const val ACTION_OPEN_AGENT_NOTIFICATION = "io.github.kaminarios.whip.OPEN_AGENT_NOTIFICATION"
+    const val EXTRA_AGENT_NOTIFICATION_ID = "agent_notification_id"
+    const val EXTRA_AGENT_HOST_ID = "agent_host_id"
+    const val EXTRA_AGENT_PANE_ID = "agent_pane_id"
+    const val AGENT_NOTIFICATION_TAPPED_EVENT = "WhipAgentNotificationTapped"
+    private val agentNotificationLock = Any()
+    private var pendingAgentNotificationTarget: AgentNotificationTarget? = null
+    private var moduleInstance: HerdrBackgroundModule? = null
+
+    fun handleAgentNotificationIntent(intent: Intent?) {
+      if (intent?.action != ACTION_OPEN_AGENT_NOTIFICATION) return
+      val target = AgentNotificationTarget(
+        notificationId = intent.getStringExtra(EXTRA_AGENT_NOTIFICATION_ID) ?: return,
+        hostId = intent.getStringExtra(EXTRA_AGENT_HOST_ID) ?: return,
+        paneId = intent.getStringExtra(EXTRA_AGENT_PANE_ID) ?: return,
+      )
+      synchronized(agentNotificationLock) {
+        pendingAgentNotificationTarget = target
+      }
+      moduleInstance?.emitAgentNotificationTarget(target)
+    }
     private const val SHAKE_GRAVITY_THRESHOLD = 2.7f
     private const val SHAKE_SLOP_MS = 750L
     private const val SOUND_START_DELAY_MS = 800L
