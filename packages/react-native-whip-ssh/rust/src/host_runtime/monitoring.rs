@@ -10,6 +10,10 @@ const NORMAL_VISIBLE_LATENCY_INTERVAL: Duration = Duration::from_secs(3);
 const EINK_VISIBLE_LATENCY_INTERVAL: Duration = Duration::from_secs(15);
 const RECOVERY_FAILURE_THRESHOLD: u32 = 3;
 
+fn latency_ui_visible(app_active: bool, hosts_visible: bool, access_locked: bool) -> bool {
+    app_active && hosts_visible && !access_locked
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MonitoringIntervals {
     health: Duration,
@@ -60,9 +64,19 @@ pub(super) fn set_monitoring_state(
 ) {
     let (start_worker, became_active) = {
         let mut monitoring = inner.monitoring.lock();
+        if monitoring.worker_running
+            && monitoring.app_active == app_active
+            && monitoring.hosts_visible == hosts_visible
+            && monitoring.access_locked == access_locked
+            && monitoring.is_eink == is_eink
+        {
+            return;
+        }
         let became_active = app_active && !monitoring.app_active;
-        let was_visible = monitoring.hosts_visible && !monitoring.access_locked;
-        let is_visible = hosts_visible && !access_locked;
+        let was_visible = latency_ui_visible(
+            monitoring.app_active, monitoring.hosts_visible, monitoring.access_locked,
+        );
+        let is_visible = latency_ui_visible(app_active, hosts_visible, access_locked);
         if became_active || (!was_visible && is_visible) || monitoring.is_eink != is_eink {
             monitoring.force_probe = true;
         }
@@ -105,7 +119,9 @@ pub(super) fn set_monitoring_state(
                 let (visible, is_eink, force_probe) = {
                     let monitoring = inner.monitoring.lock();
                     (
-                        monitoring.hosts_visible && !monitoring.access_locked,
+                        latency_ui_visible(
+                            monitoring.app_active, monitoring.hosts_visible, monitoring.access_locked,
+                        ),
                         monitoring.is_eink,
                         monitoring.force_probe,
                     )
@@ -145,13 +161,13 @@ pub(super) fn set_monitoring_state(
                 });
                 let needs_reconcile = {
                     let state = inner.state.lock();
-                    let projection = state.host_state.projection();
+                    let (needs_resync, is_fresh) = state.host_state.reconciliation_health();
                     monitoring_reconcile_needed(
                         state.connection == HostConnectionState::Connected,
                         reconcile_due,
                         health_probe_due,
-                        projection.needs_resync,
-                        projection.freshness == crate::host_state::HostFreshness::Fresh,
+                        needs_resync,
+                        is_fresh,
                     )
                 };
                 if needs_reconcile {
@@ -233,6 +249,20 @@ async fn probe(inner: Arc<RuntimeInner>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latency_ui_requires_foreground_hosts_page_and_unlocked_access() {
+        for app_active in [false, true] {
+            for hosts_visible in [false, true] {
+                for access_locked in [false, true] {
+                    assert_eq!(
+                        latency_ui_visible(app_active, hosts_visible, access_locked),
+                        (app_active, hosts_visible, access_locked) == (true, true, false),
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn monitoring_defaults_to_background_without_polling() {

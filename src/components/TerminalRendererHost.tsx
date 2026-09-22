@@ -93,6 +93,7 @@ const EINK_FRAME_BATCH_WINDOW_MS = 100;
 const EINK_FRAME_BATCH_MAX_BYTES = 64 * 1024;
 const EINK_FRAME_BATCH_MAX_FRAMES = 32;
 const EINK_INTERACTION_WINDOW_MS = 500;
+const EINK_FIRST_RESPONSE_WINDOW_MS = 5_000;
 const WEBVIEW_CONTAINER_STYLE = { backgroundColor: 'transparent' } as const;
 const IOS_TERMINAL_ASSET_DIRECTORY = IOS_TERMINAL_ASSETS?.directoryURL || '';
 const runtimeProcess: unknown = process;
@@ -169,6 +170,7 @@ interface RendererEntry {
   pendingEinkBytes: number;
   einkBatchTimer: ReturnType<typeof setTimeout> | null;
   einkImmediateUntilMs: number;
+  einkAwaitingFrameUntilMs: number;
   fontPreference: number;
   fontSize: number;
   protocolState: TerminalProtocolState;
@@ -384,7 +386,14 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
       }
       return;
     }
-    const interactionWindowActive = Date.now() < entry.einkImmediateUntilMs;
+    const now = Date.now();
+    // A slow remote echo must not acquire another batch delay just because
+    // the short local interaction window expired while it was in flight.
+    if (now < entry.einkAwaitingFrameUntilMs) {
+      entry.einkAwaitingFrameUntilMs = 0;
+      entry.einkImmediateUntilMs = now + EINK_INTERACTION_WINDOW_MS;
+    }
+    const interactionWindowActive = now < entry.einkImmediateUntilMs;
     entry.pendingEinkWrites.push({ script, inboundTraceCookie });
     entry.pendingEinkBytes += Math.max(0, byteLength);
     if (
@@ -407,6 +416,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   const markEinkImmediate = useCallback((entry: RendererEntry) => {
     if (!isEink || entry.target.session.kind === 'ssh') return;
     entry.einkImmediateUntilMs = Date.now() + EINK_INTERACTION_WINDOW_MS;
+    entry.einkAwaitingFrameUntilMs = Date.now() + EINK_FIRST_RESPONSE_WINDOW_MS;
   }, [isEink]);
 
   const relinquishController = useCallback((
@@ -437,6 +447,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     entry.frameSequence.reset();
     entry.repaintRequested = false;
     entry.einkImmediateUntilMs = 0;
+    entry.einkAwaitingFrameUntilMs = 0;
     if (hostReady.current && entry.contentState.hasRenderedState) {
       inject(`window.herdrSnapshot(${JSON.stringify(entry.target.key)}, ${JSON.stringify(reason)}, true);`);
     }
@@ -450,6 +461,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   ) => {
     flushEinkWrites(entry);
     entry.einkImmediateUntilMs = 0;
+    entry.einkAwaitingFrameUntilMs = 0;
     resumeScrolls.current.delete(key);
     abandonTerminalRendererReadinessTrace(entry.readinessTrace);
     entry.readinessTrace = null;
@@ -876,6 +888,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         pendingEinkBytes: 0,
         einkBatchTimer: null,
         einkImmediateUntilMs: 0,
+        einkAwaitingFrameUntilMs: 0,
         fontPreference: preferences.fontSize,
         fontSize: target.session.fontSize ?? preferences.fontSize,
         protocolState: {
@@ -1407,6 +1420,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
           entry.pendingEinkWrites = [];
           entry.pendingEinkBytes = 0;
           entry.einkImmediateUntilMs = 0;
+          entry.einkAwaitingFrameUntilMs = 0;
           entry.rendererReady = false;
           entry.sizeReady = false;
           entry.pendingResize = null;

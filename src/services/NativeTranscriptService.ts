@@ -79,7 +79,6 @@ export class NativeTranscriptService {
   private readonly terminalBindings = new Map<string, string>();
   private readonly retentionVersions = new Map<string, NativeAgentTranscriptRetention>();
   private readonly presentationLeases = new Set<string>();
-  private readonly speechLeases = new Map<string, number>();
   private readonly appliedConsumerActivity = new Map<
     string,
     { transport: NativeTranscriptTransport; active: boolean }
@@ -262,7 +261,7 @@ export class NativeTranscriptService {
     return this.entryForBinding(bindingToken)?.state ?? null;
   }
 
-  /** Set the presentation lease; speech leases remain active independently. */
+  /** Set whether the chat presentation needs remote updates. */
   setConsumerActive(bindingToken: string, active: boolean): void {
     const entry = this.entryForBinding(bindingToken);
     if (!entry) return;
@@ -277,8 +276,7 @@ export class NativeTranscriptService {
   ): void {
     if (!entry) return;
     const effectiveActive =
-      this.presentationLeases.has(bindingToken) ||
-      (this.speechLeases.get(bindingToken) ?? 0) > 0;
+      this.presentationLeases.has(bindingToken);
     const applied = this.appliedConsumerActivity.get(bindingToken);
     if (
       applied?.transport === entry.transport &&
@@ -299,23 +297,6 @@ export class NativeTranscriptService {
         error: String(error),
       });
     }
-  }
-
-  /** Keep remote work alive while explicit Chat speech is reading the stream. */
-  acquireSpeechLease(bindingToken: string): () => void {
-    const entry = this.entryForBinding(bindingToken);
-    if (!entry) return () => undefined;
-    this.speechLeases.set(bindingToken, (this.speechLeases.get(bindingToken) ?? 0) + 1);
-    this.applyEffectiveConsumerState(bindingToken, entry);
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const refs = this.speechLeases.get(bindingToken) ?? 0;
-      if (refs <= 1) this.speechLeases.delete(bindingToken);
-      else this.speechLeases.set(bindingToken, refs - 1);
-      this.applyEffectiveConsumerState(bindingToken);
-    };
   }
 
   closeTerminal(
@@ -343,7 +324,6 @@ export class NativeTranscriptService {
     this.entries.clear();
     this.terminalBindings.clear();
     this.presentationLeases.clear();
-    this.speechLeases.clear();
     this.appliedConsumerActivity.clear();
   }
 
@@ -561,7 +541,6 @@ export class NativeTranscriptService {
     entry.listeners.delete(bindingToken);
     entry.bindings.delete(bindingToken);
     this.presentationLeases.delete(bindingToken);
-    this.speechLeases.delete(bindingToken);
     this.appliedConsumerActivity.delete(bindingToken);
     for (const [terminalKey, token] of this.terminalBindings) {
       if (token === bindingToken) this.terminalBindings.delete(terminalKey);

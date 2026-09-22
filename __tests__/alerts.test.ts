@@ -53,7 +53,6 @@ import {
   dismissPersistentAgentAlert,
   postBackgroundAgentNotification,
 } from '../src/services/backgroundMonitoring';
-import { setChatSpeechFocus } from '../src/services/chatSpeechFocus';
 
 const agent: AgentInfo = {
   terminal_id: 'terminal-1',
@@ -67,7 +66,6 @@ const agent: AgentInfo = {
 };
 
 beforeEach(() => {
-  setChatSpeechFocus(null);
   jest.clearAllMocks();
   jest.mocked(Speech.stop).mockResolvedValue();
   jest.mocked(Notifications.scheduleNotificationAsync).mockResolvedValue('notification-1');
@@ -77,16 +75,6 @@ beforeEach(() => {
   jest.mocked(dismissPersistentAgentAlert).mockResolvedValue();
   jest.mocked(postBackgroundAgentNotification).mockResolvedValue();
   (AppState as { currentState: string }).currentState = 'active';
-});
-
-test('does not announce the focused chat twice while it is being read aloud', async () => {
-  setChatSpeechFocus({ hostId: 'host-1', paneId: agent.pane_id });
-  await alertAgent(agent, true, { hostId: 'host-1', paneId: agent.pane_id });
-  expect(Speech.speak).not.toHaveBeenCalled();
-  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
-  await alertAgent(agent, true, { hostId: 'other-host', paneId: agent.pane_id }, 'other', 'regular');
-  expect(Speech.speak).not.toHaveBeenCalled();
-  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
 });
 
 test('delays the noisy notification and persistent alert until speech finishes', async () => {

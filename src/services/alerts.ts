@@ -13,7 +13,6 @@ import {
   postBackgroundAgentNotification,
 } from './backgroundMonitoring';
 import i18n from '../i18n';
-import { isChatSpeechActive, isChatSpeechTarget } from './chatSpeechFocus';
 import {
   operationalErrorDetails,
   recordOperationalDiagnostic,
@@ -140,14 +139,6 @@ export async function alertAgent(
   // in-flight setup so the first status transition cannot race channel creation.
   if (alertSetupPromise) await alertSetupPromise;
   const appState = AppState.currentState;
-  if (isChatSpeechTarget(target.hostId, target.paneId)) {
-    recordNetworkDiagnostic('info', 'agent-alert-skipped', {
-      reason: 'chat-speech-focus',
-      delivery,
-      appState,
-    });
-    return;
-  }
   const dismissalGeneration = alertDismissalGeneration;
   const paneTargetKey = agentAlertTargetKey(target.hostId, target.paneId);
   const tabTargetKey = agentAlertTargetKey(target.hostId, agent.tab_id);
@@ -155,8 +146,7 @@ export async function alertAgent(
   const paneDismissalGeneration = paneDismissalGenerations.get(paneTargetKey) ?? 0;
   const tabDismissalGeneration = tabDismissalGenerations.get(tabTargetKey) ?? 0;
   const wasDismissed = () => (
-    isChatSpeechTarget(target.hostId, target.paneId)
-    || dismissalGeneration !== alertDismissalGeneration
+    dismissalGeneration !== alertDismissalGeneration
     || paneDismissalGeneration !== (paneDismissalGenerations.get(paneTargetKey) ?? 0)
     || tabDismissalGeneration !== (tabDismissalGenerations.get(tabTargetKey) ?? 0)
   );
@@ -182,7 +172,7 @@ export async function alertAgent(
     // A background completion must reach Android immediately. Speech playback
     // is an app/UI concern and can remain pending when Android backgrounds the
     // JS runtime, which used to delay or cancel the actual notification.
-    if (speak && !backgroundAtStart && !isChatSpeechActive()) {
+    if (speak && !backgroundAtStart) {
       speakingAgentAlertTargets = targets;
       try {
         await speakBeforeAlert(title);
@@ -384,7 +374,6 @@ function decrementAlertCount(counts: Map<string, number>, targetKey: string): vo
 
 async function speakBeforeAlert(title: string): Promise<void> {
   await stopSpeech('before-speak');
-  if (isChatSpeechActive()) return;
   await new Promise<void>(resolve => {
     let completed = false;
     let timeout: ReturnType<typeof setTimeout> | null = null;

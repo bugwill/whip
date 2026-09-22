@@ -4,7 +4,6 @@ import { SessionScreen } from '../src/components/SessionScreen';
 import { DisplayProfileProvider } from '../src/lib/displayProfile';
 import { agentChatCache } from '../src/services/agentChatCache';
 import { agentTranscriptService } from '../src/services/NativeTranscriptService';
-import { listenToChat } from '../src/services/chatSpeech';
 import type { ChatAgent } from '../src/lib/agentChatSession';
 import { AgentChatPresentationPhase } from '../src/lib/agentChatPresentation';
 import { TerminalResidencyEndReason } from '../src/lib/terminalResidency';
@@ -39,9 +38,6 @@ jest.mock('react-native-css-interop/jsx-runtime', () =>
 jest.mock('react-native-whip-ssh', () =>
   require('./mockWhipSsh').createMockWhipSshModule(),
 );
-jest.mock('../src/services/chatSpeech', () => ({
-  listenToChat: jest.fn(() => jest.fn()),
-}));
 jest.mock(
   'lucide-react-native',
   () => new Proxy({}, { get: (_target, name) => String(name) }),
@@ -214,7 +210,6 @@ function setup(agent: ChatAgent) {
   const props: Props = {
     hostSessionId: 'host-1',
     visible: true,
-    ttsEnabled: false,
     snapshot,
     client,
     terminalState: {
@@ -272,7 +267,6 @@ const navigationPhases = [
 
 beforeEach(() => {
   mockChatFrames.length = 0;
-  jest.mocked(listenToChat).mockClear();
   jest.spyOn(console, 'info').mockImplementation(() => {});
   jest.spyOn(agentChatCache, 'loadNative').mockResolvedValue(null);
 });
@@ -922,44 +916,6 @@ describe.each(['codex', 'opencode'] as const)('%s SessionScreen', agent => {
     expect(host.native.detachAgentChat).toHaveBeenCalledTimes(1);
     expect(host.native.startAgentChat).not.toHaveBeenCalled();
     expect(agentTranscriptService.getState(binding.bindingToken)).toBeNull();
-  });
-
-  test.each(['terminal', 'host', 'pane'] as const)('keeps focused chat speech in background and stops on leaving the %s', async destination => {
-    const host = setup(agent);
-    host.props.ttsEnabled = true;
-    const binding = await openReadyChat(host, agent);
-    revealChat();
-    expect(listenToChat).toHaveBeenCalledWith(expect.objectContaining({
-      bindingToken: binding.bindingToken, hostId: 'host-1', paneId: 'pane-1', agent,
-    }), expect.any(Function), expect.any(Function));
-    const stop = jest.mocked(listenToChat).mock.results[0].value;
-    act(() => { for (const listener of mockAppStateListeners) listener('background'); });
-    expect(listenToChat).toHaveBeenCalledTimes(1);
-    expect(stop).not.toHaveBeenCalled();
-    if (destination === 'terminal') act(() => { control().onPress(); });
-    if (destination === 'host') act(() => renderer.update(<SessionScreen {...host.props} visible={false} />));
-    if (destination === 'pane') act(() => renderer.update(<SessionScreen {...host.props}
-      terminalState={{ ...host.props.terminalState, activeTerminalId: null }} />));
-    expect(stop).toHaveBeenCalledTimes(1);
-    expect(listenToChat).toHaveBeenCalledTimes(1);
-  });
-
-  test('the shared TTS setting starts and stops reading the selected chat', async () => {
-    const host = setup(agent);
-    await openReadyChat(host, agent);
-    revealChat();
-    expect(listenToChat).not.toHaveBeenCalled();
-
-    act(() => renderer.update(<SessionScreen {...host.props} ttsEnabled />));
-    expect(listenToChat).toHaveBeenCalledTimes(1);
-    const stop = jest.mocked(listenToChat).mock.results[0].value;
-
-    act(() => renderer.update(<SessionScreen {...host.props} ttsEnabled={false} />));
-    expect(stop).toHaveBeenCalledTimes(1);
-    expect(listenToChat).toHaveBeenCalledTimes(1);
-
-    act(() => renderer.update(<SessionScreen {...host.props} ttsEnabled />));
-    expect(listenToChat).toHaveBeenCalledTimes(2);
   });
 
   test.each(['unavailable', 'replaced'] as const)('restores an evicted chat after its host was %s on return', async reason => {

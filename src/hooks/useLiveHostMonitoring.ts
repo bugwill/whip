@@ -41,6 +41,18 @@ export function useLiveHostMonitoring({
 }: LiveHostMonitoringOptions): void {
   const updateRuntimeMonitoring = useEffectEvent(setRuntimeMonitoringState);
   const reportBackgroundError = useEffectEvent(onBackgroundMonitoringError);
+  const handleAppStateChange = useEffectEvent((state: string, previousState: string) => {
+    if (liveHostCount === 0) return;
+    recordNetworkDiagnostic('info', 'app-state-changed', {
+      from: previousState,
+      to: state,
+      liveHostCount,
+    });
+    updateRuntimeMonitoring(state === 'active', hostsVisible, appAccessLocked, isEink);
+    if (state !== 'active') {
+      reportBackgroundFailure(flushLatencyDiagnosticWrites(), 'latency-diagnostics-flush');
+    }
+  });
 
   useEffect(() => {
     if (!restoreComplete) return;
@@ -52,36 +64,14 @@ export function useLiveHostMonitoring({
   }, [alertsEnabled, backgroundPowerMode, liveHostCount, restoreComplete]);
 
   useEffect(() => {
-    if (liveHostCount === 0) return;
     let previousState = AppState.currentState;
     const subscription = AppState.addEventListener('change', state => {
-      recordNetworkDiagnostic('info', 'app-state-changed', {
-        from: previousState,
-        to: state,
-        liveHostCount,
-      });
+      if (state === previousState) return;
+      handleAppStateChange(state, previousState);
       previousState = state;
-      if (state === 'active') {
-        updateRuntimeMonitoring(true, hostsVisible, appAccessLocked, isEink);
-      } else {
-        updateRuntimeMonitoring(false, hostsVisible, appAccessLocked, isEink);
-        reportBackgroundFailure(
-          flushLatencyDiagnosticWrites(),
-          'latency-diagnostics-flush',
-        );
-      }
     });
-    updateRuntimeMonitoring(
-      AppState.currentState === 'active',
-      hostsVisible,
-      appAccessLocked,
-      isEink,
-    );
-    return () => {
-      subscription.remove();
-      updateRuntimeMonitoring(false, false, appAccessLocked, isEink);
-    };
-  }, [appAccessLocked, hostsVisible, isEink, liveHostCount]);
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     updateRuntimeMonitoring(

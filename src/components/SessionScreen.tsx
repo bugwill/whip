@@ -88,7 +88,6 @@ import {
   type AgentChatViewState,
 } from '../lib/agentChatReconciliation';
 import { useAgentChatOpen } from '../hooks/useAgentChatOpen';
-import { useFocusedChatSpeech } from '../hooks/useFocusedChatSpeech';
 import type { AgentChatState } from '../agentChat';
 import type { HerdrClient } from '../services/HerdrClient';
 import {
@@ -163,7 +162,6 @@ import { useAppGlassEnabled } from './GlassSurface';
 interface Props {
   hostSessionId: string;
   visible: boolean;
-  ttsEnabled: boolean;
   snapshot: HerdrSnapshot;
   client: HerdrClient;
   terminalState: TerminalSessionsState;
@@ -219,7 +217,6 @@ const BROWSER_WEBVIEW_STYLE = { flex: 1 } as const;
 export function SessionScreen({
   hostSessionId,
   visible,
-  ttsEnabled,
   snapshot,
   client,
   terminalState,
@@ -422,6 +419,18 @@ export function SessionScreen({
   ));
   const sessionChromeInset = terminalSessionChromeHeight(panes.length, Boolean(workspace))
     + (!workspace && snapshot.server.running ? SESSION_WORKSPACE_BAR_HEIGHT : 0);
+  // The rows use fixed classes, but their real height can differ with tablet
+  // density, font scale, hidden rows, and localized text. Feed TerminalScreen
+  // the measured value once it is available so keyboard space is not reserved
+  // twice after a tab/pane switch.
+  const [measuredSessionChromeInset, setMeasuredSessionChromeInset] = useState(
+    sessionChromeInset,
+  );
+  useEffect(() => {
+    setMeasuredSessionChromeInset(current =>
+      current === sessionChromeInset ? current : sessionChromeInset,
+    );
+  }, [sessionChromeInset]);
   const serverWorkspace =
     snapshot.workspaces.find(item => item.focused) || snapshot.workspaces[0];
   const serverTab =
@@ -523,22 +532,6 @@ export function SessionScreen({
     activePane?.pane_id || null,
   );
   const chatVisible = chatPresentationVisible(activeChatView?.presentation) || restoringChat;
-  const onChatSpeechError = useCallback((error: unknown) => {
-    setAppAlert({ title: 'Could not read chat aloud', message: String(error) });
-  }, []);
-  useFocusedChatSpeech(
-    visible && activeChatView && chatPresentationVisible(activeChatView.presentation) && activePane
-      ? {
-          agent: activeChatView.binding.agent,
-          bindingToken: activeChatView.binding.bindingToken,
-          hostId: hostSessionId,
-          paneId: activePane.pane_id,
-          label: chatAgentDisplayName(activeChatView.binding.agent),
-        }
-      : null,
-    ttsEnabled,
-    onChatSpeechError,
-  );
   const chatViewportMounted = Boolean(
     activeChatView &&
       chatPresentationMountsViewport(activeChatView.presentation) &&
@@ -1028,7 +1021,7 @@ export function SessionScreen({
     for (const [key, view] of chatViews) {
       // Normal displays retain the existing eager Chat consumer behavior.
       // E-Ink is the bounded opt-in suspension policy: only the selected,
-      // explicitly requested Chat (or its speech lease) stays remote-active.
+      // explicitly requested Chat stays remote-active.
       const consumerActive =
         !isEink ||
         (key === activeKey && chatPresentationRequested(view.presentation));
@@ -1740,6 +1733,12 @@ export function SessionScreen({
       <View
         className="absolute inset-x-0 z-30"
         style={{ bottom: terminalSessionChromeBottom, backgroundColor: colors.canvas }}
+        onLayout={event => {
+          const height = Math.round(event.nativeEvent.layout.height);
+          if (height > 0) {
+            setMeasuredSessionChromeInset(current => current === height ? current : height);
+          }
+        }}
       >
         {(workspace || snapshot.server.running) && (
           <View
@@ -2059,7 +2058,7 @@ export function SessionScreen({
             activeTarget={activeTarget}
             targets={terminalTargets}
             compact
-            sessionChromeInset={sessionChromeInset}
+            sessionChromeInset={measuredSessionChromeInset}
             onSessionChromeVisibilityChange={setTerminalSessionChromeVisible}
             onSessionChromeBottomChange={setTerminalSessionChromeBottom}
             latencyMs={latencyMs}

@@ -44,11 +44,6 @@ class NativeWhipSsh : public jsi::HostObject {
     jsi::Value cpp_uniffi_whip_ssh_fn_method_appcore_set_placeholder_connection(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_method_appcore_update_terminal_lifecycle(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_method_appcore_view(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
-    jsi::Value cpp_uniffi_whip_ssh_fn_clone_chatspeechqueue(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
-    jsi::Value cpp_uniffi_whip_ssh_fn_free_chatspeechqueue(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
-    jsi::Value cpp_uniffi_whip_ssh_fn_constructor_chatspeechqueue_new(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
-    jsi::Value cpp_uniffi_whip_ssh_fn_method_chatspeechqueue_next(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
-    jsi::Value cpp_uniffi_whip_ssh_fn_method_chatspeechqueue_update(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_clone_herdreventsink(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_free_herdreventsink(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_init_callback_vtable_herdreventsink(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
@@ -350,8 +345,6 @@ class NativeWhipSsh : public jsi::HostObject {
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_appcore_set_placeholder_connection(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_appcore_update_terminal_lifecycle(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_appcore_view(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
-    jsi::Value cpp_uniffi_whip_ssh_checksum_method_chatspeechqueue_next(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
-    jsi::Value cpp_uniffi_whip_ssh_checksum_method_chatspeechqueue_update(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_herdreventsink_event(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_herdreventsink_closed(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_herdrterminaleventsink_terminal_frame(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
@@ -442,13 +435,11 @@ class NativeWhipSsh : public jsi::HostObject {
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_knownhoststore_rollback(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_method_knownhoststore_view(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_constructor_appcore_new(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
-    jsi::Value cpp_uniffi_whip_ssh_checksum_constructor_chatspeechqueue_new(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_constructor_hostprofilestore_new(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_constructor_knownhoststore_new(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_ffi_whip_ssh_uniffi_contract_version(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_internal_fn_method_agenttranscripteventsink_ffi__bless_pointer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_internal_fn_method_appcore_ffi__bless_pointer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
-    jsi::Value cpp_uniffi_internal_fn_method_chatspeechqueue_ffi__bless_pointer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_internal_fn_method_herdreventsink_ffi__bless_pointer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_internal_fn_method_herdrterminaleventsink_ffi__bless_pointer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_internal_fn_method_hostprofilestore_ffi__bless_pointer(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);

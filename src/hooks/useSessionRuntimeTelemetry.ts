@@ -1,4 +1,5 @@
 import { startTransition, useCallback, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import type {
   RuntimeDiagnostic,
   RuntimeHostLatencyMeasurement,
@@ -141,12 +142,16 @@ export function useSessionRuntimeTelemetry({
         latencyMs: measurement.latencyMs,
       });
     }
-    const trace = beginAppPerformanceTrace('Whip host latency state apply');
-    startTransition(() => {
-      const changed = recordLatency(sessionId, measurement.latencyMs);
-      if (trace && changed) latencyStateApplyTracesRef.current.add(trace);
-      else endAppPerformanceTrace(trace);
-    });
+    // Keep health diagnostics active without rerendering hidden application UI.
+    // Returning to the foreground forces a fresh probe in the runtime.
+    if (AppState.currentState === 'active') {
+      const trace = beginAppPerformanceTrace('Whip host latency state apply');
+      startTransition(() => {
+        const changed = recordLatency(sessionId, measurement.latencyMs);
+        if (trace && changed) latencyStateApplyTracesRef.current.add(trace);
+        else endAppPerformanceTrace(trace);
+      });
+    }
     recordLatencyMeasurement(sessionId, measurement);
   }, [recordLatency, runtimesRef]);
 

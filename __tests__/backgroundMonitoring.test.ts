@@ -54,11 +54,10 @@ test('stops monitoring through the shared service without choosing speech owners
   expect(native.stop).toHaveBeenCalledTimes(1);
 });
 
-test('forwards runtime health and removal to the persistent notification', () => {
+test('health updates do not cross the bridge for a static notification', () => {
   updateBackgroundHostStatus('session-1', 'connected', 'connection');
   updateBackgroundHostStatus('session-1', '', 'heartbeat');
   removeBackgroundHostStatus('session-1');
-  expect(native.updateHostStatus).toHaveBeenNthCalledWith(1, 'session-1', 'connected', 'connection');
-  expect(native.updateHostStatus).toHaveBeenNthCalledWith(2, 'session-1', '', 'heartbeat');
-  expect(native.removeHostStatus).toHaveBeenCalledWith('session-1');
+  expect(native.updateHostStatus).not.toHaveBeenCalled();
+  expect(native.removeHostStatus).not.toHaveBeenCalled();
 });

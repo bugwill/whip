@@ -10,54 +10,32 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.os.Handler
-import android.os.Looper
 import android.os.PowerManager
-import android.os.SystemClock
-import androidx.core.content.edit
 
 class HerdrBackgroundService : Service() {
   private var wakeLock: PowerManager.WakeLock? = null
-  private var hostCount = 1
   private var monitoringRequested = false
   private var requestedPowerMode = POWER_MODE_BALANCED
-  private val statusHandler = Handler(Looper.getMainLooper())
-  private val statusCheck = object : Runnable {
-    override fun run() {
-      if (!monitoringRequested) return
-      refreshNotification()
-      statusHandler.postDelayed(this, STATUS_CHECK_INTERVAL_MS)
-    }
-  }
+  private var foregroundStarted = false
 
   override fun onCreate() {
     super.onCreate()
-    instance = this
     createNotificationChannel()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    if (intent?.action == ACTION_STOP_CHAT) ChatSpeechPlayback.stop()
     if (intent?.action == ACTION_STOP_MONITORING) monitoringRequested = false
     if (intent?.getBooleanExtra(EXTRA_MONITORING_REQUEST, false) == true) {
-      val preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
       monitoringRequested = true
-      statusHandler.removeCallbacks(statusCheck)
-      statusHandler.postDelayed(statusCheck, STATUS_CHECK_INTERVAL_MS)
-      hostCount = intent
-        .getIntExtra(EXTRA_HOST_COUNT, 0)
-        .takeIf { it > 0 }
-        ?: preferences.getInt(EXTRA_HOST_COUNT, 1)
       requestedPowerMode = normalizePowerMode(intent.getStringExtra(EXTRA_POWER_MODE))
-      preferences.edit { putInt(EXTRA_HOST_COUNT, hostCount) }
     }
-    if (!monitoringRequested && ChatSpeechPlayback.token == null) {
+    if (!monitoringRequested) {
       reconcileWakeLock()
       stopSelf(startId)
       return START_NOT_STICKY
     }
     reconcileWakeLock()
-    promoteToForeground(hostCount)
+    promoteToForeground()
     // The React Native runtime owns the SSH monitor. Do not restart only the
     // notification after Android has killed the whole application process.
     return START_NOT_STICKY
@@ -66,9 +44,6 @@ class HerdrBackgroundService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onDestroy() {
-    statusHandler.removeCallbacks(statusCheck)
-    instance = null
-    ChatSpeechPlayback.stop()
     releaseWakeLock()
     super.onDestroy()
   }
@@ -86,21 +61,22 @@ class HerdrBackgroundService : Service() {
     getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
   }
 
-  private fun promoteToForeground(hostCount: Int) {
-    val notification = buildNotification(hostCount)
+  private fun promoteToForeground() {
+    if (foregroundStarted) return
+    val notification = buildNotification()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
       startForeground(
         NOTIFICATION_ID,
         notification,
-        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
-          (if (ChatSpeechPlayback.token != null) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0),
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
       )
     } else {
       startForeground(NOTIFICATION_ID, notification)
     }
+    foregroundStarted = true
   }
 
-  private fun buildNotification(hostCount: Int): Notification {
+  private fun buildNotification(): Notification {
     val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
       ?: Intent(this, MainActivity::class.java)
     val contentIntent = PendingIntent.getActivity(
@@ -115,19 +91,10 @@ class HerdrBackgroundService : Service() {
       @Suppress("DEPRECATION")
       Notification.Builder(this).setPriority(Notification.PRIORITY_LOW)
     }
-    val listening = ChatSpeechPlayback.label
-    if (listening != null) {
-      val stopIntent = Intent(this, HerdrBackgroundService::class.java).apply { action = ACTION_STOP_CHAT }
-      val stop = PendingIntent.getService(this, STOP_CHAT_REQUEST_ID, stopIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-      builder.addAction(Notification.Action.Builder(null,
-        getString(R.string.chat_speech_stop), stop).build())
-    }
     return builder
       .setSmallIcon(R.drawable.ic_notification_whip)
       .setContentTitle(getString(R.string.herdr_background_title))
-      .setContentText(if (listening != null) getString(R.string.chat_speech_listening, listening)
-        else monitoringStatusText(hostCount))
+      .setContentText(getString(R.string.herdr_background_static))
       .setContentIntent(contentIntent)
       .setCategory(Notification.CATEGORY_SERVICE)
       .setOngoing(true)
@@ -136,24 +103,9 @@ class HerdrBackgroundService : Service() {
       .build()
   }
 
-  private fun monitoringStatusText(hostCount: Int): String {
-    val records = hostStatuses.values.toList()
-    val now = SystemClock.elapsedRealtime()
-    val status = when {
-      records.isEmpty() -> R.string.herdr_background_checking
-      records.any { it.state == "failed" || it.state == "reconnecting" || it.state == "disconnected" } -> R.string.herdr_background_reconnecting
-      records.any { it.streamClosed } -> R.string.herdr_background_stream_closed
-      records.any { it.state != "connected" } -> R.string.herdr_background_connecting
-      records.any { it.lastHeartbeatMs == 0L || now - it.lastHeartbeatMs > STATUS_STALE_MS } -> R.string.herdr_background_unverified
-      else -> R.string.herdr_background_connected
-    }
-    return getString(status, hostCount)
-  }
-
   @SuppressLint("WakelockTimeout")
   private fun reconcileWakeLock() {
-    val shouldHold = ChatSpeechPlayback.token != null
-      || (monitoringRequested && requestedPowerMode == POWER_MODE_REALTIME)
+    val shouldHold = monitoringRequested && requestedPowerMode == POWER_MODE_REALTIME
     if (!shouldHold) {
       releaseWakeLock()
       return
@@ -178,50 +130,6 @@ class HerdrBackgroundService : Service() {
     if (value == POWER_MODE_REALTIME) POWER_MODE_REALTIME else POWER_MODE_BALANCED
 
   companion object {
-    private data class HostStatus(
-      var state: String = "connecting",
-      var streamClosed: Boolean = false,
-      var lastHeartbeatMs: Long = 0L,
-    )
-    private val hostStatuses = mutableMapOf<String, HostStatus>()
-    fun updateHostStatus(sessionId: String, state: String, signal: String) {
-      val host = hostStatuses.getOrPut(sessionId) { HostStatus() }
-      if (state.isNotEmpty()) {
-        host.state = state
-        if (state != "connected") host.lastHeartbeatMs = 0L
-      }
-      when (signal) {
-        "heartbeat" -> host.lastHeartbeatMs = SystemClock.elapsedRealtime()
-        "stream-closed" -> host.streamClosed = true
-        "stream-restored" -> host.streamClosed = false
-      }
-      refreshNotification()
-    }
-    fun removeHostStatus(sessionId: String) {
-      hostStatuses.remove(sessionId)
-      refreshNotification()
-    }
-    private var instance: HerdrBackgroundService? = null
-    private var chatSpeechHandoff = false
-    fun beginChatSpeechHandoff() { chatSpeechHandoff = true }
-    fun completeChatSpeechHandoff() {
-      chatSpeechHandoff = false
-      refreshNotification()
-    }
-    fun refreshNotification() {
-      instance?.let {
-        if (chatSpeechHandoff) return
-        if (!it.monitoringRequested && ChatSpeechPlayback.token == null) {
-          it.reconcileWakeLock()
-          it.stopSelf()
-          return
-        }
-        it.reconcileWakeLock()
-        it.promoteToForeground(it.hostCount)
-      }
-    }
-    private const val ACTION_STOP_CHAT = "io.github.kaminarios.whip.action.STOP_CHAT_SPEECH"
-    private const val STOP_CHAT_REQUEST_ID = 1938
     const val ACTION_START = "io.github.kaminarios.whip.action.START_BACKGROUND_MONITORING"
     const val ACTION_STOP_MONITORING = "io.github.kaminarios.whip.action.STOP_BACKGROUND_MONITORING"
     const val EXTRA_HOST_COUNT = "host_count"
@@ -231,8 +139,5 @@ class HerdrBackgroundService : Service() {
     const val POWER_MODE_REALTIME = "realtime"
     private const val CHANNEL_ID = "herdr-background-monitoring"
     private const val NOTIFICATION_ID = 1937
-    private const val PREFERENCES = "herdr-background-monitoring"
-    private const val STATUS_CHECK_INTERVAL_MS = 30_000L
-    private const val STATUS_STALE_MS = 150_000L
   }
 }

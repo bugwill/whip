@@ -57,12 +57,12 @@ export async function stopBackgroundMonitoring(): Promise<void> {
   await module.stop();
 }
 
-export function updateBackgroundHostStatus(sessionId: string, state: string, signal = ''): void {
-  nativeModule()?.updateHostStatus(sessionId, state, signal);
+export function updateBackgroundHostStatus(_sessionId: string, _state: string, _signal = ''): void {
+  // The persistent notification is static. Health is still tracked by the runtime.
 }
 
-export function removeBackgroundHostStatus(sessionId: string): void {
-  nativeModule()?.removeHostStatus(sessionId);
+export function removeBackgroundHostStatus(_sessionId: string): void {
+  // No per-host notification state to remove.
 }
 
 export async function postBackgroundAgentNotification(

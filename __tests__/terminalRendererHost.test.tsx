@@ -417,6 +417,8 @@ describe('TerminalRendererHost lifecycle', () => {
       // Perfetto tracing is disabled in this test, so the input trace cookie
       // is null. The interaction window itself must force the echo through.
       act(() => { handle.current?.input('echo'); });
+      // A slow network can deliver the first echo after the 500 ms burst window.
+      jest.advanceTimersByTime(1_000);
       frame(5, 'input echo');
       expect(injected).toHaveLength(1);
       expect(injected[0]).toContain(Buffer.from('input echo').toString('base64'));
@@ -432,6 +434,14 @@ describe('TerminalRendererHost lifecycle', () => {
       act(() => { handle.current?.scroll('up', 1); });
       injected.length = 0;
       frame(7, 'scroll echo');
+      expect(injected).toHaveLength(1);
+
+      injected.length = 0;
+      act(() => { handle.current?.input('no response'); });
+      jest.advanceTimersByTime(5_000);
+      frame(8, 'later output');
+      expect(injected).toEqual([]);
+      jest.advanceTimersByTime(100);
       expect(injected).toHaveLength(1);
     } finally {
       jest.useRealTimers();

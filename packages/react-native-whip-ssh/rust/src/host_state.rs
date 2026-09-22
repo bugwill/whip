@@ -151,6 +151,11 @@ impl HostState {
         }
     }
 
+    /// Monitoring needs flags, not a clone of every workspace, tab and pane.
+    pub(crate) fn reconciliation_health(&self) -> (bool, bool) {
+        (self.needs_resync, self.freshness == HostFreshness::Fresh)
+    }
+
     pub(crate) fn terminal_id_for_pane(&self, pane_id: &str) -> Option<String> {
         self.snapshot
             .as_ref()?

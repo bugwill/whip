@@ -124,6 +124,7 @@ import {
   type TerminalRendererHandle,
 } from './TerminalRendererHost';
 import { ComposerInput, MessageComposer } from './MessageComposer';
+import { ComposerCharacterCount, createComposerDraftStore } from './ComposerCharacterCount';
 import { TerminalDirectionPad } from './TerminalDirectionPad';
 import { useAppGlassEnabled } from './GlassSurface';
 import {
@@ -508,7 +509,8 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     const [controlBarHeight, setControlBarHeight] = useState(
       terminalControlBarInset(bottomSafeAreaInset),
     );
-    const [composeText, setComposeText] = useState('');
+    const composerDraftStore = useMemo(() => createComposerDraftStore(), []);
+    const setComposeText = composerDraftStore.setText;
     const [composeAttachments, setComposeAttachments] = useState<
       ComposeAttachment[]
     >([]);
@@ -710,6 +712,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       activeTarget?.key,
       getComposerDraft,
       restoreKeyboardAfterCompose,
+      setComposeText,
       setAlt,
       setCtrl,
       setShift,
@@ -990,7 +993,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
         renderer.current?.fit();
       }, TERMINAL_FIT_DEFER_MS);
       return () => clearTimeout(timer);
-    }, [getComposerDraft, ready, terminalId, visible]);
+    }, [getComposerDraft, ready, setComposeText, terminalId, visible]);
 
     useEffect(() => {
       if (status === 'connected' || composeOpen || !keyboardEnabled) return;
@@ -1085,6 +1088,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       onHistoryEntry,
       pasteRequest,
       ready,
+      setComposeText,
       terminalId,
       visible,
     ]);
@@ -1413,7 +1417,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
         remeasureKeyboard();
         remeasureDockKeyboard();
       }
-    }, [composeOpen, visible, remeasureKeyboard, remeasureDockKeyboard]);
+    }, [activeTarget?.key, composeOpen, visible, remeasureKeyboard, remeasureDockKeyboard]);
 
     const expandCompose = () => {
       renderer.current?.blur();
@@ -2347,7 +2351,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                 <MessageComposer
                   key={activeTarget?.key ?? terminalId}
                   glass={appGlassEnabled}
-                  initialValue={composeText}
+                  initialValue={composerDraftStore.getText()}
                   inputRef={composeInputRef}
                   autoFocus={keyboardEnabled}
                   showSoftInputOnFocus={keyboardEnabled}
@@ -2529,7 +2533,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
               />
               <ComposerInput
                 ref={composeInputRef}
-                initialValue={composeText}
+                initialValue={composerDraftStore.getText()}
                 autoFocus={keyboardEnabled}
                 showSoftInputOnFocus={keyboardEnabled}
                 multiline
@@ -2549,11 +2553,10 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                 >
                   <Paperclip size={19} color={appColors.text} />
                 </Button>
-                <Text className="ml-auto px-2 font-mono text-[9px] text-terminal-muted">
-                  {t('terminal.composeCharacterCount', {
-                    count: composeText.length.toLocaleString(),
-                  })}
-                </Text>
+                <ComposerCharacterCount
+                  store={composerDraftStore}
+                  format={count => t('terminal.composeCharacterCount', { count })}
+                />
               </View>
             </View>
           </Modal>

@@ -60,12 +60,12 @@ class HerdrBackgroundModule(
 
   @ReactMethod
   fun updateHostStatus(sessionId: String, state: String, signal: String) {
-    mainHandler.post { HerdrBackgroundService.updateHostStatus(sessionId, state, signal) }
+    // Kept for bridge compatibility; the monitoring notification is static.
   }
 
   @ReactMethod
   fun removeHostStatus(sessionId: String) {
-    mainHandler.post { HerdrBackgroundService.removeHostStatus(sessionId) }
+    // Kept for bridge compatibility; the monitoring notification is static.
   }
 
   @ReactMethod
@@ -155,58 +155,6 @@ class HerdrBackgroundModule(
   }
 
   @ReactMethod
-  fun startChatSpeech(token: String, label: String, promise: Promise) {
-    mainHandler.post {
-      try {
-        HerdrBackgroundService.beginChatSpeechHandoff()
-        ChatSpeechPlayback.onStopped = { stoppedToken, error ->
-          val event = Arguments.createMap().apply {
-            putString("token", stoppedToken)
-            if (error != null) putString("error", error)
-          }
-          context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-            .emit(CHAT_SPEECH_STOPPED, event)
-          HerdrBackgroundService.refreshNotification()
-        }
-        ChatSpeechPlayback.start(context, token, label, promise)
-        val intent = Intent(context, HerdrBackgroundService::class.java).apply {
-          action = HerdrBackgroundService.ACTION_START
-          putExtra(HerdrBackgroundService.EXTRA_POWER_MODE, HerdrBackgroundService.POWER_MODE_REALTIME)
-          putExtra(HerdrBackgroundService.EXTRA_MONITORING_REQUEST, false)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
-        else context.startService(intent)
-        HerdrBackgroundService.completeChatSpeechHandoff()
-      } catch (error: Throwable) {
-        ChatSpeechPlayback.stop(token, error.message)
-        HerdrBackgroundService.completeChatSpeechHandoff()
-        promise.reject("E_CHAT_SPEECH_START", error)
-      }
-    }
-  }
-
-  @ReactMethod
-  fun speakChat(token: String, text: String, promise: Promise) {
-    mainHandler.post {
-      try {
-        ChatSpeechPlayback.speak(token, text, promise)
-      } catch (error: Throwable) {
-        promise.reject("E_CHAT_SPEECH_PLAYBACK", error)
-        ChatSpeechPlayback.stop(token, error.message)
-      }
-    }
-  }
-
-  @ReactMethod
-  fun stopChatSpeech(token: String, promise: Promise) {
-    mainHandler.post {
-        ChatSpeechPlayback.stop(token)
-        HerdrBackgroundService.refreshNotification()
-        promise.resolve(null)
-    }
-  }
-
-  @ReactMethod
   fun start(hostCount: Double, powerMode: String, promise: Promise) {
     try {
       val intent = Intent(context, HerdrBackgroundService::class.java).apply {
@@ -229,13 +177,7 @@ class HerdrBackgroundModule(
   @ReactMethod
   fun stop(promise: Promise) {
     try {
-      if (ChatSpeechPlayback.token != null) {
-        context.startService(Intent(context, HerdrBackgroundService::class.java).apply {
-          action = HerdrBackgroundService.ACTION_STOP_MONITORING
-        })
-      } else {
-        context.stopService(Intent(context, HerdrBackgroundService::class.java))
-      }
+      context.stopService(Intent(context, HerdrBackgroundService::class.java))
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("E_BACKGROUND_MONITORING_STOP", error)
@@ -314,8 +256,6 @@ class HerdrBackgroundModule(
 
   override fun invalidate() {
     mainHandler.post {
-      ChatSpeechPlayback.onStopped = null
-      ChatSpeechPlayback.stop()
       stopPersistentAlert()
     }
     if (moduleInstance === this) moduleInstance = null
@@ -477,7 +417,6 @@ class HerdrBackgroundModule(
   }
 
   companion object {
-    private const val CHAT_SPEECH_STOPPED = "WhipChatSpeechStopped"
     private const val TAG = "HerdrPersistentAlert"
     private const val EXPO_NOTIFICATION_ID = 0
     private val ALERT_VIBRATION_PATTERN = longArrayOf(300, 100, 300, 100, 300, 100, 300, 2000)
