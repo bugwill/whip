@@ -68,6 +68,13 @@ class HerdrSoftInputModule(
           return@runOnUiThread
         }
         val density = decor.resources.displayMetrics.density
+        // A short inset can be reported while an IME service is marked
+        // visible but its surface is still 0x0. Treat that transient state as
+        // hidden so JS does not move the terminal without a drawn keyboard.
+        if (imeBottom < (120f * density).toInt()) {
+          promise.resolve(null)
+          return@runOnUiThread
+        }
         promise.resolve((decor.height - imeBottom).toDouble() / density)
       } catch (error: Throwable) {
         promise.reject("E_IME_INSETS", error)
@@ -120,11 +127,10 @@ class HerdrSoftInputModule(
 
   private fun applySoftInputMode(activity: Activity) {
     val currentMode = activity.window.attributes.softInputMode
-    val adjustment = if (overlayOwners.isNotEmpty()) {
-      WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
-    } else {
-      WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-    }
+    // Terminal and composer geometry is measured from WindowInsets in JS. A
+    // resize here lets a transient/zero-sized IME surface move the whole
+    // React window before the actual keyboard has been drawn.
+    val adjustment = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
     val updatedMode =
       (currentMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST.inv()) or adjustment
     if (currentMode != updatedMode) activity.window.setSoftInputMode(updatedMode)

@@ -5,12 +5,14 @@ import { Script } from 'node:vm';
 
 const {
   handleKeyboardClosedStationaryTap,
+  terminalTapRequestsKeyboard,
   setTerminalKeyboardInputEnabled,
   terminalMouseClickInput,
   terminalMouseInputSequence,
   terminalMouseWheelInput,
 } = require('../scripts/terminal-touch-behavior.cjs') as {
   handleKeyboardClosedStationaryTap: (...args: unknown[]) => void;
+  terminalTapRequestsKeyboard: (...args: unknown[]) => boolean;
   setTerminalKeyboardInputEnabled: (...args: unknown[]) => boolean;
   terminalMouseClickInput: (...args: unknown[]) => string;
   terminalMouseInputSequence: (...args: unknown[]) => string;
@@ -63,6 +65,7 @@ describe('generated terminal artifacts', () => {
     ['iOS', ios],
   ])('%s artifact embeds the generated stationary tap behavior', (_platform, html) => {
     expect(html).toContain(handleKeyboardClosedStationaryTap.toString());
+    expect(html).toContain(terminalTapRequestsKeyboard.toString());
     expect(html).toContain(setTerminalKeyboardInputEnabled.toString());
     expect(html).toContain(terminalMouseClickInput.toString());
     expect(html).toContain(terminalMouseInputSequence.toString());

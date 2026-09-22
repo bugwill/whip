@@ -149,14 +149,17 @@ interface RendererEntry {
   target: TerminalRenderTarget;
   rendererReady: boolean;
   sizeReady: boolean;
+  frameDeliveryPaused: boolean;
   pendingResize: TerminalDimensions | null;
+  resizeInFlight: number;
+  fitCompletionPending: boolean;
   controllerAttached: boolean;
   controllerAttachment: Promise<TerminalAttachmentId> | null;
   connecting: boolean;
   pendingFrames: Array<{
     frame: TerminalFrame;
-    inputTraceCookie: number | null;
-    resizeTraceCookie: number | null;
+    inputTraceCookie?: number | null;
+    resizeTraceCookie?: number | null;
   }>;
   resetOnNextFrame: boolean;
   contentState: TerminalRendererContentState;
@@ -197,6 +200,7 @@ export interface TerminalRendererHandle {
   clearSearch: () => void;
   fit: () => void;
   focus: () => void;
+  focusWithKeyboardEnabled: () => void;
   input: (data: string) => boolean;
   sendArrow: (direction: 'up' | 'down' | 'left' | 'right') => boolean;
   paste: (data: string) => void;
@@ -553,14 +557,14 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     entry.contentState.restoredFromCache();
   }, [inject]);
 
-  const requestFullFrame = useCallback((entry: RendererEntry) => {
+  const requestFullFrame = useCallback((entry: RendererEntry, sequenceGap = false) => {
     flushEinkWrites(entry);
     if (entry.repaintRequested) return;
     const dimensions = entry.arbitration.latestDimensions();
     if (!dimensions) return;
     entry.repaintRequested = true;
     const trace = beginAppPerformanceTrace('Whip terminal sequence recovery');
-    recordNetworkDiagnostic('warn', 'terminal-sequence-gap', {
+    if (sequenceGap) recordNetworkDiagnostic('warn', 'terminal-sequence-gap', {
       sessionId: entry.target.hostSessionId,
       terminalId: entry.target.session.terminalId,
     });
@@ -666,18 +670,25 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
   const injectFrame = useCallback((
     entry: RendererEntry,
     frame: TerminalFrame,
-    inputTraceCookie: number | null = terminalFrameReceived(entry.target.key),
-    resizeTraceCookie: number | null = terminalResizeFrameReceived(entry.target.key),
+    inputTraceCookie?: number | null,
+    resizeTraceCookie?: number | null,
   ) => {
     const inboundTraceCookie = frame.inboundTraceCookie ?? null;
     terminalInboundRendererReceived(inboundTraceCookie, terminalFrameByteLength(frame));
+    if (entry.target.session.kind !== 'ssh' && entry.target.key !== activeKey.current) {
+      // Keep the native Herdr bridge and its control events alive while a pane
+      // is not presented, but do not spend WebView/xterm work on frames that
+      // cannot be seen. Activation requests a fresh visible baseline below.
+      abandonTerminalInboundTrace(inboundTraceCookie);
+      return;
+    }
     if (!hostReady.current || !entry.rendererReady) {
       entry.pendingFrames.push({ frame, inputTraceCookie, resizeTraceCookie });
       return;
     }
     if (entry.target.session.kind !== 'ssh' && frame.encoding === 'ansi') {
       const sequence = entry.frameSequence.observe(frame);
-      if (sequence.requestFull) requestFullFrame(entry);
+      if (sequence.requestFull) requestFullFrame(entry, !entry.needsFullBaseline);
       if (!sequence.render) {
         abandonTerminalInboundTrace(inboundTraceCookie);
         return;
@@ -688,6 +699,9 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         entry.needsFullBaseline = false;
       }
     }
+    // Dropped or queued frames must not consume the wait for a visible frame.
+    if (inputTraceCookie === undefined) inputTraceCookie = terminalFrameReceived(entry.target.key);
+    if (resizeTraceCookie === undefined) resizeTraceCookie = terminalResizeFrameReceived(entry.target.key);
     const key = JSON.stringify(entry.target.key);
     const serializedInputTraceCookie = inputTraceCookie === null
       ? 'null'
@@ -874,7 +888,10 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         target,
         rendererReady: false,
         sizeReady: false,
+        frameDeliveryPaused: false,
         pendingResize: null,
+        resizeInFlight: 0,
+        fitCompletionPending: false,
         controllerAttached: false,
         controllerAttachment: null,
         connecting: false,
@@ -1014,6 +1031,18 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     focus: () => {
       webView.current?.requestFocus();
       activeCall('herdrFocus');
+    },
+    focusWithKeyboardEnabled: () => {
+      const key = activeKey.current;
+      const entry = key ? entries.current.get(key) : null;
+      if (!key || !entry) return;
+      keyboardEnabled.current = true;
+      webView.current?.requestFocus();
+      flushEinkWrites(entry);
+      const serializedKey = JSON.stringify(key);
+      inject(
+        `window.herdrSetKeyboardEnabled(${serializedKey}, true); window.herdrFocus(${serializedKey});`,
+      );
     },
     input: data => {
       const key = activeKey.current;
@@ -1186,6 +1215,26 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     // Evict before allocation, avoiding a capacity+1 renderer memory peak.
     pruneEntries(protectedKeys, activeTarget && !entries.current.has(activeTarget.key) ? 1 : 0);
     ensureEntry(activeTarget);
+    const nextActiveKey = activeTarget?.key || null;
+    for (const entry of entries.current.values()) {
+      const shouldPause = entry.target.session.kind !== 'ssh'
+        && entry.target.key !== nextActiveKey;
+      if (shouldPause) {
+        if (entry.frameDeliveryPaused) continue;
+        entry.frameDeliveryPaused = true;
+        entry.pendingFrames = [];
+        entry.frameSequence.reset();
+        entry.needsFullBaseline = true;
+        entry.repaintRequested = false;
+        continue;
+      }
+      if (!entry.frameDeliveryPaused) continue;
+      entry.frameDeliveryPaused = false;
+      entry.pendingFrames = [];
+      entry.frameSequence.reset();
+      entry.needsFullBaseline = true;
+      entry.repaintRequested = false;
+    }
   }, [activeTarget, configureEntry, disposeEntry, ensureEntry, pruneEntries, targets]);
 
   const activeTargetKey = activeTarget?.key || '';
@@ -1407,6 +1456,52 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     entries.current.clear();
   }, [flushEinkWrites, inject, relinquishController]);
 
+  const retryPendingFit = useCallback(async function retryFit(entry: RendererEntry) {
+    if (entries.current.get(entry.target.key) !== entry) return;
+    if (appState.current !== 'active' || !entry.arbitration.shouldSendResize()) return;
+    if (entry.resizeInFlight > 0) {
+      entry.fitCompletionPending = true;
+      return;
+    }
+    const resume = resumeScrolls.current.get(entry.target.key);
+    const pending = entry.pendingResize;
+    if (pending) {
+      entry.resizeInFlight += 1;
+      try {
+        // A fit can be unchanged locally while its last resize was deferred,
+        // failed, or was superseded while the WebView was settling.
+        await entry.target.client.terminal.resizeTerminal(
+          entry.target.session.terminalId,
+          pending.columns,
+          pending.rows,
+          pending.cellWidthPx,
+          pending.cellHeightPx,
+        );
+        if (entries.current.get(entry.target.key) !== entry) return;
+        if (entry.pendingResize === pending) entry.pendingResize = null;
+        connectEntry(entry);
+      } finally {
+        entry.resizeInFlight = Math.max(0, entry.resizeInFlight - 1);
+        if (entry.resizeInFlight === 0 && entry.fitCompletionPending) {
+          entry.fitCompletionPending = false;
+          await retryFit(entry);
+          return;
+        }
+      }
+    }
+    settleResumeResize(entry, resume);
+    if (
+      entry.target.key === activeKey.current
+      && entry.target.session.kind !== 'ssh'
+      && entry.needsFullBaseline
+      && entry.controllerAttached
+      && entry.rendererReady
+      && entry.sizeReady
+    ) {
+      requestFullFrame(entry);
+    }
+  }, [connectEntry, requestFullFrame, settleResumeResize]);
+
   const handleMessage = async (event: WebViewMessageEvent) => {
     const message = parseTerminalWebMessage(event.nativeEvent.data);
     if (!message) return;
@@ -1424,6 +1519,8 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
           entry.rendererReady = false;
           entry.sizeReady = false;
           entry.pendingResize = null;
+          entry.resizeInFlight = 0;
+          entry.fitCompletionPending = false;
           entry.resetOnNextFrame = true;
           entry.contentState = new TerminalRendererContentState();
           entry.frameSequence.reset();
@@ -1485,23 +1582,7 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     const entry = typeof message.key === 'string' ? entries.current.get(message.key) : null;
     if (!entry) return;
     if (message.type === 'fit-complete') {
-      if (appState.current !== 'active' || !entry.arbitration.shouldSendResize()) return;
-      const resume = resumeScrolls.current.get(entry.target.key);
-      const pending = entry.pendingResize;
-      if (pending) {
-        // A fit can be unchanged locally while its last resize was deferred
-        // in the background or failed to reach the native bridge.
-        await entry.target.client.terminal.resizeTerminal(
-          entry.target.session.terminalId,
-          pending.columns,
-          pending.rows,
-          pending.cellWidthPx,
-          pending.cellHeightPx,
-        );
-        if (entry.pendingResize === pending) entry.pendingResize = null;
-        connectEntry(entry);
-      }
-      settleResumeResize(entry, resume);
+      await retryPendingFit(entry);
       return;
     }
     if (message.type === 'terminal-ready') {
@@ -1616,17 +1697,27 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
           return;
         }
         terminalResizeRequestReady(resizeTrace);
-        await entry.target.client.terminal.resizeTerminal(
-          entry.target.session.terminalId,
-          dimensions.columns,
-          dimensions.rows,
-          dimensions.cellWidthPx,
-          dimensions.cellHeightPx,
-          resizeTrace,
-        );
-        if (entry.pendingResize === dimensions) entry.pendingResize = null;
-        settleResumeResize(entry, resume);
-        connectEntry(entry);
+        entry.resizeInFlight += 1;
+        try {
+          await entry.target.client.terminal.resizeTerminal(
+            entry.target.session.terminalId,
+            dimensions.columns,
+            dimensions.rows,
+            dimensions.cellWidthPx,
+            dimensions.cellHeightPx,
+            resizeTrace,
+          );
+          if (entries.current.get(entry.target.key) !== entry) return;
+          if (entry.pendingResize === dimensions) entry.pendingResize = null;
+          settleResumeResize(entry, resume);
+          connectEntry(entry);
+        } finally {
+          entry.resizeInFlight = Math.max(0, entry.resizeInFlight - 1);
+          if (entry.resizeInFlight === 0 && entry.fitCompletionPending) {
+            entry.fitCompletionPending = false;
+            await retryPendingFit(entry);
+          }
+        }
       } finally {
         terminalResizeRequestReady(resizeTrace);
         terminalResizeRequestHandled(resizeTrace);

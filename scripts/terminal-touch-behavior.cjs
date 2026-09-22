@@ -57,6 +57,12 @@ function handleKeyboardClosedStationaryTap(options) {
   });
 }
 
+// A valid terminal cell is the stable hit target for direct keyboard input.
+// Do not let taps outside the xterm screen focus its hidden textarea.
+function terminalTapRequestsKeyboard(point, keyboardEnabled, offlineScrollback, cellAtPoint) {
+  return !keyboardEnabled && !offlineScrollback && Boolean(cellAtPoint(point));
+}
+
 /**
  * Validate the only safe source of a hard-newline editing range.
  *
@@ -228,6 +234,8 @@ function setTerminalKeyboardInputEnabled(terminal, enabled) {
   if (input) {
     input.readOnly = !keyboardEnabled;
     input.inputMode = keyboardEnabled ? '' : 'none';
+    if (input.style) input.style.pointerEvents = keyboardEnabled ? 'auto' : 'none';
+    if ('tabIndex' in input) input.tabIndex = keyboardEnabled ? 0 : -1;
   }
   if (!keyboardEnabled) terminal.blur();
   return keyboardEnabled;
@@ -241,6 +249,7 @@ module.exports = {
   terminalCursorTapInput,
   handleTerminalStationaryTap,
   handleKeyboardClosedStationaryTap,
+  terminalTapRequestsKeyboard,
   setTerminalKeyboardInputEnabled,
   terminalMouseClickInput,
   terminalMouseInputSequence,

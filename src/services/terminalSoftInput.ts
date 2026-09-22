@@ -11,6 +11,10 @@ interface HerdrSoftInputNativeModule {
   getDefaultInputMethod?(): Promise<string>;
 }
 
+export function supportsTerminalImeTopInWindow(): boolean {
+  return Platform.OS === 'android' && Platform.Version >= 30;
+}
+
 /** Uses Android WindowInsets as the composer geometry source when available. */
 export async function getTerminalImeTopInWindow(): Promise<number | null> {
   if (Platform.OS !== 'android') return null;

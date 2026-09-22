@@ -505,6 +505,22 @@ describe('TerminalRendererHost lifecycle', () => {
     }
   });
 
+  test('enables the hidden input before focusing it without duplicate WebView work', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 100, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll });
+    const target = createTarget('term-1', client, scroll);
+    const { handle, injected, requestFocus } = await mountReadyHost(target);
+
+    injected.length = 0;
+    requestFocus.mockClear();
+    act(() => handle.current?.focusWithKeyboardEnabled());
+
+    expect(requestFocus).toHaveBeenCalledTimes(1);
+    expect(injected).toEqual([
+      `window.herdrSetKeyboardEnabled(${JSON.stringify(target.key)}, true); window.herdrFocus(${JSON.stringify(target.key)}); true;`,
+    ]);
+  });
+
   test('metadata updates do not reactivate the selected terminal; tab changes do', async () => {
     const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 100, viewport_rows: 24 };
     const client = createClient({ 'term-1': scroll, 'term-2': scroll });
@@ -525,6 +541,50 @@ describe('TerminalRendererHost lifecycle', () => {
     injected.length = 0;
     await activateTarget(first);
     expect(injected).toContain(`window.herdrActivate(${JSON.stringify(first.key)}); true;`);
+  });
+
+  test('pauses inactive Herdr frames and requests a fresh baseline when returning', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 100, viewport_rows: 24 };
+    const firstClient = createClient({ 'term-1': scroll });
+    const secondClient = createClient({ 'term-2': scroll });
+    const first = createTarget('term-1', firstClient, scroll);
+    const second = createTarget('term-2', secondClient, scroll);
+    const { activateTarget, injected, webView } = await mountReadyHost(first, [first, second]);
+    const baseline = Buffer.from('first baseline').toString('base64');
+    act(() => firstClient.emitFrame({
+      type: 'terminal.frame', seq: 1, encoding: 'ansi', width: 80, height: 24,
+      full: true, bytes: baseline,
+    }));
+    injected.length = 0;
+    firstClient.resizeTerminal.mockClear();
+
+    await activateTarget(second);
+    await sendRendererMessage(webView, { type: 'terminal-ready', key: second.key });
+    await sendRendererMessage(webView, {
+      type: 'resize', source: 'fit', key: second.key,
+      cols: 80, rows: 24, cellWidthPx: 8, cellHeightPx: 16,
+    });
+    injected.length = 0;
+    act(() => firstClient.emitFrame({
+      type: 'terminal.frame', seq: 2, encoding: 'ansi', width: 80, height: 24,
+      full: false, bytes: Buffer.from('hidden output').toString('base64'),
+    }));
+    expect(injected).toEqual([]);
+
+    const diagnostics = jest.requireMock('../src/services/networkDiagnostics').recordNetworkDiagnostic;
+    diagnostics.mockClear();
+    await activateTarget(first);
+    await sendRendererMessage(webView, { type: 'fit-complete', key: first.key });
+    expect(firstClient.resizeTerminal).toHaveBeenCalledWith(
+      'term-1', 80, 24, 8, 16, null, true,
+    );
+    const resumed = Buffer.from('resumed baseline').toString('base64');
+    act(() => firstClient.emitFrame({
+      type: 'terminal.frame', seq: 3, encoding: 'ansi', width: 80, height: 24,
+      full: true, bytes: resumed,
+    }));
+    expect(injected.join('\n')).toContain(resumed);
+    expect(diagnostics).not.toHaveBeenCalledWith('warn', 'terminal-sequence-gap', expect.anything());
   });
 
   test('ordinary fit resize requests use native geometry deduplication', async () => {
@@ -559,6 +619,51 @@ describe('TerminalRendererHost lifecycle', () => {
     expect(client.resizeTerminal).toHaveBeenLastCalledWith('term-1', 90, 30, 8, 16);
     await sendRendererMessage(webView, { type: 'fit-complete', key: target.key });
     expect(client.resizeTerminal).toHaveBeenCalledTimes(2);
+  });
+
+  test('fit completion does not duplicate a resize while the first request is in flight', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll });
+    let finishResize!: () => void;
+    const target = createTarget('term-1', client, scroll);
+    const { webView } = await mountReadyHost(target);
+    client.resizeTerminal.mockClear();
+    client.resizeTerminal.mockImplementationOnce(
+      () => new Promise<undefined>(resolve => { finishResize = () => resolve(undefined); }),
+    );
+
+    const firstResize = sendRendererMessage(webView, {
+      type: 'resize', source: 'fit', key: target.key,
+      cols: 90, rows: 30, cellWidthPx: 8, cellHeightPx: 16,
+    });
+    await Promise.resolve();
+    await sendRendererMessage(webView, { type: 'fit-complete', key: target.key });
+    expect(client.resizeTerminal).toHaveBeenCalledTimes(1);
+    finishResize();
+    await firstResize;
+  });
+
+  test('drains a queued fit after an in-flight resize fails without another message', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({});
+    const target = createTarget('term-1', client, scroll);
+    const { webView } = await mountReadyHost(target);
+    let fail!: (reason: Error) => void;
+    client.resizeTerminal.mockClear();
+    client.resizeTerminal.mockImplementationOnce(() => new Promise<undefined>((_resolve, reject) => { fail = reject; }));
+    await act(async () => {
+      const pending = webView.props.onMessage({ nativeEvent: { data: JSON.stringify({
+        type: 'resize', source: 'fit', key: target.key,
+        cols: 90, rows: 30, cellWidthPx: 8, cellHeightPx: 16,
+      }) } });
+      const rejected = expect(pending).rejects.toThrow('resize failed');
+      await webView.props.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'fit-complete', key: target.key }) } });
+      expect(client.resizeTerminal).toHaveBeenCalledTimes(1);
+      fail(new Error('resize failed'));
+      await rejected;
+    });
+    expect(client.resizeTerminal).toHaveBeenCalledTimes(2);
+    expect(client.resizeTerminal).toHaveBeenLastCalledWith('term-1', 90, 30, 8, 16);
   });
 
   test('copies terminal text and pastes clipboard text through the maintained native module', async () => {

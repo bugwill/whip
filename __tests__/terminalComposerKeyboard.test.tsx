@@ -11,7 +11,11 @@ import { TerminalScreen } from '../src/components/TerminalScreen';
 import { AgentChatView } from '../src/components/AgentChatView';
 import { emptyTranscript } from '../src/agentChat';
 import { terminalControlBarInset } from '../src/lib/floatingChrome';
-import { getTerminalImeTopInWindow, setTerminalComposerOverlay } from '../src/services/terminalSoftInput';
+import {
+  getTerminalImeTopInWindow,
+  setTerminalComposerOverlay,
+  supportsTerminalImeTopInWindow,
+} from '../src/services/terminalSoftInput';
 
 jest.mock('react-native-css-interop/jsx-runtime', () =>
   jest.requireActual('react/jsx-runtime'),
@@ -96,6 +100,7 @@ jest.mock('../src/services/volumeKeys', () => ({
 jest.mock('../src/services/terminalSoftInput', () => ({
   setTerminalComposerOverlay: jest.fn(async () => {}),
   getTerminalImeTopInWindow: jest.fn(async () => null),
+  supportsTerminalImeTopInWindow: jest.fn(() => true),
 }));
 jest.mock('../src/services/operationalDiagnostics', () => ({
   recordOperationalDiagnostic: jest.fn(),
@@ -111,6 +116,7 @@ const terminalHandle = {
   input: jest.fn(() => true),
   fit: jest.fn(),
   focus: jest.fn(),
+  focusWithKeyboardEnabled: jest.fn(),
   blur: jest.fn(),
   setKeyboardEnabled: jest.fn(),
   setForcedMouseInput: jest.fn(),
@@ -180,6 +186,7 @@ const props: Props = {
 
 let renderer: ReactTestRenderer;
 let listeners: Map<string, Set<(event: KeyboardEvent) => void>>;
+let nativeImeTop: number | null = null;
 const ui = (name: string) =>
   renderer.root.find(node => node.type === (name === 'MessageComposer' ? MockMessageComposer : name));
 const button = (label: string) =>
@@ -191,6 +198,7 @@ const button = (label: string) =>
 
 function emitKeyboard(visible: boolean, screenY = keyboardFrame.screenY) {
   const frame = { ...keyboardFrame, screenY };
+  nativeImeTop = visible ? screenY : null;
   jest
     .mocked(Keyboard.metrics)
     .mockReturnValue(visible ? frame : undefined);
@@ -267,7 +275,13 @@ beforeEach(() => {
   measuredDockHeight = undefined;
   jest.useFakeTimers();
   jest.clearAllMocks();
-  jest.mocked(getTerminalImeTopInWindow).mockResolvedValue(null);
+  nativeImeTop = null;
+  jest.mocked(supportsTerminalImeTopInWindow).mockImplementation(
+    () => Platform.OS === 'android',
+  );
+  jest.mocked(getTerminalImeTopInWindow).mockImplementation(async () =>
+    Platform.OS === 'android' ? nativeImeTop : null,
+  );
   listeners = new Map();
   jest.mocked(Keyboard.metrics).mockReturnValue(undefined);
   jest.mocked(Keyboard.isVisible).mockReturnValue(false);
@@ -348,6 +362,17 @@ test('hidden terminal does not dismiss another pane keyboard or accept keyboard 
   expect(terminalHandle.focus).not.toHaveBeenCalled();
 });
 
+test('terminal input requests enable and focus in one renderer operation', () => {
+  mount();
+  terminalHandle.focusWithKeyboardEnabled.mockClear();
+  terminalHandle.setKeyboardEnabled.mockClear();
+  terminalHandle.focus.mockClear();
+  act(() => { ui('TerminalRendererHost').props.onKeyboardRequested(); });
+  expect(terminalHandle.focusWithKeyboardEnabled).toHaveBeenCalledTimes(1);
+  expect(terminalHandle.setKeyboardEnabled).not.toHaveBeenCalled();
+  expect(terminalHandle.focus).not.toHaveBeenCalled();
+});
+
 test('a delayed composer open cannot reopen after switching away', async () => {
   mount();
   let finish!: () => void;
@@ -378,6 +403,7 @@ test('expanded composer owns a separate keyboard measurement and collapses safel
   expect(renderer.root.findAllByType(MockMessageComposer)).toHaveLength(0);
   expect(renderer.root.findAll(node => String(node.type) === 'ComposerInput')).toHaveLength(1);
   emitKeyboard(true);
+  await act(async () => { await Promise.resolve(); });
   const expanded = renderer.root.find(node => node.props.className === 'flex-1 bg-terminal-canvas');
   expect(expanded.props.onLayout).toEqual(expect.any(Function));
   expect(expanded.props.style.paddingBottom).toBe(keyboardHeight);
@@ -589,7 +615,9 @@ describe.each(['android', 'ios'] as const)(
       measuredViewportHeight = screenHeight - keyboardHeight;
       emitKeyboard(true);
       await press('compose');
-      expect(renderer.root.findByProps({ testID: 'terminal-input-dock' }).props.style.bottom).toBe(0);
+      expect(renderer.root.findByProps({ testID: 'terminal-input-dock' }).props.style.bottom).toBe(
+        platform === 'android' ? keyboardHeight : 0,
+      );
 
       measuredViewportHeight = screenHeight;
       act(() => { void ui('MessageComposer').props.onFocus(); });
@@ -614,6 +642,7 @@ describe.each(['android', 'ios'] as const)(
       await press('compose');
       await press('disableKeyboard');
       emitKeyboard(true);
+      await act(async () => { await Promise.resolve(); });
       expect(renderer.root.findByProps({ testID: 'terminal-input-dock' }).props.style.bottom).toBe(keyboardHeight);
       await press('enableKeyboard');
       await press('disableKeyboard');
@@ -628,6 +657,7 @@ describe.each(['android', 'ios'] as const)(
       mount();
       await press('enableKeyboard');
       emitKeyboard(true);
+      await act(async () => { await Promise.resolve(); });
       expect(ui('TerminalRendererHost').parent?.props.style).toEqual({
         marginBottom: controlBarHeight + keyboardHeight, overflow: 'hidden',
       });

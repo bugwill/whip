@@ -20,6 +20,7 @@ const {
   terminalCursorTapInput,
   handleTerminalStationaryTap,
   handleKeyboardClosedStationaryTap,
+  terminalTapRequestsKeyboard,
   setTerminalKeyboardInputEnabled,
   terminalMouseClickInput,
   terminalMouseInputSequence,
@@ -292,6 +293,7 @@ const terminalSessionHtml = `<!doctype html>
     ${handleTerminalStationaryTap.toString()}
     ${handleKeyboardClosedStationaryTap.toString()}
     ${terminalCursorTapInput.toString()}
+    ${terminalTapRequestsKeyboard.toString()}
     ${setTerminalKeyboardInputEnabled.toString()}
     ${terminalMouseInputSequence.toString()}
     ${terminalMouseClickInput.toString()}
@@ -1701,13 +1703,12 @@ const terminalSessionHtml = `<!doctype html>
         }
       }
       if (!touch.moved && !touch.longPressed && point && !keyboardEnabled) {
-        const tappedCell = bufferCellAt(point.clientX, point.clientY);
-        const buffer = terminal.buffer.active;
-        if (!offlineScrollback
-          && tappedCell && (tappedCell.row === buffer.baseY + buffer.cursorY
-            || terminalCursorTapInput(buffer, terminal.cols, tappedCell,
-              terminal.modes.applicationCursorKeysMode,
-              { editableRegion: terminalEditableRegion }))) {
+        if (terminalTapRequestsKeyboard(
+          point,
+          keyboardEnabled,
+          offlineScrollback,
+          candidate => bufferCellAt(candidate.clientX, candidate.clientY),
+        )) {
           send({ type: 'keyboard-request' });
         }
         event.preventDefault();
@@ -1892,6 +1893,7 @@ const terminalHtml = `<!doctype html>
 
     const terminals = new Map();
     let activeKey = null;
+    let activationFitGeneration = 0;
     const send = value => window.ReactNativeWebView.postMessage(JSON.stringify(value));
     const call = (key, method, args = []) => {
       const entry = terminals.get(key);
@@ -1908,6 +1910,23 @@ const terminalHtml = `<!doctype html>
       entry.pendingInput = '';
       if (data) send({ type: 'input', data, key: entry.key });
     };
+    const scheduleActivationFit = key => {
+      const generation = ++activationFitGeneration;
+      const fit = () => {
+        if (generation !== activationFitGeneration || activeKey !== key) return;
+        const entry = terminals.get(key);
+        if (!entry || !entry.ready || !entry.root.classList.contains('presented')) return;
+        call(key, 'herdrFit');
+      };
+      // The activation class and the native WebView layout can settle in
+      // different frames. Fit once now, then retry after the full session
+      // width is available. The generation guard invalidates stale switches.
+      fit();
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => requestAnimationFrame(fit));
+      }
+      setTimeout(fit, 120);
+    };
     const receive = (entry, value) => {
       if (!value || typeof value.type !== 'string') return;
       if (value.type === 'ready') {
@@ -1916,7 +1935,7 @@ const terminalHtml = `<!doctype html>
         entry.pending = [];
         for (const [method, args] of pending) call(entry.key, method, args);
         send({ type: 'terminal-ready', key: entry.key });
-        if (entry.key === activeKey) call(entry.key, 'herdrFit');
+        if (entry.key === activeKey) scheduleActivationFit(entry.key);
         return;
       }
       if (value.type === 'input' && typeof value.data === 'string') {
@@ -1986,7 +2005,10 @@ const terminalHtml = `<!doctype html>
       present(key ? [key] : []);
       if (entry) {
         entry.root.style.transform = 'translateX(0)';
-        call(key, 'herdrFit');
+        scheduleActivationFit(key);
+      } else {
+        // Invalidate delayed fits belonging to the previously active pane.
+        activationFitGeneration += 1;
       }
     };
     window.herdrWriteBase64Chunk = (key, sequence, data, final, inputCookie, resizeCookie, inboundCookie) => call(key, 'herdrWriteBase64Chunk', [sequence, data, final, inputCookie, resizeCookie, inboundCookie]);

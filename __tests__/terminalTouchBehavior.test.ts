@@ -1,6 +1,7 @@
 const {
   handleTerminalStationaryTap,
   handleKeyboardClosedStationaryTap,
+  terminalTapRequestsKeyboard,
   setTerminalKeyboardInputEnabled,
   terminalCellAtPoint,
   terminalMousePointForAction,
@@ -26,6 +27,12 @@ const {
     send: (message: { type: string; link?: string }) => void;
     clearInteractiveSelection: (clearNativeSelection: boolean) => void;
   }) => void;
+  terminalTapRequestsKeyboard: (
+    point: { clientX: number; clientY: number },
+    keyboardEnabled: boolean,
+    offlineScrollback: boolean,
+    cellAtPoint: (point: { clientX: number; clientY: number }) => unknown,
+  ) => boolean;
   terminalCellAtPoint: (
     point: { clientX: number; clientY: number },
     rect: { left: number; top: number; width: number; height: number },
@@ -46,7 +53,12 @@ const {
   ) => string;
   setTerminalKeyboardInputEnabled: (
     terminal: {
-      textarea: { readOnly: boolean; inputMode: string };
+      textarea: {
+        readOnly: boolean;
+        inputMode: string;
+        style: { pointerEvents: string };
+        tabIndex: number;
+      };
       blur: () => void;
     },
     enabled: boolean,
@@ -167,6 +179,14 @@ test('a tap outside the screen or in the composer cannot fall through to an old 
   expect(clearInteractiveSelection).toHaveBeenCalledWith(true);
 });
 
+test('requests the keyboard from any valid terminal cell, not only the cursor row', () => {
+  const cell = { col: 10, row: 2 };
+  expect(terminalTapRequestsKeyboard(point, false, false, () => cell)).toBe(true);
+  expect(terminalTapRequestsKeyboard(point, true, false, () => cell)).toBe(false);
+  expect(terminalTapRequestsKeyboard(point, false, true, () => cell)).toBe(false);
+  expect(terminalTapRequestsKeyboard(point, false, false, () => null)).toBe(false);
+});
+
 test('keeps an active TUI mouse drag paired when release lands outside the screen', () => {
   const screen = { left: 16, top: 120, width: 800, height: 480 };
   const cellAtPoint = (candidate: { clientX: number; clientY: number }) =>
@@ -193,16 +213,26 @@ test('encodes forced TUI drag motion with the SGR motion bit', () => {
   expect(terminalMouseInputSequence('drag', 11, 6)).toBe('\u001b[<32;12;7M');
 });
 
-test('keyboard-disabled xterm remains focusable for mouse handling without opening the IME', () => {
+test('keyboard-disabled xterm cannot let its hidden textarea open the IME', () => {
   const terminal = {
-    textarea: { readOnly: false, inputMode: '' },
+    textarea: { readOnly: false, inputMode: '', style: { pointerEvents: 'auto' }, tabIndex: 0 },
     blur: jest.fn(),
   };
 
   expect(setTerminalKeyboardInputEnabled(terminal, false)).toBe(false);
-  expect(terminal.textarea).toEqual({ readOnly: true, inputMode: 'none' });
+  expect(terminal.textarea).toEqual({
+    readOnly: true,
+    inputMode: 'none',
+    style: { pointerEvents: 'none' },
+    tabIndex: -1,
+  });
   expect(terminal.blur).toHaveBeenCalledTimes(1);
 
   expect(setTerminalKeyboardInputEnabled(terminal, true)).toBe(true);
-  expect(terminal.textarea).toEqual({ readOnly: false, inputMode: '' });
+  expect(terminal.textarea).toEqual({
+    readOnly: false,
+    inputMode: '',
+    style: { pointerEvents: 'auto' },
+    tabIndex: 0,
+  });
 });

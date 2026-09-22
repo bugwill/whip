@@ -90,6 +90,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => renderer?.unmount());
+  jest.useRealTimers();
   renderer = undefined;
   jest.restoreAllMocks();
   Object.assign(Keyboard, keyboardStateApis);
@@ -144,12 +145,60 @@ test('native IME top corrects a fullscreen frame that incorrectly leaves control
   expect(result.inset).toBe(350);
 });
 
+test('does not reserve a transient RN frame when native IME geometry is unavailable', async () => {
+  getKeyboardTop = jest.fn(async () => null);
+  render();
+  show(730);
+  measure();
+  expect(result.inset).toBe(0);
+  await act(async () => { await Promise.resolve(); });
+  expect(result.inset).toBe(0);
+});
+
 test('native IME lookup is skipped while the keyboard is hidden', () => {
   const getTop = jest.fn(async () => 450);
   getKeyboardTop = getTop;
   render();
   act(() => result.remeasure());
   expect(getTop).not.toHaveBeenCalled();
+});
+
+test('retries transient native geometry without another keyboard event and cancels on hide', async () => {
+  jest.useFakeTimers();
+  const getTop = jest.fn<Promise<number | null>, []>()
+    .mockResolvedValueOnce(null).mockResolvedValue(450);
+  getKeyboardTop = getTop;
+  render();
+  show();
+  await act(async () => {});
+  expect(result.inset).toBe(0);
+  await act(async () => { jest.advanceTimersByTime(80); });
+  measure();
+  expect(result.inset).toBe(350);
+  hide();
+  await act(async () => { jest.advanceTimersByTime(1000); });
+  expect(getTop).toHaveBeenCalledTimes(2);
+  expect(result.inset).toBe(0);
+});
+
+test('accepts frame updates after a null native measurement and bounds retries', async () => {
+  jest.useFakeTimers();
+  const getTop = jest.fn(async (): Promise<number | null> => null);
+  getKeyboardTop = getTop;
+  render();
+  show();
+  await act(async () => {});
+  await act(async () => { listeners.get('keyboardDidChangeFrame')?.({
+    endCoordinates: keyboardFrame,
+  } as KeyboardEvent); });
+  expect(getTop).toHaveBeenCalledTimes(2);
+  for (const delay of [80, 170, 250, 1000]) {
+    await act(async () => { jest.advanceTimersByTime(delay); });
+  }
+  expect(getTop).toHaveBeenCalledTimes(5);
+  expect(result.inset).toBe(0);
+  await act(async () => { jest.advanceTimersByTime(10000); });
+  expect(getTop).toHaveBeenCalledTimes(5);
 });
 
 test('a late native IME measurement cannot revive the inset after keyboard hide', async () => {
@@ -311,4 +360,3 @@ test('additionalOffset is maintained even after Android resizes the window', () 
   hide();
   expect(result.inset).toBe(0);
 });
-

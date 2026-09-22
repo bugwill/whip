@@ -98,7 +98,11 @@ import {
 } from '../services/performanceTrace';
 import { reportBackgroundFailure } from '../services/backgroundOperations';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { getTerminalImeTopInWindow, setTerminalComposerOverlay } from '../services/terminalSoftInput';
+import {
+  getTerminalImeTopInWindow,
+  setTerminalComposerOverlay,
+  supportsTerminalImeTopInWindow,
+} from '../services/terminalSoftInput';
 import {
   applyTerminalModifiers,
   type TerminalModifierState,
@@ -503,6 +507,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     const expandedViewportRef = useRef<View | null>(null);
     const { inset: expandedKeyboardInset, remeasure: remeasureExpandedKeyboard } = useKeyboardInset(expandedViewportRef, {
       enabled: visible && composeOpen && composeExpanded,
+      getKeyboardTop: supportsTerminalImeTopInWindow() ? getTerminalImeTopInWindow : undefined,
       additionalOffset: preferences?.imeToolbarCompensation,
     });
     const [composerHeight, setComposerHeight] = useState(0);
@@ -521,6 +526,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     const [historyOpen, setHistoryOpen] = useState(false);
     const [keyboardEnabled, setKeyboardEnabled] = useState(false);
     const keyboardEnabledRef = useRef(keyboardEnabled);
+    const skipNextKeyboardRendererSyncRef = useRef(false);
     keyboardEnabledRef.current = keyboardEnabled;
     const scheduleInputFocus = (composer: boolean, delay: number) => {
       const operation = composerOperation.current;
@@ -541,14 +547,14 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     const { inset: keyboardInset, remeasure: remeasureKeyboard } = useKeyboardInset(keyboardViewportRef, {
       enabled: visible,
       onVisibilityChange: setKeyboardVisible,
-      getKeyboardTop: Platform.OS === 'android' ? getTerminalImeTopInWindow : undefined,
+      getKeyboardTop: supportsTerminalImeTopInWindow() ? getTerminalImeTopInWindow : undefined,
       additionalOffset: preferences?.imeToolbarCompensation,
     });
     // The Portal has its own coordinate space; measure its actual host rather
     // than applying the terminal viewport's overlap to a different ancestor.
     const { inset: dockKeyboardInset, remeasure: remeasureDockKeyboard } = useKeyboardInset(dockViewportRef, {
       enabled: visible && Boolean(session),
-      getKeyboardTop: Platform.OS === 'android' ? getTerminalImeTopInWindow : undefined,
+      getKeyboardTop: supportsTerminalImeTopInWindow() ? getTerminalImeTopInWindow : undefined,
       additionalOffset: preferences?.imeToolbarCompensation,
     });
     const [alternateScreen, setAlternateScreen] = useState(false);
@@ -1005,7 +1011,15 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
 
     useEffect(() => {
       if (!ready) return;
-      renderer.current?.setKeyboardEnabled(visible && directKeyboardEnabled && !searchOpen && !historyOpen);
+      const rendererKeyboardEnabled = visible && directKeyboardEnabled && !searchOpen && !historyOpen;
+      if (rendererKeyboardEnabled && skipNextKeyboardRendererSyncRef.current) {
+        // The terminal tap already sent the combined enable+focus command.
+        // Avoid sending a second enable command when React reflects the state
+        // update from that same tap.
+        skipNextKeyboardRendererSyncRef.current = false;
+        return;
+      }
+      renderer.current?.setKeyboardEnabled(rendererKeyboardEnabled);
     }, [
       activeTarget?.key,
       composerKeyboardEnabled,
@@ -2108,9 +2122,12 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           <TerminalRendererHost
             onKeyboardRequested={() => {
               if (!visible || status !== 'connected' || composeOpen || searchOpen || historyOpen || chatViewEnabled) return;
+              skipNextKeyboardRendererSyncRef.current = true;
               setKeyboardEnabled(true);
-              renderer.current?.setKeyboardEnabled(true);
-              renderer.current?.focus();
+              // Enable the hidden input and focus it in one WebView turn.
+              // The enabled state is applied before focus so Android still
+              // treats this as a valid IME target.
+              renderer.current?.focusWithKeyboardEnabled();
             }}
             onResidencyEnd={onResidencyEnd}
             ref={renderer}
@@ -2471,7 +2488,9 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             onShow={() => {
               scheduleInputFocus(true, COMPOSER_FOCUS_DEFER_MS);
             }}
-            statusBarTranslucent
+            // A non-translucent Android modal keeps the header below the
+            // status bar, so the collapse button cannot hit the launcher area.
+            statusBarTranslucent={false}
             visible
           >
             <View
@@ -2480,7 +2499,10 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
               onLayout={remeasureExpandedKeyboard}
               className="flex-1 bg-terminal-canvas"
               style={{
-                paddingTop: topSafeAreaInset,
+                // Android already places a non-translucent modal below the
+                // status bar; applying the activity inset again would double
+                // the top gap. iOS still needs its safe-area padding here.
+                paddingTop: Platform.OS === 'android' ? 0 : topSafeAreaInset,
                 paddingBottom: Math.max(bottomSafeAreaInset, expandedKeyboardInset),
               }}
             >
