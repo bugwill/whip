@@ -640,6 +640,7 @@ function AppShellContent({
                         Boolean(activeTelemetry?.latencyWarning.active)
                       }
                       terminalState={terminals.get(activeSession.id)}
+                      paneOpenRequest={navigation.paneOpenRequest}
                       terminalTargets={sessions.terminalTargets}
                       appBackgroundImageUri={appBackgroundImageUri}
                       appBackgroundDimming={appBackgroundDimming}

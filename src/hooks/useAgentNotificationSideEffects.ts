@@ -122,7 +122,7 @@ export function useAgentNotificationNavigation({
   /** Re-run resolution as host snapshots arrive after a notification tap. */
   state: LiveHostSessionsState;
   stateRef: SessionRuntimeStore['stateRef'];
-  hosts: HostManagementController;
+  hosts: Pick<HostManagementController, 'closeEditor' | 'setError'>;
   openPaneTerminal: (
     sessionId: string,
     pane: PaneInfo,

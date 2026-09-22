@@ -160,6 +160,7 @@ import { AgentChatView } from './AgentChatView';
 import { useAppGlassEnabled } from './GlassSurface';
 
 interface Props {
+  paneOpenRequest?: NonNullable<import('../hooks/useAppNavigation').AppNavigationController['paneOpenRequest']>;
   hostSessionId: string;
   visible: boolean;
   snapshot: HerdrSnapshot;
@@ -215,6 +216,7 @@ interface BrowserWebViewHandle {
 const BROWSER_WEBVIEW_STYLE = { flex: 1 } as const;
 
 export function SessionScreen({
+  paneOpenRequest,
   hostSessionId,
   visible,
   snapshot,
@@ -350,6 +352,11 @@ export function SessionScreen({
   const lastActiveChatDiagnosticRef = useRef('');
   const reportedChatFailureGenerationsRef = useRef(new Set<number>());
   const mutationInFlight = useRef(false);
+  const appliedPaneOpenRequest = useRef<typeof paneOpenRequest>(undefined);
+  const requestedPane = paneOpenRequest?.sessionId === hostSessionId
+    && appliedPaneOpenRequest.current !== paneOpenRequest
+    ? snapshot.panes.find(item => item.pane_id === paneOpenRequest.paneId)
+    : undefined;
 
   const nextChatPresentationGeneration = useCallback(() => {
     chatPresentationGenerationRef.current += 1;
@@ -768,6 +775,27 @@ export function SessionScreen({
     reportedChatFailureGenerationsRef.current.clear();
   }, [hostSessionId]);
 
+  // Explicit navigation owns the full selection, including across tabs. Keep
+  // stale server focus from undoing it while agent.focus is in flight.
+  useEffect(() => {
+    if (!requestedPane) return;
+    appliedPaneOpenRequest.current = paneOpenRequest;
+    localSelectionRef.current = {
+      workspaceId: requestedPane.workspace_id,
+      tabId: requestedPane.tab_id,
+      paneId: requestedPane.pane_id,
+    };
+    pendingFocus.current = null;
+    pendingPaneFocus.current = requestedPane.pane_id;
+    lastActivePaneId.current = null;
+    setWorkspaceId(requestedPane.workspace_id);
+    setTabId(requestedPane.tab_id);
+    setPaneId(requestedPane.pane_id);
+    rememberSessionWorkspace(selectionMemory, requestedPane.workspace_id);
+    rememberSessionTab(selectionMemory, requestedPane.workspace_id, requestedPane.tab_id);
+    rememberSessionPane(selectionMemory, requestedPane.tab_id, requestedPane.pane_id);
+  }, [paneOpenRequest, requestedPane, selectionMemory]);
+
   useEffect(() => () => {
     focusRequestSerial.current += 1;
     focusRequestQueue.current.clear();
@@ -1056,6 +1084,7 @@ export function SessionScreen({
 
   useEffect(() => {
     const pending = pendingFocus.current;
+    if (requestedPane) return;
     if (pending) {
       const previousStillPresent =
         snapshot.tabs.some(item => item.tab_id === pending.previousId) ||
@@ -1086,6 +1115,7 @@ export function SessionScreen({
       setPaneId(selectedPane.pane_id);
   }, [
     pendingCreatedSelection,
+    requestedPane,
     paneId,
     selectedPane,
     selectedTab,
@@ -1100,6 +1130,7 @@ export function SessionScreen({
   // Once visible, keep the selected terminal stable while startup focus events settle.
   useEffect(() => {
     if (!followServerFocus || !serverWorkspaceId) return;
+    if (requestedPane) return;
     const localSelection = localSelectionRef.current;
     if (localSelection) {
       const serverConfirmsSelection =
@@ -1130,12 +1161,14 @@ export function SessionScreen({
     followServerFocus,
     pendingCreatedPaneId,
     serverPaneId,
+    requestedPane,
     serverTabId,
     serverWorkspaceId,
   ]);
 
   // Preserve an explicit terminal choice until Herdr confirms the same pane.
   useEffect(() => {
+    if (requestedPane) return;
     if (!visible) {
       pendingPaneFocus.current = null;
       lastActivePaneId.current = null;
@@ -1178,6 +1211,7 @@ export function SessionScreen({
     terminalState.activeTerminalId,
     terminalState.sessions,
     selectedTab?.tab_id,
+    requestedPane,
     visible,
     workspaceId,
   ]);
@@ -1190,6 +1224,7 @@ export function SessionScreen({
   // Keep a hidden or uninitialized terminal aligned with the server-focused pane.
   useEffect(() => {
     if (!followServerFocus || !serverPaneId) return;
+    if (requestedPane) return;
     const localSelection = localSelectionRef.current;
     if (
       localSelection &&
@@ -1213,6 +1248,7 @@ export function SessionScreen({
     serverPaneId,
     serverTabId,
     serverWorkspaceId,
+    requestedPane,
   ]);
 
   const run = async (action: () => Promise<unknown>): Promise<boolean> => {

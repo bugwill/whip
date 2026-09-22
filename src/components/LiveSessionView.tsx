@@ -17,6 +17,7 @@ import type { PaneInfo } from '../types';
 import { SessionScreen } from './SessionScreen';
 
 interface Props {
+  paneOpenRequest?: NonNullable<import('../hooks/useAppNavigation').AppNavigationController['paneOpenRequest']>;
   session: LiveHostSession;
   client: HerdrClient;
   visible: boolean;
@@ -65,6 +66,7 @@ interface Props {
 
 /** Adapts one application-level live host into SessionScreen's local contract. */
 export function LiveSessionView({
+  paneOpenRequest,
   session,
   client,
   visible,
@@ -127,6 +129,7 @@ export function LiveSessionView({
   return (
     <SessionScreen
       hostSessionId={sessionId}
+      paneOpenRequest={paneOpenRequest}
       visible={visible}
       snapshot={session.snapshot}
       client={client}

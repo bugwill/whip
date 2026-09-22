@@ -73,6 +73,7 @@ export function useSessionTerminalLifecycle({
     (sessionId: string, pane: PaneInfo, focusAgent = false) => {
       navigation.selectPane(null);
       terminals.openPane(sessionId, pane);
+      navigation.requestPaneOpen(sessionId, pane.pane_id);
       select(sessionId, 'terminal');
       const runtime = runtimesRef.current.get(sessionId);
       const focus = focusAgent

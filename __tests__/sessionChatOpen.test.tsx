@@ -257,6 +257,38 @@ function setup(agent: ChatAgent) {
 }
 
 let renderer: ReactTestRenderer;
+
+test.each([
+  [true, 'workspace-b', 'tab-b'],
+  [false, 'workspace-b', 'tab-b'],
+  [true, 'workspace-1', 'tab-b'],
+  [false, 'workspace-1', 'tab-b'],
+  [true, 'workspace-1', 'tab-1'],
+  [false, 'workspace-1', 'tab-1'],
+] as const)('explicit navigation survives stale focus (visible=%s, workspace=%s, tab=%s)', (initiallyVisible, workspaceId, tabId) => {
+  const host = setup('codex');
+  const paneB = { ...host.pane, pane_id: 'pane-b', terminal_id: 'terminal-b', workspace_id: workspaceId, tab_id: tabId, focused: false };
+  const terminalB = { ...host.props.terminalState.sessions[0], terminalId: paneB.terminal_id, paneId: paneB.pane_id };
+  const props = {
+    ...host.props,
+    snapshot: {
+      ...host.props.snapshot,
+      panes: [...host.props.snapshot.panes, paneB],
+      workspaces: workspaceId === 'workspace-1' ? host.props.snapshot.workspaces : [...host.props.snapshot.workspaces, { ...host.props.snapshot.workspaces[0], workspace_id: workspaceId, active_tab_id: tabId, focused: false }],
+      tabs: tabId === 'tab-1' ? host.props.snapshot.tabs : [...host.props.snapshot.tabs, { ...host.props.snapshot.tabs[0], workspace_id: workspaceId, tab_id: tabId, focused: false }],
+    },
+    terminalState: { ...host.props.terminalState, sessions: [...host.props.terminalState.sessions, terminalB] },
+    terminalTargets: [...host.props.terminalTargets, { key: 'target-b', hostSessionId: 'host-1', client: host.client, session: terminalB }],
+  };
+  act(() => { renderer = create(<SessionScreen {...props} visible={initiallyVisible} />); });
+  const request = { sessionId: 'host-1', paneId: paneB.pane_id, revision: 1 };
+  jest.mocked(host.props.onActivateTerminal).mockClear();
+  act(() => renderer.update(<SessionScreen {...props} visible paneOpenRequest={request} terminalState={{ ...props.terminalState, activeTerminalId: paneB.terminal_id }} />));
+  expect(ui('TerminalScreen').props.activeTarget?.key).toBe('target-b');
+  expect(host.props.onActivateTerminal).not.toHaveBeenLastCalledWith(host.pane);
+  act(() => renderer.update(<SessionScreen {...props} visible paneOpenRequest={{ ...request, revision: 2 }} terminalState={{ ...props.terminalState, activeTerminalId: paneB.terminal_id }} />));
+  expect(ui('TerminalScreen').props.activeTarget?.key).toBe('target-b');
+});
 const ui = (name: string) =>
   renderer.root.find(node => String(node.type) === name);
 const control = () => ui('TerminalScreen').props.chatControl;

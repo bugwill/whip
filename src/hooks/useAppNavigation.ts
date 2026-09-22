@@ -31,6 +31,8 @@ interface AppNavigationOptions {
 }
 
 export interface AppNavigationController {
+  paneOpenRequest?: { sessionId: string; paneId: string; revision: number };
+  requestPaneOpen: (sessionId: string, paneId: string) => void;
   state: MobileNavigationState;
   mountedTabs: ReadonlySet<AppTab>;
   herdHostFilterId: string | null;
@@ -69,6 +71,10 @@ export function useAppNavigation({
     Record<string, string | null>
   >({});
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
+  const [paneOpenRequest, setPaneOpenRequest] = useState<AppNavigationController['paneOpenRequest']>();
+  const requestPaneOpen = useCallback((sessionId: string, paneId: string) => {
+    setPaneOpenRequest(current => ({ sessionId, paneId, revision: (current?.revision ?? 0) + 1 }));
+  }, []);
   const [licensesOpen, setLicensesOpen] = useState(false);
   const hydratedRef = useRef(false);
   const firstTabMountedNotifiedRef = useRef(false);
@@ -202,6 +208,8 @@ export function useAppNavigation({
     () => ({
       state,
       mountedTabs,
+      paneOpenRequest,
+      requestPaneOpen,
       herdHostFilterId,
       herdWorkspaceFilterIds,
       selectedPaneId,
@@ -224,6 +232,8 @@ export function useAppNavigation({
       licensesOpen,
       mountedTabs,
       openLicenses,
+      paneOpenRequest,
+      requestPaneOpen,
       selectTab,
       selectedPaneId,
       setHerdWorkspaceFilter,
