@@ -15,6 +15,7 @@ function installAndroidImeBridge(terminal, send, userAgent, eventTarget = window
   if (!input || !/Android/i.test(userAgent)) {
     const cleanup = () => {};
     cleanup.reset = () => {};
+    cleanup.prepareExternalInput = () => {};
     return cleanup;
   }
 
@@ -60,6 +61,13 @@ function installAndroidImeBridge(terminal, send, userAgent, eventTarget = window
     mirroredValue = '';
     interceptInput = false;
     suppressInput = false;
+  };
+  const prepareExternalInput = () => {
+    // A toolbar key is sent outside xterm's textarea. Old IME text is no
+    // longer a safe editing baseline: replacing it could delete that key.
+    // Leave an active or pending composition alone until it commits.
+    if (composing || (interceptInput && reconcileTimer)) return;
+    resetInput();
   };
   const scheduleReset = () => {
     cancelReconcile();
@@ -171,6 +179,7 @@ function installAndroidImeBridge(terminal, send, userAgent, eventTarget = window
     for (const [type, listener] of listeners) eventTarget.removeEventListener(type, listener, true);
   };
   cleanup.reset = resetInput;
+  cleanup.prepareExternalInput = prepareExternalInput;
   return cleanup;
 }
 

@@ -641,6 +641,7 @@ const terminalSessionHtml = `<!doctype html>
       navigator.userAgent,
     );
     resetAndroidImeAfterPaste = disposeAndroidImeBridge.reset;
+    window.herdrPrepareExternalInput = () => disposeAndroidImeBridge.prepareExternalInput();
     terminal.onData(data => {
       if (offlineScrollback) {
         handleOfflineInput(data);
@@ -2034,6 +2035,7 @@ const terminalHtml = `<!doctype html>
     window.herdrSearch = (key, query, caseSensitive, regex, direction) => call(key, 'herdrSearch', [query, caseSensitive, regex, direction]);
     window.herdrScanLinks = key => call(key, 'herdrScanLinks');
     window.herdrFocus = key => call(key, 'herdrFocus');
+    window.herdrPrepareExternalInput = key => call(key, 'herdrPrepareExternalInput');
     window.herdrBlur = key => call(key, 'herdrBlur');
     window.herdrSetKeyboardEnabled = (key, enabled) => call(key, 'herdrSetKeyboardEnabled', [enabled]);
     window.herdrSetEditableRegion = (key, region) => call(key, 'herdrSetEditableRegion', [region]);

@@ -327,6 +327,26 @@ describe('TerminalRendererHost lifecycle', () => {
     return { activateTarget, eventCallbacks, handle, injected, requestFocus, setEink, setVisible, webView };
   };
 
+  test('prepares the Android IME before forwarding a toolbar key', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll });
+    const target = createTarget('term-1', client, scroll);
+    const { eventCallbacks, handle, injected } = await mountReadyHost(target);
+    injected.length = 0;
+    eventCallbacks.onInput.mockImplementation(() => {
+      expect(injected).toContain(
+        `window.herdrPrepareExternalInput(${JSON.stringify(target.key)}); true;`,
+      );
+    });
+
+    await act(async () => {
+      expect(handle.current?.input('/')).toBe(true);
+      await Promise.resolve();
+    });
+
+    expect(eventCallbacks.onInput).toHaveBeenCalledWith(target, '/');
+  });
+
   test('E-Ink releases the oldest renderer before allocating a fourth despite preference 20', async () => {
     const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
     const client = createClient({});
@@ -417,6 +437,7 @@ describe('TerminalRendererHost lifecycle', () => {
       // Perfetto tracing is disabled in this test, so the input trace cookie
       // is null. The interaction window itself must force the echo through.
       act(() => { handle.current?.input('echo'); });
+      injected.length = 0;
       // A slow network can deliver the first echo after the 500 ms burst window.
       jest.advanceTimersByTime(1_000);
       frame(5, 'input echo');
@@ -438,6 +459,7 @@ describe('TerminalRendererHost lifecycle', () => {
 
       injected.length = 0;
       act(() => { handle.current?.input('no response'); });
+      injected.length = 0;
       jest.advanceTimersByTime(5_000);
       frame(8, 'later output');
       expect(injected).toEqual([]);

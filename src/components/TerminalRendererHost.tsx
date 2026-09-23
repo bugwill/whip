@@ -1057,6 +1057,10 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         activeCall('herdrOfflineInput', [data]);
         return true;
       }
+      // Native toolbar input bypasses xterm's textarea. Clear its IME editing
+      // baseline before queueing the byte so a later Gboard replacement cannot
+      // emit backspaces that erase this input in the remote program.
+      activeCall('herdrPrepareExternalInput');
       enqueueInput(entry, () => reportQueuedInput(entry, data)).catch(
         reason => reportError(entry.target, String(reason)),
       );

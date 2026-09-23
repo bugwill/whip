@@ -103,6 +103,105 @@ describe('Android terminal IME bridge', () => {
     expect(sent).toEqual([{ type: 'input', data: 'x' }]);
   });
 
+  test.each(['/', '~'])(
+    'keeps toolbar %s before the first Gboard replacement in a newly started TUI',
+    toolbarKey => {
+      const target = new FakeEventTarget();
+      // xterm cleared the textarea on Enter after the command that launched
+      // the TUI, but did not emit an input event to update the IME mirror.
+      const textarea = {
+        value: 'codex',
+        selectionStart: 5,
+        selectionEnd: 5,
+        setAttribute: jest.fn(),
+      };
+      const remoteBytes: string[] = [];
+      const bridge = installAndroidImeBridge(
+        { textarea },
+        (message: { type: string; data: string }) => remoteBytes.push(message.data),
+        'Android',
+        target,
+      );
+
+      textarea.value = '';
+      textarea.selectionStart = 0;
+      textarea.selectionEnd = 0;
+      bridge.prepareExternalInput();
+      remoteBytes.push(toolbarKey);
+      const keydown = inputEvent(textarea, { keyCode: 229 });
+      target.emit('keydown', keydown);
+      const replacement = inputEvent(textarea, {
+        inputType: 'insertReplacementText', data: 'a',
+      });
+      target.emit('beforeinput', replacement);
+      textarea.value = 'a';
+      textarea.selectionStart = 1;
+      textarea.selectionEnd = 1;
+      target.emit('input', inputEvent(textarea, {
+        inputType: 'insertReplacementText', data: 'a',
+      }));
+
+      expect(keydown.stopPropagation).toHaveBeenCalled();
+      expect(replacement.stopPropagation).toHaveBeenCalled();
+      expect(remoteBytes).toEqual([toolbarKey, 'a']);
+    },
+  );
+
+  test('does not discard an unfinished composition when a toolbar key is pressed', () => {
+    const target = new FakeEventTarget();
+    const textarea = {
+      value: '',
+      selectionStart: 0,
+      selectionEnd: 0,
+      setAttribute: jest.fn(),
+    };
+    const sent: string[] = [];
+    const bridge = installAndroidImeBridge(
+      { textarea },
+      (message: { data: string }) => sent.push(message.data),
+      'Android',
+      target,
+    );
+
+    target.emit('compositionstart', inputEvent(textarea));
+    textarea.value = '你';
+    target.emit('input', inputEvent(textarea, { isComposing: true }));
+    bridge.prepareExternalInput();
+
+    expect(textarea.value).toBe('你');
+    expect(sent).toEqual(['你']);
+  });
+
+  test('preserves a composition commit pending on the next task', () => {
+    jest.useFakeTimers();
+    try {
+      const target = new FakeEventTarget();
+      const textarea = {
+        value: '',
+        selectionStart: 0,
+        selectionEnd: 0,
+        setAttribute: jest.fn(),
+      };
+      const sent: string[] = [];
+      const bridge = installAndroidImeBridge(
+        { textarea },
+        (message: { data: string }) => sent.push(message.data),
+        'Android',
+        target,
+      );
+
+      target.emit('compositionstart', inputEvent(textarea));
+      target.emit('compositionend', inputEvent(textarea, { data: 'stale' }));
+      bridge.prepareExternalInput();
+      textarea.value = '你';
+      jest.runOnlyPendingTimers();
+
+      expect(sent).toEqual(['你']);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test.each(['insertReplacementText', 'insertText'])(
     'replaces Gboard-selected text reported as %s instead of appending',
     inputType => {
