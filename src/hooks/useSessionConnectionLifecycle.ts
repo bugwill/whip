@@ -90,6 +90,7 @@ export function useSessionConnectionLifecycle({
   commitAppCore,
   restoredTerminalHostIdsRef,
   alertsEnabled,
+  monitoringPaused,
   hosts,
   navigation,
   security,
@@ -103,6 +104,7 @@ export function useSessionConnectionLifecycle({
 }: SessionRuntimeStore & {
   restoredTerminalHostIdsRef: MutableRefObject<Set<string>>;
   alertsEnabled: boolean;
+  monitoringPaused: boolean;
   hosts: HostManagementController;
   navigation: AppNavigationController;
   security: ReturnType<typeof useApplicationSecurity>;
@@ -132,7 +134,9 @@ export function useSessionConnectionLifecycle({
   const alertsEnabledRef = useRef(alertsEnabled);
   // React's session projection can lag native ownership while connecting.
   const connectionAttemptsRef = useRef(new Map<string, symbol>());
+  const monitoringPausedRef = useRef(monitoringPaused);
   alertsEnabledRef.current = alertsEnabled;
+  monitoringPausedRef.current = monitoringPaused;
 
   const getState = useCallback(() => stateRef.current, [stateRef]);
   const getClient = useCallback(
@@ -178,6 +182,45 @@ export function useSessionConnectionLifecycle({
     },
     [],
   );
+
+  const pauseForDeviceLock = useCallback(async (): Promise<void> => {
+    connectionAttemptsRef.current.clear();
+    const sessions = appCoreRef.current.view().sessions;
+    const sessionIds = new Set([
+      ...sessions.map(session => session.id),
+      ...runtimesRef.current.keys(),
+    ]);
+    const destructions: Promise<void>[] = [];
+    let view = appCoreRef.current.view();
+    for (const sessionId of sessionIds) {
+      const session = sessions.find(item => item.id === sessionId);
+      trackHostConnection(session?.hostId ?? sessionId, false);
+      terminals.remove(sessionId);
+      const runtime = runtimesRef.current.get(sessionId);
+      if (runtime) {
+        runtimesRef.current.delete(sessionId);
+        destructions.push(destroyRuntime(sessionId, runtime));
+      }
+      if (session) {
+        view = appCoreRef.current.detachRuntime(sessionId);
+        view = appCoreRef.current.setPlaceholderConnection(
+          sessionId,
+          'disconnected',
+        );
+      }
+      removeBackgroundHostStatus(sessionId);
+      clearLatency(sessionId);
+    }
+    commitAppCore(view);
+    await Promise.all(destructions);
+  }, [
+    appCoreRef,
+    clearLatency,
+    commitAppCore,
+    runtimesRef,
+    terminals,
+    trackHostConnection,
+  ]);
 
   const scheduleEventReconnect = useCallback(
     (sessionId: string, cause: unknown) => {
@@ -469,9 +512,11 @@ export function useSessionConnectionLifecycle({
         traceStartupRestore = false,
       } = options;
       const attempt = Symbol(nextProfile.id);
+      if (monitoringPausedRef.current) return false;
       connectionAttemptsRef.current.set(nextProfile.id, attempt);
       const isCurrentAttempt = () =>
-        connectionAttemptsRef.current.get(nextProfile.id) === attempt;
+        connectionAttemptsRef.current.get(nextProfile.id) === attempt &&
+        !monitoringPausedRef.current;
       if (trackConnecting) trackHostConnection(nextProfile.id, true);
       hosts.setError(null);
       const existing = appCoreRef.current.view().sessions.find(
@@ -736,6 +781,7 @@ export function useSessionConnectionLifecycle({
   return useMemo(
     () => ({
       connectingHostIds,
+      pauseForDeviceLock,
       getState,
       getClient,
       select,
@@ -752,6 +798,7 @@ export function useSessionConnectionLifecycle({
       closeHostById,
       connect,
       connectingHostIds,
+      pauseForDeviceLock,
       connectSavedHost,
       getClient,
       getState,

@@ -4,7 +4,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -17,6 +21,7 @@ import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -34,7 +39,23 @@ class HerdrBackgroundModule(
 ) : ReactContextBaseJavaModule(context), SensorEventListener {
   private val sensorManager = context.getSystemService(SensorManager::class.java)
   private val notificationManager = context.getSystemService(NotificationManager::class.java)
+  private val keyguardManager = context.getSystemService(KeyguardManager::class.java)
+  private val powerManager = context.getSystemService(PowerManager::class.java)
   private val mainHandler = Handler(Looper.getMainLooper())
+  private val postedAgentNotificationIdentifiers = mutableSetOf<String>()
+  @Volatile private var deviceLocked = keyguardManager.isKeyguardLocked || !powerManager.isInteractive
+  private var lockStateReceiverRegistered = false
+  private val lockStateReceiver = object : BroadcastReceiver() {
+    override fun onReceive(receiverContext: Context?, intent: Intent?) {
+      val locked = when (intent?.action) {
+        Intent.ACTION_SCREEN_OFF -> true
+        Intent.ACTION_SCREEN_ON -> keyguardManager.isKeyguardLocked
+        Intent.ACTION_USER_PRESENT -> false
+        else -> return
+      }
+      updateDeviceLockState(locked)
+    }
+  }
   private var activeAlertIdentifier: String? = null
   private var activeAlertChannelId: String? = null
   private var mediaPlayer: MediaPlayer? = null
@@ -54,9 +75,28 @@ class HerdrBackgroundModule(
 
   init {
     moduleInstance = this
+    if (deviceLocked) pausedUntilForeground = true
+    registerLockStateReceiver()
   }
 
   override fun getName(): String = "HerdrBackground"
+
+  @ReactMethod
+  fun getDeviceLockState(promise: Promise) {
+    promise.resolve(deviceLocked)
+  }
+
+  @ReactMethod
+  fun resumeMonitoringAfterUnlock(promise: Promise) {
+    mainHandler.post {
+      if (deviceLocked || keyguardManager.isKeyguardLocked || !powerManager.isInteractive) {
+        promise.resolve(false)
+      } else {
+        pausedUntilForeground = false
+        promise.resolve(true)
+      }
+    }
+  }
 
   @ReactMethod
   fun updateHostStatus(sessionId: String, state: String, signal: String) {
@@ -81,6 +121,10 @@ class HerdrBackgroundModule(
   ) {
     mainHandler.post {
       try {
+        if (deviceLocked || pausedUntilForeground) {
+          promise.resolve(null)
+          return@post
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
           !notificationManager.areNotificationsEnabled()
         ) {
@@ -127,6 +171,7 @@ class HerdrBackgroundModule(
             .setPriority(Notification.PRIORITY_MAX)
         }
         notificationManager.notify(notificationIdentifier, EXPO_NOTIFICATION_ID, builder.build())
+        postedAgentNotificationIdentifiers.add(notificationIdentifier)
         Log.i(TAG, "Agent notification posted natively in background")
         promise.resolve(null)
       } catch (error: Throwable) {
@@ -141,6 +186,7 @@ class HerdrBackgroundModule(
     mainHandler.post {
       try {
         notificationManager.cancel(notificationIdentifier, EXPO_NOTIFICATION_ID)
+        postedAgentNotificationIdentifiers.remove(notificationIdentifier)
         promise.resolve(null)
       } catch (error: Throwable) {
         promise.reject("E_AGENT_NOTIFICATION_DISMISS", error)
@@ -161,6 +207,11 @@ class HerdrBackgroundModule(
   @ReactMethod
   fun start(hostCount: Double, powerMode: String, promise: Promise) {
     try {
+      if (deviceLocked || pausedUntilForeground) {
+        context.stopService(Intent(context, HerdrBackgroundService::class.java))
+        promise.resolve(null)
+        return
+      }
       val intent = Intent(context, HerdrBackgroundService::class.java).apply {
         action = HerdrBackgroundService.ACTION_START
         putExtra(HerdrBackgroundService.EXTRA_HOST_COUNT, hostCount.toInt().coerceAtLeast(1))
@@ -197,6 +248,11 @@ class HerdrBackgroundModule(
   ) {
     mainHandler.post {
       try {
+        if (deviceLocked || pausedUntilForeground) {
+          stopPersistentAlert()
+          promise.resolve(null)
+          return@post
+        }
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
           ?: throw IllegalStateException("This device has no accelerometer")
         stopPersistentAlert()
@@ -262,8 +318,62 @@ class HerdrBackgroundModule(
     mainHandler.post {
       stopPersistentAlert()
     }
+    if (lockStateReceiverRegistered) {
+      try {
+        context.unregisterReceiver(lockStateReceiver)
+      } catch (_: IllegalArgumentException) {
+        // The receiver may already have been unregistered during shutdown.
+      }
+      lockStateReceiverRegistered = false
+    }
     if (moduleInstance === this) moduleInstance = null
     super.invalidate()
+  }
+
+  private fun registerLockStateReceiver() {
+    val filter = IntentFilter().apply {
+      addAction(Intent.ACTION_SCREEN_OFF)
+      addAction(Intent.ACTION_SCREEN_ON)
+      addAction(Intent.ACTION_USER_PRESENT)
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      context.registerReceiver(lockStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+    } else {
+      @Suppress("DEPRECATION")
+      context.registerReceiver(lockStateReceiver, filter)
+    }
+    lockStateReceiverRegistered = true
+  }
+
+  private fun updateDeviceLockState(locked: Boolean) {
+    val changed = deviceLocked != locked
+    deviceLocked = locked
+    if (!locked) {
+      if (changed) emitDeviceLockState(false)
+      return
+    }
+
+    pausedUntilForeground = true
+
+    // Suppress alerts in native code as soon as Android turns the screen off,
+    // even if the JavaScript runtime is already suspended in the background.
+    stopPersistentAlert("Device locked; stopping Agent alerts")
+    postedAgentNotificationIdentifiers.toList().forEach { identifier ->
+      notificationManager.cancel(identifier, EXPO_NOTIFICATION_ID)
+    }
+    postedAgentNotificationIdentifiers.clear()
+    cancelVibration()
+    context.stopService(Intent(context, HerdrBackgroundService::class.java))
+    if (changed) emitDeviceLockState(true)
+  }
+
+  private fun emitDeviceLockState(locked: Boolean) {
+    try {
+      context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit(DEVICE_LOCK_STATE_CHANGED_EVENT, locked)
+    } catch (error: Throwable) {
+      Log.w(TAG, "Could not deliver device lock state to JavaScript", error)
+    }
   }
 
   private fun ensureAgentNotificationChannel(channelId: String, delivery: String) {
@@ -310,6 +420,7 @@ class HerdrBackgroundModule(
   }
 
   private fun startLoopingSound() {
+    if (deviceLocked || pausedUntilForeground) return
     val channelId = activeAlertChannelId ?: return
     val sound = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       notificationManager.getNotificationChannel(channelId)?.sound
@@ -430,9 +541,13 @@ class HerdrBackgroundModule(
     const val EXTRA_AGENT_HOST_ID = "agent_host_id"
     const val EXTRA_AGENT_PANE_ID = "agent_pane_id"
     const val AGENT_NOTIFICATION_TAPPED_EVENT = "WhipAgentNotificationTapped"
+    const val DEVICE_LOCK_STATE_CHANGED_EVENT = "WhipDeviceLockStateChanged"
     private val agentNotificationLock = Any()
     private var pendingAgentNotificationTarget: AgentNotificationTarget? = null
     private var moduleInstance: HerdrBackgroundModule? = null
+    @Volatile private var pausedUntilForeground = false
+
+    fun isMonitoringPaused(): Boolean = pausedUntilForeground
 
     fun handleAgentNotificationIntent(intent: Intent?) {
       if (intent?.action != ACTION_OPEN_AGENT_NOTIFICATION) return

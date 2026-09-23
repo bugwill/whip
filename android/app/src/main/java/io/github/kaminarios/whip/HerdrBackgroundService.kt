@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.KeyguardManager
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -24,6 +25,16 @@ class HerdrBackgroundService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    if (
+      HerdrBackgroundModule.isMonitoringPaused() ||
+      getSystemService(KeyguardManager::class.java).isKeyguardLocked ||
+      !getSystemService(PowerManager::class.java).isInteractive
+    ) {
+      monitoringRequested = false
+      reconcileWakeLock()
+      stopSelf(startId)
+      return START_NOT_STICKY
+    }
     if (intent?.action == ACTION_STOP_MONITORING) monitoringRequested = false
     if (intent?.getBooleanExtra(EXTRA_MONITORING_REQUEST, false) == true) {
       monitoringRequested = true

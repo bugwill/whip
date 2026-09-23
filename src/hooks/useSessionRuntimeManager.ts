@@ -1,4 +1,12 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { AppState, Platform } from 'react-native';
 import type { TFunction } from 'i18next';
 import {
   NativeAppCore,
@@ -20,6 +28,7 @@ import { useSessionConnectionLifecycle } from './useSessionConnectionLifecycle';
 import { useSessionRuntimeTelemetry } from './useSessionRuntimeTelemetry';
 import { useSessionStartupRestore } from './useSessionStartupRestore';
 import { useSessionTerminalLifecycle } from './useSessionTerminalLifecycle';
+import { useDeviceLockState } from './useDeviceLockState';
 import type { useTerminalSessions } from './useTerminalSessions';
 import type { LoadState } from './useStartupStorage';
 import type {
@@ -38,6 +47,9 @@ import type { TerminalRenderTarget } from '../lib/terminalRenderer';
 import type { TabLaunchIntent } from '../lib/herdrCreationFlows';
 import type { HerdrClient } from '../services/HerdrClient';
 import type { StartupStorageSnapshot } from '../services/startupStorage';
+import { dismissAgentAlerts } from '../services/alerts';
+import { reportBackgroundFailure } from '../services/backgroundOperations';
+import { resumeMonitoringAfterUnlock } from '../services/backgroundMonitoring';
 import type {
   AgentAlertLevel,
   BackgroundPowerMode,
@@ -155,12 +167,48 @@ export function useSessionRuntimeManager({
   telemetry,
 }: SessionRuntimeManagerOptions): SessionRuntimeController {
   const [state, setState] = useState(emptyLiveHostSessions);
+  const nativeDeviceLock = useDeviceLockState();
+  const deviceLocked = !nativeDeviceLock.ready || nativeDeviceLock.locked;
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+  const [resumeAllowed, setResumeAllowed] = useState(Platform.OS !== 'android');
+  const [resumeRetryTick, setResumeRetryTick] = useState(0);
+  const monitoringPaused = deviceLocked || !resumeAllowed;
   const stateRef = useRef(state);
   const runtimesRef = useRef(new Map<string, LiveRuntime>());
   const appCoreRef = useRef(new NativeAppCore());
   const sessionProfilesRef = useRef(new Map<string, HostProfile>());
   const restoredTerminalHostIdsRef = useRef(new Set<string>());
+  const suspendedHostIdsRef = useRef(new Set<string>());
+  const monitoringPausedRef = useRef(monitoringPaused);
+  const resumeInFlightRef = useRef(false);
+  monitoringPausedRef.current = monitoringPaused;
   stateRef.current = state;
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      setAppActive(nextState === 'active');
+    });
+    return () => subscription.remove();
+  }, []);
+  const reportUnlockResumeError = useEffectEvent((error: unknown) => {
+    hosts.setError(String(error));
+  });
+  useEffect(() => {
+    if (deviceLocked) {
+      setResumeAllowed(false);
+      return;
+    }
+    if (!appActive) return;
+    let cancelled = false;
+    resumeMonitoringAfterUnlock().then(
+      resumed => {
+        if (!cancelled && resumed) setResumeAllowed(true);
+      },
+      resumeError => {
+        if (!cancelled) reportUnlockResumeError(resumeError);
+      },
+    );
+    return () => { cancelled = true; };
+  }, [appActive, deviceLocked]);
   for (const host of hosts.getHosts()) {
     sessionProfilesRef.current.set(host.id, host);
   }
@@ -201,6 +249,7 @@ export function useSessionRuntimeManager({
 
   const handleAgentStateChange = useAgentNotificationSideEffects({
     alertsEnabled,
+    monitoringPaused,
     agentAlertLevel,
     persistentAlertDurationSeconds,
     ttsEnabled,
@@ -213,6 +262,7 @@ export function useSessionRuntimeManager({
     ...store,
     restoredTerminalHostIdsRef,
     alertsEnabled,
+    monitoringPaused,
     hosts,
     navigation,
     security,
@@ -243,9 +293,77 @@ export function useSessionRuntimeManager({
     t,
   });
 
+  const handleDeviceLockLifecycle = useEffectEvent(async () => {
+    if (monitoringPaused) {
+      for (const session of stateRef.current.sessions) {
+        suspendedHostIdsRef.current.add(session.hostId);
+      }
+      for (const sessionId of runtimesRef.current.keys()) {
+        suspendedHostIdsRef.current.add(sessionId);
+      }
+      reportBackgroundFailure(dismissAgentAlerts(), 'device-lock-dismiss-alerts');
+      await connection.pauseForDeviceLock();
+      return;
+    }
+    if (
+      !appActive ||
+      !restoreComplete ||
+      suspendedHostIdsRef.current.size === 0 ||
+      resumeInFlightRef.current
+    ) {
+      return;
+    }
+
+    resumeInFlightRef.current = true;
+    const suspendedHostIds = [...suspendedHostIdsRef.current];
+    const activeSessionId = stateRef.current.activeSessionId;
+    try {
+      for (const hostId of suspendedHostIds) {
+        if (monitoringPausedRef.current) return;
+        const session = stateRef.current.sessions.find(item => item.hostId === hostId);
+        suspendedHostIdsRef.current.delete(hostId);
+        if (!session) continue;
+        try {
+          const profile = await hosts.loadProfileForConnection(session.host);
+          if (!profile || monitoringPausedRef.current) continue;
+          await connection.connect(profile, {
+            persistProfile: false,
+            navigate: false,
+            trackConnecting: false,
+            activateSession: session.id === activeSessionId,
+            reuseConnectingSession: true,
+          });
+        } catch (resumeError) {
+          hosts.setError(String(resumeError));
+        }
+      }
+    } finally {
+      resumeInFlightRef.current = false;
+      if (
+        !monitoringPausedRef.current &&
+        AppState.currentState === 'active' &&
+        suspendedHostIdsRef.current.size > 0
+      ) {
+        setResumeRetryTick(current => current + 1);
+      }
+    }
+  });
+  useEffect(() => {
+    handleDeviceLockLifecycle().catch(lockLifecycleError => {
+      hosts.setError(String(lockLifecycleError));
+    });
+  }, [
+    appActive,
+    monitoringPaused,
+    resumeRetryTick,
+    restoreComplete,
+    state.sessions.length,
+  ]);
+
   useLiveHostMonitoring({
     liveHostCount: state.sessions.length,
     alertsEnabled,
+    monitoringPaused,
     restoreComplete,
     hostsVisible,
     appAccessLocked,

@@ -8,7 +8,7 @@
 
 用户最新指示覆盖此前模型分工：由主线程直接接管，不再交给 Luna。2026-09-18 已停止 Luna/Astra 两个代理，后续修改、测试及交付判断由主线程执行。以下编号保留为历史计划，不再作为后续委派授权。
 
-1. Luna Xhigh（gpt-5.6-luna / xhigh）：实现导航、多行点击定位和测试；完成后暂停，不先发布。
+1. Luna Xhigh（gpt-6-luna / xhigh）：实现导航、多行点击定位和测试；完成后暂停，不先发布。
 2. Astra Low（gpt-6-astra / low）：独立只读 review，列出严重程度、代码位置、复现与修改建议。
 3. 原 Luna Xhigh：逐条修复审查问题并补充测试；仍有重要未解决项时不得标记全部完成。
 4. Luna Xhigh：完成最终 ARM64 Release 构建、安装包校验、UPDATE.MD 与交付摘要。
@@ -16,7 +16,7 @@
 
 ## 执行记录
 
-- 实现代理已按指定模型启动：`gpt-5.6-luna`，reasoning effort `xhigh`，代理 ID `01a0b225-3de1-72d0-aecc-d1b235514e74`。
+- 实现代理已按指定模型启动：`gpt-6-luna`，reasoning effort `xhigh`，代理 ID `01a0b225-3de1-72d0-aecc-d1b235514e74`。
 - 构建前置检查：本地 Gradle 8.13、Android SDK 与 apksigner 可用；ADB 无连接设备。
 - Luna 实现阶段已交付：报告 7 套件/135 测试、TypeScript、资产一致性通过；尚未编译，版本仍为 230。
 - 独立 Astra Low 审查已启动，重点核实多行后备定位的 alternate-screen 限制是否覆盖用户 Codex 场景，以及导航异步选择、编辑区判定与坐标换算。

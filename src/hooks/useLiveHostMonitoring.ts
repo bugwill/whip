@@ -13,6 +13,7 @@ import {
 interface LiveHostMonitoringOptions {
   liveHostCount: number;
   alertsEnabled: boolean;
+  monitoringPaused: boolean;
   restoreComplete: boolean;
   hostsVisible: boolean;
   appAccessLocked: boolean;
@@ -31,6 +32,7 @@ interface LiveHostMonitoringOptions {
 export function useLiveHostMonitoring({
   liveHostCount,
   alertsEnabled,
+  monitoringPaused,
   restoreComplete,
   hostsVisible,
   appAccessLocked,
@@ -48,7 +50,12 @@ export function useLiveHostMonitoring({
       to: state,
       liveHostCount,
     });
-    updateRuntimeMonitoring(state === 'active', hostsVisible, appAccessLocked, isEink);
+    updateRuntimeMonitoring(
+      state === 'active' && !monitoringPaused,
+      hostsVisible,
+      appAccessLocked,
+      isEink,
+    );
     if (state !== 'active') {
       reportBackgroundFailure(flushLatencyDiagnosticWrites(), 'latency-diagnostics-flush');
     }
@@ -57,11 +64,11 @@ export function useLiveHostMonitoring({
   useEffect(() => {
     if (!restoreComplete) return;
     const operation =
-      alertsEnabled && liveHostCount > 0
+      alertsEnabled && liveHostCount > 0 && !monitoringPaused
         ? startBackgroundMonitoring(liveHostCount, backgroundPowerMode)
         : stopBackgroundMonitoring();
     operation.catch(reportBackgroundError);
-  }, [alertsEnabled, backgroundPowerMode, liveHostCount, restoreComplete]);
+  }, [alertsEnabled, backgroundPowerMode, monitoringPaused, liveHostCount, restoreComplete]);
 
   useEffect(() => {
     let previousState = AppState.currentState;
@@ -75,10 +82,10 @@ export function useLiveHostMonitoring({
 
   useEffect(() => {
     updateRuntimeMonitoring(
-      AppState.currentState === 'active',
+      AppState.currentState === 'active' && !monitoringPaused,
       hostsVisible,
       appAccessLocked,
       isEink,
     );
-  }, [appAccessLocked, hostsVisible, isEink, liveHostCount]);
+  }, [appAccessLocked, monitoringPaused, hostsVisible, isEink, liveHostCount]);
 }

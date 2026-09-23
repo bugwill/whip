@@ -33,22 +33,26 @@ interface AgentStateChange {
 
 export function useAgentNotificationSideEffects({
   alertsEnabled,
+  monitoringPaused,
   agentAlertLevel,
   persistentAlertDurationSeconds,
   ttsEnabled,
 }: {
   alertsEnabled: boolean;
+  monitoringPaused: boolean;
   agentAlertLevel: AgentAlertLevel;
   persistentAlertDurationSeconds: number;
   ttsEnabled: boolean;
 }) {
   const alertsEnabledRef = useRef(alertsEnabled);
+  const monitoringPausedRef = useRef(monitoringPaused);
   const agentAlertLevelRef = useRef(defaultDevicePreferences.agentAlertLevel);
   const persistentAlertDurationSecondsRef = useRef(
     defaultDevicePreferences.persistentAlertDurationSeconds,
   );
   const ttsEnabledRef = useRef(ttsEnabled);
   alertsEnabledRef.current = alertsEnabled;
+  monitoringPausedRef.current = monitoringPaused;
   agentAlertLevelRef.current = agentAlertLevel;
   persistentAlertDurationSecondsRef.current = persistentAlertDurationSeconds;
   ttsEnabledRef.current = ttsEnabled;
@@ -76,6 +80,7 @@ export function useAgentNotificationSideEffects({
         if (
           status &&
           agent &&
+          !monitoringPausedRef.current &&
           alertsEnabledRef.current &&
           isAgentNotificationTransition(previous, status)
         ) {

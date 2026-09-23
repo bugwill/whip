@@ -2,6 +2,8 @@ import { NativeModules, Platform } from 'react-native';
 import type { BackgroundPowerMode } from './devicePreferences';
 
 interface HerdrBackgroundNativeModule {
+  getDeviceLockState(): Promise<boolean>;
+  resumeMonitoringAfterUnlock(): Promise<boolean>;
   start(hostCount: number, powerMode: BackgroundPowerMode): Promise<void>;
   stop(): Promise<void>;
   updateHostStatus(sessionId: string, state: string, signal: string): void;
@@ -26,6 +28,7 @@ interface HerdrBackgroundNativeModule {
 }
 
 export const AGENT_NOTIFICATION_TAPPED_EVENT = 'WhipAgentNotificationTapped';
+export const DEVICE_LOCK_STATE_CHANGED_EVENT = 'WhipDeviceLockStateChanged';
 
 export interface NativeAgentNotificationTarget {
   notificationId: string;
@@ -40,6 +43,18 @@ function nativeModule(): HerdrBackgroundNativeModule | null {
     throw new Error('HerdrBackground native module is not installed in this build');
   }
   return module;
+}
+
+export async function getDeviceLockState(): Promise<boolean | null> {
+  const module = nativeModule();
+  if (!module) return null;
+  return module.getDeviceLockState();
+}
+
+export async function resumeMonitoringAfterUnlock(): Promise<boolean> {
+  const module = nativeModule();
+  if (!module) return true;
+  return module.resumeMonitoringAfterUnlock();
 }
 
 export async function startBackgroundMonitoring(
