@@ -25,7 +25,7 @@ test('page switches reuse the lifecycle listener and foreground service', () => 
   function Host({ hostsVisible }: { hostsVisible: boolean }) {
     useLiveHostMonitoring({
       liveHostCount: 1, alertsEnabled: true, restoreComplete: true,
-      hostsVisible, appAccessLocked: false, isEink: true,
+      monitoringPaused: false, hostsVisible, appAccessLocked: false, isEink: true,
       backgroundPowerMode: 'balanced', setRuntimeMonitoringState: update,
       onBackgroundMonitoringError: jest.fn(),
     });

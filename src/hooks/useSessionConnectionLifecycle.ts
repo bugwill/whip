@@ -510,6 +510,7 @@ export function useSessionConnectionLifecycle({
         biometricVerified = false,
         promptForUnknownHosts = navigate,
         traceStartupRestore = false,
+        recoverTransientFailure = false,
       } = options;
       const attempt = Symbol(nextProfile.id);
       if (monitoringPausedRef.current) return false;
@@ -602,7 +603,11 @@ export function useSessionConnectionLifecycle({
               traceStartupRestore,
               'Whip startup restore: SSH connect',
               () => isCurrentAttempt()
-                ? runtime!.client.connect(nextProfile, jumpProfiles)
+                ? runtime!.client.connect(
+                    nextProfile,
+                    jumpProfiles,
+                    recoverTransientFailure,
+                  )
                 : Promise.resolve(),
             );
             if (!isCurrentAttempt()) return false;

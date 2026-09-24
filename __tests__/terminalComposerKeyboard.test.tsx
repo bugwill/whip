@@ -59,6 +59,12 @@ jest.mock(
   'lucide-react-native',
   () => new Proxy({}, { get: (_target, name) => String(name) }),
 );
+jest.mock('react-native-svg', () => ({
+  __esModule: true,
+  default: 'Svg',
+  Circle: 'Circle',
+  Path: 'Path',
+}));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 34, left: 0, right: 0 }),
 }));
@@ -120,6 +126,7 @@ const terminalHandle = {
   blur: jest.fn(),
   setKeyboardEnabled: jest.fn(),
   setForcedMouseInput: jest.fn(),
+  sendCommandWithEnter: jest.fn(async () => undefined),
   sendArrow: jest.fn(() => false),
   setEditableRegion: jest.fn(),
   clearSearch: jest.fn(),
@@ -331,21 +338,54 @@ test('direction pad is the same height as controls and outside the horizontal sc
   expect(pad.props.onShouldBlockNativeResponder()).toBe(true);
 });
 
-test('fixed keys stay outside the scrolling rail when usage changes', () => {
+test('model and Fast stay fixed while Home and TUI mouse move to the scrolling rail', () => {
   mount();
   const fixed = renderer.root.findByProps({ testID: 'terminal-fixed-controls' });
   const rail = renderer.root.findByProps({ testID: 'terminal-scrollable-controls' });
   const fixedButtons = () => fixed.findAll(node => String(node.type) === 'Button').map(node => node.props.accessibilityLabel);
   const original = fixedButtons();
   expect(original).toHaveLength(6);
+  expect(original).toEqual(expect.arrayContaining(['terminal.switchModel', 'terminal.toggleFastMode']));
+  expect(original).not.toContain('terminal.enableForcedMouseInput');
   expect(fixed.findAll(node => node.props.accessibilityLabel === '按住并向上下左右滑动以移动光标').length).toBeGreaterThan(0);
   expect(rail.props.horizontal).toBe(true);
-  expect(rail.findAll(node => String(node.type) === 'Button').some(node => node.props.accessibilityLabel && original.includes(node.props.accessibilityLabel))).toBe(false);
-  expect(fixed.findAll(node => String(node.type) === 'Text').map(node => node.props.children)).toEqual(['HOME', 'TAB', 'ESC']);
+  expect(rail.findAll(node => String(node.type) === 'Button').map(node => node.props.accessibilityLabel))
+    .toContain('terminal.enableForcedMouseInput');
+  expect(rail.findAll(node => String(node.type) === 'Text').map(node => node.props.children)).toContain('HOME');
+  expect(fixed.findAll(node => String(node.type) === 'Text').map(node => node.props.children)).toEqual(['TAB', 'ESC']);
   act(() => renderer.update(<TerminalScreen {...props} controlUsage={{ paste: 50, home: 999, mouse: 100 }} />));
   expect(fixedButtons()).toEqual(original);
-  expect(fixed.findAll(node => String(node.type) === 'Button' && node.props.accessibilityLabel === 'terminal.enableForcedMouseInput')).toHaveLength(1);
-  expect(rail.findAll(node => String(node.type) === 'Button' && node.props.accessibilityLabel === 'terminal.enableForcedMouseInput')).toHaveLength(0);
+  expect(rail.findAll(node => String(node.type) === 'Button' && node.props.accessibilityLabel === 'terminal.enableForcedMouseInput')).toHaveLength(1);
+  expect(rail.findAll(node => String(node.type) === 'Text' && node.props.children === 'HOME')).toHaveLength(1);
+});
+
+test.each([
+  ['switchModel', 'model', '/model'],
+  ['toggleFastMode', 'fast', '/fast'],
+] as const)('%s sends its Codex command through the renderer sequence API', async (label, control, command) => {
+  mount();
+  await press(label);
+  expect(terminalHandle.sendCommandWithEnter).toHaveBeenCalledWith(target, command, 100);
+  expect(props.onControlUse).toHaveBeenCalledWith(control);
+});
+
+test('ignores a repeated Fast tap while its toggle command is in flight', async () => {
+  let finishCommand!: () => void;
+  terminalHandle.sendCommandWithEnter.mockImplementation(() => new Promise<undefined>(resolve => {
+    finishCommand = () => resolve(undefined);
+  }));
+  mount();
+
+  act(() => { button('toggleFastMode').props.onPress(); });
+  expect(button('toggleFastMode').props.disabled).toBe(true);
+  act(() => { button('toggleFastMode').props.onPress(); });
+  expect(terminalHandle.sendCommandWithEnter).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    finishCommand();
+    await Promise.resolve();
+  });
+  expect(button('toggleFastMode').props.disabled).toBe(false);
 });
 
 test('direction drags reach the terminal input bridge as arrow escape sequences', () => {

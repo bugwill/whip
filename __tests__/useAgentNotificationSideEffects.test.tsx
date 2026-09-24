@@ -54,6 +54,7 @@ function renderAgentSideEffectsHarness(): ReturnType<typeof useAgentNotification
   function Harness() {
     onChange = useAgentNotificationSideEffects({
       alertsEnabled: true,
+      monitoringPaused: false,
       agentAlertLevel: 'persistent',
       persistentAlertDurationSeconds: 30,
       ttsEnabled: false,

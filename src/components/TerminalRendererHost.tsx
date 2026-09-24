@@ -217,6 +217,11 @@ export interface TerminalRendererHandle {
    */
   setEditableRegion: (region: TerminalEditableRegion | null) => void;
   setKeyboardEnabled: (enabled: boolean) => void;
+  sendCommandWithEnter: (
+    target: TerminalRenderTarget,
+    command: string,
+    delayMs?: number,
+  ) => Promise<void>;
   submitPastes: (
     target: TerminalRenderTarget,
     parts: readonly string[],
@@ -245,7 +250,11 @@ interface Props {
   offlineScroll?: PaneScrollInfo;
   style?: StyleProp<ViewStyle>;
   onReady?: () => void;
-  onInput: (target: TerminalRenderTarget, data: string) => void | Promise<void>;
+  onInput: (
+    target: TerminalRenderTarget,
+    data: string,
+    applyModifiers?: boolean,
+  ) => void | Promise<void>;
   onKeyboardRequested?: () => void;
   onScroll: (target: TerminalRenderTarget, direction: 'up' | 'down', lines: number) => void;
   onOfflineScroll: (target: TerminalRenderTarget, scroll: PaneScrollInfo) => void;
@@ -1008,14 +1017,20 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
     }).finally(() => endAppPerformanceTrace(coldWaitTrace));
   }, [cancelResumeScroll, connectEntry, flushEinkWrites, isEink, markEinkImmediate, waitForWritable]);
 
-  const reportQueuedInput = useCallback((entry: RendererEntry, data: string) => {
+  const reportQueuedInput = useCallback((
+    entry: RendererEntry,
+    data: string,
+    applyModifiers?: boolean,
+  ) => {
     const target = entry.target.session.status === 'connected'
       ? entry.target
       : {
           ...entry.target,
           session: { ...entry.target.session, status: 'connected' as const },
         };
-    return reportInput(target, data);
+    return applyModifiers === undefined
+      ? reportInput(target, data)
+      : reportInput(target, data, applyModifiers);
   }, []);
 
   useImperativeHandle(forwardedRef, () => ({
@@ -1065,6 +1080,30 @@ export const TerminalRendererHost = forwardRef<TerminalRendererHandle, Props>(fu
         reason => reportError(entry.target, String(reason)),
       );
       return true;
+    },
+    sendCommandWithEnter: (target, command, delayMs = 100) => {
+      const entry = ensureEntry(target);
+      if (!entry) return Promise.reject(new Error('Terminal is not available'));
+      if (!command || entry.target.session.status !== 'connected') {
+        return Promise.reject(new Error('Terminal is not connected'));
+      }
+      if (entry.target.key === activeKey.current) {
+        activeCall('herdrPrepareExternalInput');
+      }
+      return enqueueInput(entry, async () => {
+        if (entry.target.session.status !== 'connected') {
+          throw new Error('Terminal disconnected before command input');
+        }
+        await reportQueuedInput(entry, command, false);
+        await new Promise<void>(resolve => setTimeout(resolve, delayMs));
+        if (entry.target.session.status !== 'connected') {
+          throw new Error('Terminal disconnected before command submission');
+        }
+        await reportQueuedInput(entry, '\r', false);
+      }).catch(reason => {
+        reportError(entry.target, String(reason));
+        throw reason;
+      });
     },
     sendArrow: direction => activeCall('herdrSendArrow', [direction]),
     paste: data => {

@@ -14,9 +14,11 @@ import {
 } from '../src/lib/terminalControls';
 
 test('fixed controls stay in requested order and never enter the scrolling rail', () => {
-  expect(fixedTerminalControls).toEqual(['home', 'mouse', 'keyboard', 'compose', 'tab', 'esc']);
+  expect(fixedTerminalControls).toEqual(['keyboard', 'compose', 'tab', 'esc', 'model', 'fast']);
   const order = scrollableTerminalControls({ home: 999, keyboard: 999, paste: 8, mouse: 9, ctrl: 8 });
-  expect(order.slice(0, 2)).toEqual(['ctrl', 'paste']);
+  expect(order.slice(0, 2)).toEqual(['home', 'mouse']);
+  expect(order).toContain('home');
+  expect(order).toContain('mouse');
   for (const fixed of [...fixedTerminalControls, 'up', 'down', 'left', 'right']) expect(order).not.toContain(fixed);
   expect(scrollableTerminalControls({ paste: 20 })[0]).toBe('paste');
 });
@@ -41,9 +43,9 @@ test('terminal controls use compact faces with 44pt native touch height', () => 
 });
 
 test('starts with common controls and keeps secondary navigation at the right end', () => {
-  expect(defaultTerminalControlOrder.slice(0, 16)).toEqual([
-    'mouse', 'keyboard', 'ctrl', 'shift', 'esc', 'tab', 'paste', 'history',
-    'compose', 'chat', 'attach', 'files', 'links', 'up', 'left', 'right',
+  expect(defaultTerminalControlOrder.slice(0, 18)).toEqual([
+    'mouse', 'keyboard', 'model', 'fast', 'ctrl', 'shift', 'esc', 'tab', 'paste',
+    'history', 'compose', 'chat', 'attach', 'files', 'links', 'up', 'left', 'right',
   ]);
   expect(defaultTerminalControlOrder.slice(-4)).toEqual(['page-down', 'alt', 'find', 'home']);
   expect(defaultTerminalControlOrder).not.toContain('ctrl-c');
@@ -59,10 +61,11 @@ test('orders frequently used terminal controls first and keeps stable ties', () 
   expect(order.indexOf('esc')).toBeLessThan(order.indexOf('tab'));
 });
 
-test('pins mouse immediately before keyboard regardless of usage', () => {
+test('orders controls by usage without pinning the mouse beside the keyboard', () => {
   const order = orderTerminalControls({ mouse: 100, paste: 50, keyboard: 1 });
 
-  expect(order.indexOf('mouse')).toBe(order.indexOf('keyboard') - 1);
+  expect(order[0]).toBe('mouse');
+  expect(order.indexOf('mouse')).not.toBe(order.indexOf('keyboard') - 1);
 });
 
 test.each([

@@ -2144,6 +2144,7 @@ export function SessionScreen({
                 : undefined
             }
             chatViewEnabled={chatVisible}
+            agentMode={Boolean(activePane && paneAgentLabel(activePane))}
             renderViewportOverlay={
               mountedChatViews.length
                 ? (insets, latestButtonBottom) => mountedChatViews.map(([key, chatView]) => {

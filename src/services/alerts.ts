@@ -20,7 +20,10 @@ import {
 import { recordNetworkDiagnostic } from './networkDiagnostics';
 import { createSecureId } from '../lib/secureId';
 
-const PERSISTENT_CHANNEL_ID = 'agent-state-v3';
+// Android preserves a channel's user-controlled importance and enabled state
+// across app updates. Use a new ID for the persistent alert channel so a stale
+// or disabled legacy channel cannot silently hide every persistent alert.
+const PERSISTENT_CHANNEL_ID = 'agent-state-persistent-v1';
 const BRIEF_CHANNEL_ID = 'agent-state-brief-v1';
 const REGULAR_CHANNEL_ID = 'agent-state-regular-v1';
 const ALERT_LEVEL_DATA_KEY = 'agentAlertLevel';

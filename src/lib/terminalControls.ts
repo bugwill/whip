@@ -3,6 +3,9 @@ import { APP_GLASS_FLOATING_CONTROL_CLASS } from './appGlass';
 export const defaultTerminalControlOrder = [
   'mouse',
   'keyboard',
+  'model',
+  'fast',
+  'clear',
   'ctrl',
   'shift',
   'esc',
@@ -33,7 +36,12 @@ export const defaultTerminalControlOrder = [
 export type TerminalControlId = typeof defaultTerminalControlOrder[number];
 export type TerminalControlUsage = Partial<Record<TerminalControlId, number>>;
 
-export const fixedTerminalControls = ['home', 'mouse', 'keyboard', 'compose', 'tab', 'esc'] as const;
+export const fixedTerminalControlsBeforePad = ['keyboard', 'compose', 'tab', 'esc'] as const;
+export const fixedTerminalControlsAfterPad = ['model', 'fast', 'clear'] as const;
+export const fixedTerminalControls = [
+  ...fixedTerminalControlsBeforePad,
+  ...fixedTerminalControlsAfterPad,
+] as const;
 
 /** The four arrows are represented by the fixed direction pad, not rail keys. */
 export function scrollableTerminalControls(usage: TerminalControlUsage): TerminalControlId[] {
@@ -61,14 +69,10 @@ const terminalControlSwapTargets: Partial<
 const MAX_USAGE_COUNT = 1_000_000;
 
 export function orderTerminalControls(usage: TerminalControlUsage): TerminalControlId[] {
-  const ordered = [...defaultTerminalControlOrder].sort((left, right) => (
+  return [...defaultTerminalControlOrder].sort((left, right) => (
     (usage[right] || 0) - (usage[left] || 0)
       || defaultTerminalControlOrder.indexOf(left) - defaultTerminalControlOrder.indexOf(right)
   ));
-  const mouseIndex = ordered.indexOf('mouse');
-  ordered.splice(mouseIndex, 1);
-  ordered.splice(ordered.indexOf('keyboard'), 0, 'mouse');
-  return ordered;
 }
 
 export function swapTerminalArrowControls(

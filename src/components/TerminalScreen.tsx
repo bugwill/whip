@@ -22,6 +22,7 @@ import {
   ChevronUp,
   ClipboardPaste,
   CornerDownLeft,
+  Eraser,
   FolderOpen,
   Globe2,
   History,
@@ -37,8 +38,10 @@ import {
   TriangleAlert,
   Undo2,
   X,
+  Zap,
   type LucideIcon,
 } from 'lucide-react-native';
+import Svg, { Circle, Path } from 'react-native-svg';
 import {
   AppState,
   Image,
@@ -74,7 +77,8 @@ import { useDisplayAnimationType, useDisplayProfile } from '@/src/lib/displayPro
 import { cn } from '@/src/lib/utils';
 import { retryDelay } from '../lib/retryDelay';
 import {
-  fixedTerminalControls,
+  fixedTerminalControlsAfterPad,
+  fixedTerminalControlsBeforePad,
   scrollableTerminalControls,
   TERMINAL_CONTROL_HIT_SLOP,
   TERMINAL_ICON_CONTROL_CLASS,
@@ -186,6 +190,8 @@ interface Props {
     loading: boolean;
     onPress: () => void;
   };
+  /** Whether the active pane is identified as an Agent pane by the host. */
+  agentMode?: boolean;
   chatViewEnabled: boolean;
   renderViewportOverlay?: (
     insets: VisualContentInsets,
@@ -278,10 +284,35 @@ const WEBVIEW_STYLE = { flex: 1, backgroundColor: 'transparent' } as const;
 const BACKGROUND_SCREEN_STYLE = { mixBlendMode: 'screen' } as const;
 const TERMINAL_ICON_BOX_CLASS = 'size-5 items-center justify-center';
 const TERMINAL_ICON_SIZE = 18;
+const CODEX_COMMAND_DELAY_MS = 100;
 const TERMINAL_CONTROL_LABEL_STYLE = {
   includeFontPadding: false,
   textAlignVertical: 'center',
 } as const;
+
+function ModelSwitchIcon({ color }: { color: string }) {
+  return (
+    <Svg width={TERMINAL_ICON_SIZE} height={TERMINAL_ICON_SIZE} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M12 2.75 20 7.25v9.5L12 21.25 4 16.75v-9.5L12 2.75Z"
+        stroke={color}
+        strokeWidth={1.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M8.25 8.75h7.5M8.25 15.25h7.5M9.5 9v5.75m5-5.75v5.75"
+        stroke={color}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+      />
+      <Circle cx={8.25} cy={8.75} r={1.1} fill={color} />
+      <Circle cx={15.75} cy={8.75} r={1.1} fill={color} />
+      <Circle cx={8.25} cy={15.25} r={1.1} fill={color} />
+      <Circle cx={15.75} cy={15.25} r={1.1} fill={color} />
+    </Svg>
+  );
+}
 
 interface TerminalScrollbarDragSnapshot {
   target: TerminalRenderTarget;
@@ -426,6 +457,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       onRequestFiles,
       onRequestLinks,
       chatControl,
+      agentMode = false,
       chatViewEnabled,
       renderViewportOverlay,
       viewportOverlayBackground,
@@ -538,6 +570,10 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     };
     const [forcedMouseInput, setForcedMouseInput] = useState(false);
     const [keyboardVisible, setKeyboardVisible] = useState(false);
+    const pendingTerminalControlsRef = useRef(new Set<'model' | 'fast' | 'clear'>());
+    const [pendingTerminalControls, setPendingTerminalControls] = useState<
+      ReadonlySet<'model' | 'fast' | 'clear'>
+    >(() => new Set());
     const setForcedMouseInputEnabled = useCallback((enabled: boolean) => {
       renderer.current?.setForcedMouseInput(enabled);
       setForcedMouseInput(enabled);
@@ -1605,8 +1641,74 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
       if (terminalId) onComposerDraftChange(terminalId, value);
     };
 
+    const sendTerminalControlCommand = (
+      control: 'model' | 'fast' | 'clear',
+      command: string,
+    ) => {
+      const target = activeTargetRef.current;
+      const terminalRenderer = renderer.current;
+      if (
+        target?.session.status !== 'connected'
+        || !terminalRenderer
+        || pendingTerminalControlsRef.current.has(control)
+      ) return;
+
+      pendingTerminalControlsRef.current.add(control);
+      setPendingTerminalControls(new Set(pendingTerminalControlsRef.current));
+      onControlUse(control);
+      const operation = terminalRenderer
+        .sendCommandWithEnter(target, command, CODEX_COMMAND_DELAY_MS)
+        .finally(() => {
+          pendingTerminalControlsRef.current.delete(control);
+          setPendingTerminalControls(new Set(pendingTerminalControlsRef.current));
+        });
+      reportBackgroundFailure(operation, TERMINAL_INPUT_CONTEXT);
+    };
+
     const renderTerminalControl = (control: TerminalControlId) => {
       if (control === 'left' || control === 'right' || control === 'down' || control === 'up') return null;
+      if (control === 'model' || control === 'fast' || control === 'clear') {
+        const pending = pendingTerminalControls.has(control);
+        return (
+          <TerminalControlButton
+            key={control}
+            accessibilityLabel={t(
+              control === 'model'
+                ? 'terminal.switchModel'
+                : control === 'fast'
+                  ? 'terminal.toggleFastMode'
+                  : agentMode
+                    ? 'terminal.clearCodexConversation'
+                    : 'terminal.clearTerminal',
+            )}
+            accessibilityState={{
+              disabled: status !== 'connected' || pending,
+              busy: pending,
+            }}
+            className={TERMINAL_ICON_CONTROL_CLASS}
+            disabled={status !== 'connected' || pending}
+            variant="secondary"
+            onPress={() => sendTerminalControlCommand(
+              control,
+              control === 'model'
+                ? '/model'
+                : control === 'fast'
+                  ? '/fast'
+                  : agentMode ? '/clear' : 'clear',
+            )}
+          >
+            <View className={TERMINAL_ICON_BOX_CLASS}>
+              {control === 'model' ? (
+                <ModelSwitchIcon color={appColors.text} />
+              ) : control === 'fast' ? (
+                <Zap size={TERMINAL_ICON_SIZE} color={appColors.text} strokeWidth={2.1} />
+              ) : (
+                <Eraser size={TERMINAL_ICON_SIZE} color={appColors.text} strokeWidth={2} />
+              )}
+            </View>
+          </TerminalControlButton>
+        );
+      }
       const key = TERMINAL_KEYS[control];
       if (key) {
         const fixedIcon = TERMINAL_KEY_ICONS[control];
@@ -2161,7 +2263,11 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
               setReady(true);
               setForcedMouseInputEnabled(false);
             }}
-            onInput={async (target, data) => {
+            onInput={async (target, data, applyModifiers) => {
+              if (applyModifiers === false) {
+                await writeInput(data, target);
+                return;
+              }
               await sendInput(data, target, true);
             }}
             onScroll={(target, direction, lines) => {
@@ -2473,7 +2579,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
           <View testID="terminal-fixed-controls" style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 0, gap: 5,
             paddingLeft: 6, paddingRight: 6, paddingTop: 7, paddingBottom: 7 + effectiveControlBarBottomInset,
           }}>
-            {fixedTerminalControls.map(renderTerminalControl)}
+            {fixedTerminalControlsBeforePad.map(renderTerminalControl)}
             <TerminalDirectionPad onDirection={direction => {
               onControlUse(direction);
               if (renderer.current?.sendArrow(direction)) return;
@@ -2482,6 +2588,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                 TERMINAL_INPUT_CONTEXT,
               );
             }} />
+            {fixedTerminalControlsAfterPad.map(renderTerminalControl)}
           </View>
           <ScrollView
             testID="terminal-scrollable-controls"

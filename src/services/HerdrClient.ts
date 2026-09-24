@@ -28,9 +28,24 @@ const HOST_KEY_CHALLENGE_CODES = new Set([
   'HOST_KEY_CHANGED',
 ]);
 
+const TRANSIENT_INITIAL_CONNECTION_CODES = new Set([
+  'CONNECTION_REFUSED',
+  'CONNECTION_TIMEOUT',
+  'HOST_UNREACHABLE',
+  'CHANNEL_UNAVAILABLE',
+  'SESSION_CLOSED',
+  'HERDR_UNAVAILABLE',
+  'HERDR_READINESS_TIMEOUT',
+]);
+
 function isHostKeyChallenge(error: unknown): boolean {
   const code = errorCode(error);
   return code !== null && HOST_KEY_CHALLENGE_CODES.has(code);
+}
+
+function isTransientInitialConnectionFailure(error: unknown): boolean {
+  const code = errorCode(error);
+  return code !== null && TRANSIENT_INITIAL_CONNECTION_CODES.has(code);
 }
 
 export { clearHerdrSocketPathCache } from './herdrSocketPathCache';
@@ -51,7 +66,11 @@ export class HerdrClient {
     return this.runtime;
   }
 
-  async connect(profile: ConnectionProfile, jumpProfiles: ConnectionProfile[] = []): Promise<void> {
+  async connect(
+    profile: ConnectionProfile,
+    jumpProfiles: ConnectionProfile[] = [],
+    recoverTransientFailure = false,
+  ): Promise<void> {
     await this.disconnecting;
     const port = Number(profile.port);
     validateSshPort(port);
@@ -118,6 +137,29 @@ export class HerdrClient {
       this.runtimeAwaitingHostKeyTrust = false;
     } catch (error) {
       this.runtimeAwaitingHostKeyTrust = isHostKeyChallenge(error);
+      if (
+        recoverTransientFailure &&
+        this.runtime === runtime &&
+        isTransientInitialConnectionFailure(error)
+      ) {
+        this.runtimeAwaitingHostKeyTrust = false;
+        recordNetworkDiagnostic('warn', 'host-runtime-initial-recovery-started', {
+          sessionId: profile.id,
+          endpoint,
+          errorKind: networkErrorKind(error),
+          error: networkErrorMessage(error),
+        });
+        try {
+          await runtime.recover(
+            true,
+            `initial connection failed: ${networkErrorMessage(error)}`,
+          );
+          return;
+        } catch (recoveryError) {
+          if (this.runtime === runtime) await this.disconnect();
+          throw recoveryError;
+        }
+      }
       if (this.runtime === runtime && !this.runtimeAwaitingHostKeyTrust) {
         await this.disconnect();
       }

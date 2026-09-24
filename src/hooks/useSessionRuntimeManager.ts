@@ -321,19 +321,32 @@ export function useSessionRuntimeManager({
       for (const hostId of suspendedHostIds) {
         if (monitoringPausedRef.current) return;
         const session = stateRef.current.sessions.find(item => item.hostId === hostId);
-        suspendedHostIdsRef.current.delete(hostId);
-        if (!session) continue;
+        if (!session) {
+          suspendedHostIdsRef.current.delete(hostId);
+          continue;
+        }
         try {
           const profile = await hosts.loadProfileForConnection(session.host);
-          if (!profile || monitoringPausedRef.current) continue;
-          await connection.connect(profile, {
+          if (!profile) {
+            suspendedHostIdsRef.current.delete(hostId);
+            continue;
+          }
+          if (monitoringPausedRef.current) return;
+          const connected = await connection.connect(profile, {
             persistProfile: false,
             navigate: false,
-            trackConnecting: false,
+            trackConnecting: true,
             activateSession: session.id === activeSessionId,
             reuseConnectingSession: true,
+            recoverTransientFailure: true,
           });
+          if (connected || !monitoringPausedRef.current) {
+            suspendedHostIdsRef.current.delete(hostId);
+          }
         } catch (resumeError) {
+          if (!monitoringPausedRef.current) {
+            suspendedHostIdsRef.current.delete(hostId);
+          }
           hosts.setError(String(resumeError));
         }
       }

@@ -347,6 +347,72 @@ describe('TerminalRendererHost lifecycle', () => {
     expect(eventCallbacks.onInput).toHaveBeenCalledWith(target, '/');
   });
 
+  test('waits for a command write, delays 100 ms, then queues Enter before later input', async () => {
+    jest.useFakeTimers();
+    try {
+      const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+      const client = createClient({ 'term-1': scroll });
+      const target = createTarget('term-1', client, scroll);
+      const { eventCallbacks, handle } = await mountReadyHost(target);
+      const writes: string[] = [];
+      let finishCommandWrite!: () => void;
+      eventCallbacks.onInput.mockImplementation((_target, data) => {
+        writes.push(data as string);
+        if (data === '/model') {
+          return new Promise<void>(resolve => { finishCommandWrite = resolve; });
+        }
+        return Promise.resolve();
+      });
+
+      let commandOperation!: Promise<void>;
+      await act(async () => {
+        commandOperation = handle.current!.sendCommandWithEnter(target, '/model', 100);
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(writes).toEqual(['/model']);
+
+      act(() => { handle.current?.input('after'); });
+      await act(async () => {
+        finishCommandWrite();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        jest.advanceTimersByTime(99);
+        await Promise.resolve();
+      });
+      expect(writes).toEqual(['/model']);
+
+      await act(async () => {
+        jest.advanceTimersByTime(1);
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      await expect(commandOperation).resolves.toBeUndefined();
+      expect(writes).toEqual(['/model', '\r', 'after']);
+      expect(eventCallbacks.onInput.mock.calls.slice(0, 2)).toEqual([
+        [target, '/model', false],
+        [target, '\r', false],
+      ]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('does not send Enter when the command write fails', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({ 'term-1': scroll });
+    const target = createTarget('term-1', client, scroll);
+    const { eventCallbacks, handle } = await mountReadyHost(target);
+    eventCallbacks.onInput.mockRejectedValue(new Error('command write failed'));
+
+    await expect(
+      handle.current!.sendCommandWithEnter(target, '/fast', 100),
+    ).rejects.toThrow('command write failed');
+
+    expect(eventCallbacks.onInput).toHaveBeenCalledTimes(1);
+    expect(eventCallbacks.onInput).toHaveBeenCalledWith(target, '/fast', false);
+    expect(eventCallbacks.onError).toHaveBeenCalled();
+  });
+
   test('E-Ink releases the oldest renderer before allocating a fourth despite preference 20', async () => {
     const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
     const client = createClient({});

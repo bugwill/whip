@@ -40,4 +40,5 @@ export interface ConnectOptions {
   biometricVerified?: boolean;
   promptForUnknownHosts?: boolean;
   traceStartupRestore?: boolean;
+  recoverTransientFailure?: boolean;
 }

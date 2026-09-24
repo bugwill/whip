@@ -98,14 +98,14 @@ test('delays the noisy notification and persistent alert until speech finishes',
     expect.stringMatching(/^agent-/),
     'work · codex needs you',
     'Agent is blocked',
-    'agent-state-v3',
+    'agent-state-persistent-v1',
     'host-1',
     agent.pane_id,
     'persistent',
   );
   expect(armPersistentAgentAlert).toHaveBeenCalledWith(
     expect.stringMatching(/^agent-/),
-    'agent-state-v3',
+    'agent-state-persistent-v1',
     30_000,
   );
 });
@@ -133,7 +133,7 @@ test('posts directly through Android while the app is backgrounded', async () =>
     expect.stringMatching(/^agent-/),
     'work · codex needs you',
     'Agent is blocked',
-    'agent-state-v3',
+    'agent-state-persistent-v1',
     'host-1',
     agent.pane_id,
     'persistent',
@@ -141,7 +141,7 @@ test('posts directly through Android while the app is backgrounded', async () =>
   expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
   expect(armPersistentAgentAlert).toHaveBeenCalledWith(
     expect.stringMatching(/^agent-/),
-    'agent-state-v3',
+    'agent-state-persistent-v1',
     30_000,
   );
 });
@@ -166,7 +166,7 @@ test('uses the configured persistent alert timeout', async () => {
 
   expect(armPersistentAgentAlert).toHaveBeenCalledWith(
     expect.stringMatching(/^agent-/),
-    'agent-state-v3',
+    'agent-state-persistent-v1',
     45_000,
   );
 });
@@ -216,6 +216,15 @@ test('creates a default-importance channel for regular notifications', async () 
       name: 'alerts.regularChannelName',
       importance: 'default',
     },
+  );
+});
+
+test('creates a fresh high-importance channel for persistent notifications', async () => {
+  await prepareAlerts();
+
+  expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledWith(
+    'agent-state-persistent-v1',
+    expect.objectContaining({ importance: 'high' }),
   );
 });
 
