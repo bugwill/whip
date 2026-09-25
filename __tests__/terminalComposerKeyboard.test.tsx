@@ -344,8 +344,8 @@ test('model and Fast stay fixed while Home and TUI mouse move to the scrolling r
   const rail = renderer.root.findByProps({ testID: 'terminal-scrollable-controls' });
   const fixedButtons = () => fixed.findAll(node => String(node.type) === 'Button').map(node => node.props.accessibilityLabel);
   const original = fixedButtons();
-  expect(original).toHaveLength(6);
-  expect(original).toEqual(expect.arrayContaining(['terminal.switchModel', 'terminal.toggleFastMode']));
+  expect(original).toHaveLength(8);
+  expect(original).toEqual(expect.arrayContaining(['terminal.switchModel', 'terminal.toggleFastMode', 'terminal.showCodexStatus']));
   expect(original).not.toContain('terminal.enableForcedMouseInput');
   expect(fixed.findAll(node => node.props.accessibilityLabel === '按住并向上下左右滑动以移动光标').length).toBeGreaterThan(0);
   expect(rail.props.horizontal).toBe(true);
@@ -362,6 +362,7 @@ test('model and Fast stay fixed while Home and TUI mouse move to the scrolling r
 test.each([
   ['switchModel', 'model', '/model'],
   ['toggleFastMode', 'fast', '/fast'],
+  ['showCodexStatus', 'status', '/status'],
 ] as const)('%s sends its Codex command through the renderer sequence API', async (label, control, command) => {
   mount();
   await press(label);

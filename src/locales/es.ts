@@ -630,6 +630,7 @@ export const es = {
   'terminal.enableKeyboard': 'Habilitar teclado',
   'terminal.switchModel': 'Cambiar modelo de Codex',
   'terminal.toggleFastMode': 'Alternar modo Fast de Codex',
+  'terminal.showCodexStatus': 'Mostrar estado de Codex',
   'terminal.clearCodexConversation': 'Borrar conversación de Codex',
   'terminal.clearTerminal': 'Limpiar terminal',
   'terminal.disableForcedMouseInput': 'Desactivar entrada de ratón TUI forzada',

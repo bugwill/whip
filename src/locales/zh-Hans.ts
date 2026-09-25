@@ -630,6 +630,7 @@ export const zhHans = {
   'terminal.enableKeyboard': '启用键盘',
   'terminal.switchModel': '切换 Codex 模型',
   'terminal.toggleFastMode': '切换 Codex Fast 模式',
+  'terminal.showCodexStatus': '查看 Codex 状态',
   'terminal.clearCodexConversation': '清除 Codex 对话',
   'terminal.clearTerminal': '清除终端内容',
   'terminal.disableForcedMouseInput': '禁用强制 TUI 鼠标输入',

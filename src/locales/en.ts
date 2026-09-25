@@ -646,6 +646,7 @@ export const en = {
   'terminal.enableKeyboard': 'Enable keyboard',
   'terminal.switchModel': 'Switch Codex model',
   'terminal.toggleFastMode': 'Toggle Codex Fast mode',
+  'terminal.showCodexStatus': 'Show Codex status',
   'terminal.clearCodexConversation': 'Clear Codex conversation',
   'terminal.clearTerminal': 'Clear terminal',
   'terminal.disableForcedMouseInput': 'Disable forced TUI mouse input',

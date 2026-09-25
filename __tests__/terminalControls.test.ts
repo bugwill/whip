@@ -14,7 +14,7 @@ import {
 } from '../src/lib/terminalControls';
 
 test('fixed controls stay in requested order and never enter the scrolling rail', () => {
-  expect(fixedTerminalControls).toEqual(['keyboard', 'compose', 'tab', 'esc', 'model', 'fast']);
+  expect(fixedTerminalControls).toEqual(['keyboard', 'compose', 'tab', 'esc', 'model', 'fast', 'clear', 'status']);
   const order = scrollableTerminalControls({ home: 999, keyboard: 999, paste: 8, mouse: 9, ctrl: 8 });
   expect(order.slice(0, 2)).toEqual(['home', 'mouse']);
   expect(order).toContain('home');
@@ -43,8 +43,8 @@ test('terminal controls use compact faces with 44pt native touch height', () => 
 });
 
 test('starts with common controls and keeps secondary navigation at the right end', () => {
-  expect(defaultTerminalControlOrder.slice(0, 18)).toEqual([
-    'mouse', 'keyboard', 'model', 'fast', 'ctrl', 'shift', 'esc', 'tab', 'paste',
+  expect(defaultTerminalControlOrder.slice(0, 20)).toEqual([
+    'mouse', 'keyboard', 'model', 'fast', 'clear', 'status', 'ctrl', 'shift', 'esc', 'tab', 'paste',
     'history', 'compose', 'chat', 'attach', 'files', 'links', 'up', 'left', 'right',
   ]);
   expect(defaultTerminalControlOrder.slice(-4)).toEqual(['page-down', 'alt', 'find', 'home']);

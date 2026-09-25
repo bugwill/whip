@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { Portal } from '@rn-primitives/portal';
 import {
+  Activity,
   ArrowBigUp,
   ArrowDown,
   ArrowLeft,
@@ -570,9 +571,9 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     };
     const [forcedMouseInput, setForcedMouseInput] = useState(false);
     const [keyboardVisible, setKeyboardVisible] = useState(false);
-    const pendingTerminalControlsRef = useRef(new Set<'model' | 'fast' | 'clear'>());
+    const pendingTerminalControlsRef = useRef(new Set<'model' | 'fast' | 'clear' | 'status'>());
     const [pendingTerminalControls, setPendingTerminalControls] = useState<
-      ReadonlySet<'model' | 'fast' | 'clear'>
+      ReadonlySet<'model' | 'fast' | 'clear' | 'status'>
     >(() => new Set());
     const setForcedMouseInputEnabled = useCallback((enabled: boolean) => {
       renderer.current?.setForcedMouseInput(enabled);
@@ -1642,7 +1643,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     };
 
     const sendTerminalControlCommand = (
-      control: 'model' | 'fast' | 'clear',
+      control: 'model' | 'fast' | 'clear' | 'status',
       command: string,
     ) => {
       const target = activeTargetRef.current;
@@ -1667,7 +1668,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
 
     const renderTerminalControl = (control: TerminalControlId) => {
       if (control === 'left' || control === 'right' || control === 'down' || control === 'up') return null;
-      if (control === 'model' || control === 'fast' || control === 'clear') {
+      if (control === 'model' || control === 'fast' || control === 'clear' || control === 'status') {
         const pending = pendingTerminalControls.has(control);
         return (
           <TerminalControlButton
@@ -1677,6 +1678,8 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                 ? 'terminal.switchModel'
                 : control === 'fast'
                   ? 'terminal.toggleFastMode'
+                  : control === 'status'
+                    ? 'terminal.showCodexStatus'
                   : agentMode
                     ? 'terminal.clearCodexConversation'
                     : 'terminal.clearTerminal',
@@ -1694,6 +1697,8 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                 ? '/model'
                 : control === 'fast'
                   ? '/fast'
+                  : control === 'status'
+                    ? '/status'
                   : agentMode ? '/clear' : 'clear',
             )}
           >
@@ -1702,6 +1707,8 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
                 <ModelSwitchIcon color={appColors.text} />
               ) : control === 'fast' ? (
                 <Zap size={TERMINAL_ICON_SIZE} color={appColors.text} strokeWidth={2.1} />
+              ) : control === 'status' ? (
+                <Activity size={TERMINAL_ICON_SIZE} color={appColors.text} strokeWidth={2} />
               ) : (
                 <Eraser size={TERMINAL_ICON_SIZE} color={appColors.text} strokeWidth={2} />
               )}

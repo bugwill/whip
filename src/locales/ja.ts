@@ -630,6 +630,7 @@ export const ja = {
   'terminal.enableKeyboard': 'キーボードを有効にする',
   'terminal.switchModel': 'Codex モデルを切り替える',
   'terminal.toggleFastMode': 'Codex Fast モードを切り替える',
+  'terminal.showCodexStatus': 'Codex のステータスを表示',
   'terminal.clearCodexConversation': 'Codex の会話をクリア',
   'terminal.clearTerminal': '端末をクリア',
   'terminal.disableForcedMouseInput': 'TUI マウス入力の強制を無効にする',

@@ -630,6 +630,7 @@ export const zhHant: Record<string, string> = {
   'terminal.enableKeyboard': '啟用鍵盤',
   'terminal.switchModel': '切換 Codex 模型',
   'terminal.toggleFastMode': '切換 Codex Fast 模式',
+  'terminal.showCodexStatus': '查看 Codex 狀態',
   'terminal.clearCodexConversation': '清除 Codex 對話',
   'terminal.clearTerminal': '清除終端內容',
   'terminal.disableForcedMouseInput': '停用強制 TUI 滑鼠輸入',
