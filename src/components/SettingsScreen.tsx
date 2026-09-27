@@ -395,6 +395,19 @@ export function SettingsSection(props: SettingsSectionProps) {
         <SettingRow title={t('settings.keepScreenOn')} copy={t('settings.keepScreenOnCopy')} value={props.keepScreenOn} onChange={props.onKeepScreenOnChange} divided />
         <SettingRow title={t('settings.reopenTerminal')} copy={t('settings.reopenTerminalCopy')} value={props.reopenTerminalOnLaunch} onChange={props.onReopenTerminalOnLaunchChange} divided />
         <SettingRow title={t('settings.useModifierKeyIcons')} copy={t('settings.useModifierKeyIconsCopy')} value={props.terminalPreferences.useModifierKeyIcons} onChange={value => props.onTerminalPreferencesChange({ ...props.terminalPreferences, useModifierKeyIcons: value })} divided />
+        <View className="border-t border-border p-3.5">
+          <Text className="text-[15px] font-semibold leading-5">{t('settings.automaticTuiPrograms')}</Text>
+          <Input
+            accessibilityLabel={t('settings.automaticTuiPrograms')}
+            className="mt-3 font-mono"
+            value={props.terminalPreferences.automaticTuiPrograms}
+            onChangeText={automaticTuiPrograms => props.onTerminalPreferencesChange({ ...props.terminalPreferences, automaticTuiPrograms })}
+            placeholder="lazynotion vim"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <Text className="mt-2 text-xs text-muted-foreground">{t('settings.automaticTuiProgramsCopy')}</Text>
+        </View>
         <ActionRow
           title={t('settings.terminalHistory')}
           copy={t('settings.terminalHistoryCopy')}
@@ -439,6 +452,17 @@ export function SettingsSection(props: SettingsSectionProps) {
           formatValue={value => `${value}px`}
           onChange={fontSize => props.onTerminalPreferencesChange({ ...props.terminalPreferences, fontSize })}
           fontPreview
+          divided
+        />
+        <SliderRow
+          title={t('settings.textContrast')}
+          copy={t('settings.textContrastCopy')}
+          value={props.terminalPreferences.textContrast}
+          minimumValue={1}
+          maximumValue={4}
+          step={0.1}
+          formatValue={value => value.toFixed(1)}
+          onChange={textContrast => props.onTerminalPreferencesChange({ ...props.terminalPreferences, textContrast })}
           divided
         />
         <ValueRow title={t('settings.scrollback')} value={t('settings.lines', { count: props.terminalPreferences.scrollback })} onDecrease={() => props.onTerminalPreferencesChange({ ...props.terminalPreferences, scrollback: Math.max(1000, props.terminalPreferences.scrollback - 1000) })} onIncrease={() => props.onTerminalPreferencesChange({ ...props.terminalPreferences, scrollback: Math.min(20000, props.terminalPreferences.scrollback + 1000) })} divided />

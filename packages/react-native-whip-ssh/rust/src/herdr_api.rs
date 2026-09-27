@@ -352,6 +352,10 @@ pub enum HerdrControlResult {
     PaneRead {
         read: HerdrPaneReadResult,
     },
+    PaneProcessInfo {
+        pane_id: String,
+        process_names: Vec<String>,
+    },
     AgentStarted {
         agent: HerdrAgentInfo,
         argv: Vec<String>,
@@ -406,6 +410,9 @@ pub enum HerdrControlRequest {
     PaneRead {
         pane_id: String,
         lines: u32,
+    },
+    PaneProcessInfo {
+        pane_id: String,
     },
     PaneFocus {
         pane_id: String,
@@ -629,6 +636,7 @@ impl HerdrControlRequest {
             Self::TabRename { .. } => "tab.rename",
             Self::TabClose { .. } => "tab.close",
             Self::PaneRead { .. } => "pane.read",
+            Self::PaneProcessInfo { .. } => "pane.process_info",
             Self::PaneFocus { .. } => "pane.focus",
             Self::PaneRename { .. } => "pane.rename",
             Self::PaneSplit { .. } => "pane.split",
@@ -721,7 +729,9 @@ impl HerdrControlRequest {
                     strip_ansi: false,
                 },
             }),
-            Self::PaneFocus { pane_id } | Self::PaneClose { pane_id } => line(WireRequest {
+            Self::PaneFocus { pane_id }
+            | Self::PaneClose { pane_id }
+            | Self::PaneProcessInfo { pane_id } => line(WireRequest {
                 id,
                 method,
                 params: PaneTarget { pane_id },
@@ -824,6 +834,7 @@ impl HerdrControlRequest {
             Self::TabCreate { .. } => HerdrControlResultKind::TabCreated,
             Self::TabFocus { .. } | Self::TabRename { .. } => HerdrControlResultKind::TabInfo,
             Self::PaneRead { .. } => HerdrControlResultKind::PaneRead,
+            Self::PaneProcessInfo { .. } => HerdrControlResultKind::PaneProcessInfo,
             Self::PaneFocus { .. } | Self::PaneRename { .. } | Self::PaneSplit { .. } => {
                 HerdrControlResultKind::PaneInfo
             }
@@ -847,6 +858,7 @@ enum HerdrControlResultKind {
     TabInfo,
     PaneInfo,
     PaneRead,
+    PaneProcessInfo,
     AgentStarted,
     AgentInfo,
     AgentPrompted,
@@ -866,6 +878,7 @@ impl HerdrControlResultKind {
             Self::TabInfo => "tab_info",
             Self::PaneInfo => "pane_info",
             Self::PaneRead => "pane_read",
+            Self::PaneProcessInfo => "pane_process_info",
             Self::AgentStarted => "agent_started",
             Self::AgentInfo => "agent_info",
             Self::AgentPrompted => "agent_prompted",
@@ -1032,6 +1045,36 @@ fn decode_result(
         HerdrControlResultKind::PaneInfo => Ok(HerdrControlResult::PaneInfo {
             pane: pane(required(result, "pane", "result.pane")?, "pane")?,
         }),
+        HerdrControlResultKind::PaneProcessInfo => {
+            let info = object(
+                required(result, "process_info", "result.process_info")?,
+                "process_info",
+            )?;
+            let processes = match info.get("foreground_processes") {
+                None => &[][..],
+                Some(value) => value
+                    .as_array()
+                    .ok_or_else(|| "process_info.foreground_processes must be an array".to_owned())?
+                    .as_slice(),
+            };
+            let process_names = processes
+                .iter()
+                .map(|process| {
+                    let process = object(process, "foreground_process")?;
+                    non_empty_string_value(
+                        required(process, "name", "foreground_process.name")?,
+                        "foreground_process.name",
+                    )
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(HerdrControlResult::PaneProcessInfo {
+                pane_id: non_empty_string_value(
+                    required(info, "pane_id", "process_info.pane_id")?,
+                    "process_info.pane_id",
+                )?,
+                process_names,
+            })
+        }
         HerdrControlResultKind::PaneRead => {
             let read = object(required(result, "read", "result.read")?, "read")?;
             Ok(HerdrControlResult::PaneRead {
@@ -1829,6 +1872,53 @@ mod tests {
         })
     }
 
+    #[test]
+    fn pane_process_info_queries_one_pane_and_returns_only_program_names() {
+        let request = HerdrControlRequest::PaneProcessInfo {
+            pane_id: "p1".to_owned(),
+        };
+        let wire: Value = serde_json::from_slice(&request.encode("query").unwrap()).unwrap();
+        assert_eq!(wire["method"], "pane.process_info");
+        assert_eq!(wire["params"], serde_json::json!({"pane_id":"p1"}));
+        let result = serde_json::json!({"process_info":{
+            "pane_id":"p1", "foreground_processes":[
+                {"pid":123,"name":"lazynotion","argv":["lazynotion","--test"]}
+            ]
+        }});
+        assert_eq!(
+            decode_result(
+                HerdrControlResultKind::PaneProcessInfo,
+                result.as_object().unwrap()
+            )
+            .unwrap(),
+            HerdrControlResult::PaneProcessInfo {
+                pane_id: "p1".to_owned(),
+                process_names: vec!["lazynotion".to_owned()]
+            }
+        );
+        let empty = serde_json::json!({"process_info":{"pane_id":"p1","foreground_processes":[]}});
+        assert_eq!(
+            decode_result(
+                HerdrControlResultKind::PaneProcessInfo,
+                empty.as_object().unwrap()
+            )
+            .unwrap(),
+            HerdrControlResult::PaneProcessInfo {
+                pane_id: "p1".to_owned(),
+                process_names: vec![]
+            }
+        );
+        let invalid =
+            serde_json::json!({"process_info":{"pane_id":"p1","foreground_processes":[{}]}});
+        assert!(
+            decode_result(
+                HerdrControlResultKind::PaneProcessInfo,
+                invalid.as_object().unwrap()
+            )
+            .is_err()
+        );
+    }
+
     fn agent_value() -> Value {
         serde_json::json!({
             "pane_id": "p1", "terminal_id": "term1", "workspace_id": "w1", "tab_id": "t1",
@@ -2131,6 +2221,9 @@ mod tests {
                 HerdrControlResult::TabInfo { .. } => HerdrControlResultKind::TabInfo,
                 HerdrControlResult::PaneInfo { .. } => HerdrControlResultKind::PaneInfo,
                 HerdrControlResult::PaneRead { .. } => HerdrControlResultKind::PaneRead,
+                HerdrControlResult::PaneProcessInfo { .. } => {
+                    HerdrControlResultKind::PaneProcessInfo
+                }
                 HerdrControlResult::AgentStarted { .. } => HerdrControlResultKind::AgentStarted,
                 HerdrControlResult::AgentInfo { .. } => HerdrControlResultKind::AgentInfo,
                 HerdrControlResult::AgentPrompted { .. } => HerdrControlResultKind::AgentPrompted,

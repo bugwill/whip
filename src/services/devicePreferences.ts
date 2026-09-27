@@ -60,9 +60,11 @@ export interface TerminalPreferences {
   fullscreen: boolean;
   useModifierKeyIcons: boolean;
   tuiMouseInputWhenKeyboardEnabled: boolean;
+  automaticTuiPrograms: string;
   volumeUpAction: TerminalVolumeKeyAction;
   volumeDownAction: TerminalVolumeKeyAction;
   fontSize: number;
+  textContrast: number;
   scrollback: number;
   xtermCacheCapacity: number;
   cursorBlink: boolean;
@@ -146,9 +148,11 @@ export const defaultDevicePreferences: DevicePreferences = {
     fullscreen: true,
     useModifierKeyIcons: false,
     tuiMouseInputWhenKeyboardEnabled: true,
+    automaticTuiPrograms: 'lazynotion',
     volumeUpAction: 'none',
     volumeDownAction: 'none',
     fontSize: 12,
+    textContrast: 1,
     scrollback: 5000,
     xtermCacheCapacity: DEFAULT_XTERM_CACHE_CAPACITY,
     cursorBlink: false,
@@ -330,6 +334,9 @@ function parseDevicePreferences(
           ? terminal.fullscreen
           : defaultDevicePreferences.terminal.fullscreen,
         useModifierKeyIcons: terminal.useModifierKeyIcons === true,
+        automaticTuiPrograms: typeof terminal.automaticTuiPrograms === 'string'
+          ? terminal.automaticTuiPrograms
+          : defaultDevicePreferences.terminal.automaticTuiPrograms,
         tuiMouseInputWhenKeyboardEnabled: typeof terminal.tuiMouseInputWhenKeyboardEnabled === 'boolean'
           ? terminal.tuiMouseInputWhenKeyboardEnabled
           : defaultDevicePreferences.terminal.tuiMouseInputWhenKeyboardEnabled,
@@ -342,6 +349,7 @@ function parseDevicePreferences(
           defaultDevicePreferences.terminal.volumeDownAction,
         ),
         fontSize,
+        textContrast: clampNumber(terminal.textContrast, 1, 4, defaultDevicePreferences.terminal.textContrast, 1),
         scrollback: clampNumber(terminal.scrollback, 1000, 20000, defaultDevicePreferences.terminal.scrollback),
         xtermCacheCapacity: parseXtermCacheCapacity(terminal.xtermCacheCapacity),
         cursorBlink: terminal.cursorBlink ?? defaultDevicePreferences.terminal.cursorBlink,
@@ -417,9 +425,10 @@ function recordDevicePreferencesWriteFailure(error: unknown, phase: string): voi
   });
 }
 
-function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+function clampNumber(value: unknown, min: number, max: number, fallback: number, precision = 0): number {
+  const scale = 10 ** precision;
   return typeof value === 'number' && Number.isFinite(value)
-    ? Math.max(min, Math.min(max, Math.round(value)))
+    ? Math.max(min, Math.min(max, Math.round(value * scale) / scale))
     : fallback;
 }
 

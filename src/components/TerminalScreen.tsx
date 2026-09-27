@@ -77,6 +77,7 @@ import { shouldDisplayLatencyWarning } from '@/src/lib/latencyWarning';
 import { useDisplayAnimationType, useDisplayProfile } from '@/src/lib/displayProfile';
 import { cn } from '@/src/lib/utils';
 import { retryDelay } from '../lib/retryDelay';
+import { monitorAutomaticTuiPrograms, parseAutomaticTuiPrograms } from '../lib/automaticTuiPrograms';
 import {
   fixedTerminalControlsAfterPad,
   fixedTerminalControlsBeforePad,
@@ -245,6 +246,7 @@ const TERMINAL_KEYS: Partial<Record<TerminalControlId, TerminalKeyDefinition>> =
     esc: ['ESC', '\u001b', 'text'],
     tab: ['TAB', '\t', 'text'],
     b: ['b', 'b', 'text'],
+    u: ['u', 'u', 'text'],
     up: ['↑', '\u001b[A', 'symbol'],
     left: ['←', '\u001b[D', 'symbol'],
     right: ['→', '\u001b[C', 'symbol'],
@@ -766,6 +768,32 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     useEffect(() => {
       setForcedMouseInputEnabled(false);
     }, [activeTarget?.key, setForcedMouseInputEnabled, status]);
+
+    const automaticTuiPrograms = preferences.automaticTuiPrograms;
+    useEffect(() => {
+      const target = activeTargetRef.current;
+      const programs = parseAutomaticTuiPrograms(automaticTuiPrograms);
+      if (!target || target.session.kind === 'ssh' || !visible || !ready || status !== 'connected' || programs.length === 0) {
+        setForcedMouseInputEnabled(false);
+        return;
+      }
+      setForcedMouseInputEnabled(false);
+      return monitorAutomaticTuiPrograms({
+        programs,
+        isActive: () => AppState.currentState !== 'background' && AppState.currentState !== 'inactive',
+        readNames: async () => {
+          const result = await target.client.native.requestHerdrApi({
+            method: 'pane.process_info',
+            params: { pane_id: target.session.paneId },
+          });
+          if (result.type !== 'pane_process_info' || result.pane_id !== target.session.paneId) {
+            throw new Error('Unexpected pane process response');
+          }
+          return result.process_names;
+        },
+        onChange: setForcedMouseInputEnabled,
+      });
+    }, [activeTarget?.key, automaticTuiPrograms, ready, setForcedMouseInputEnabled, status, visible]);
 
     const cacheTargetKey = activeTarget?.key || '';
     const offlineSnapshot = offlineBackendRef.current.snapshot(cacheTargetKey);
@@ -2269,7 +2297,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             offlineScroll={offlineSnapshot.scroll}
             onReady={() => {
               setReady(true);
-              setForcedMouseInputEnabled(false);
+              renderer.current?.setForcedMouseInput(forcedMouseInput);
             }}
             onInput={async (target, data, applyModifiers) => {
               if (applyModifiers === false) {

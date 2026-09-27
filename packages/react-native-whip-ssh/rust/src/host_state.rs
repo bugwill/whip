@@ -1400,6 +1400,7 @@ fn apply_control_to_snapshot(
         | HerdrControlResult::SessionSnapshot { .. }
         | HerdrControlResult::IntegrationInstalled { .. }
         | HerdrControlResult::PaneRead { .. } => Ok(ControlProjection::Unchanged),
+        HerdrControlResult::PaneProcessInfo { .. } => Ok(ControlProjection::Unchanged),
     }
 }
 

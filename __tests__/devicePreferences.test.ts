@@ -47,14 +47,37 @@ beforeEach(() => {
   mockRemoveAppBackground.mockResolvedValue();
 });
 
+test.each([
+  [2.3, 2.3], [99, 4], [-1, 1], ['2', 1], [null, 1],
+])('loads and bounds terminal text contrast %p', async (stored, expected) => {
+  mockGetItem.mockResolvedValueOnce(JSON.stringify({ terminal: { textContrast: stored } }));
+  const preferences = await loadDevicePreferences();
+  expect(preferences.terminal.textContrast).toBe(expected);
+  await saveDevicePreferences(preferences);
+  const saved = JSON.parse(mockSetItem.mock.calls.at(-1)![1]);
+  expect(saved.terminal.textContrast).toBe(expected);
+});
+
+test.each([
+  [undefined, 'lazynotion'], ['', ''], ['lazynotion vim', 'lazynotion vim'], [123, 'lazynotion'],
+])('loads automatic TUI programs %p', async (stored, expected) => {
+  mockGetItem.mockResolvedValueOnce(JSON.stringify({ terminal: { automaticTuiPrograms: stored } }));
+  const preferences = await loadDevicePreferences();
+  expect(preferences.terminal.automaticTuiPrograms).toBe(expected);
+  await saveDevicePreferences(preferences);
+  expect(JSON.parse(mockSetItem.mock.calls.at(-1)![1]).terminal.automaticTuiPrograms).toBe(expected);
+});
+
 test('terminal preference defaults match the mobile renderer', () => {
   expect(defaultDevicePreferences.terminal).toEqual({
     fullscreen: true,
     useModifierKeyIcons: false,
     tuiMouseInputWhenKeyboardEnabled: true,
+    automaticTuiPrograms: 'lazynotion',
     volumeUpAction: 'none',
     volumeDownAction: 'none',
     fontSize: 12,
+    textContrast: 1,
     scrollback: 5000,
     xtermCacheCapacity: 20,
     cursorBlink: false,
@@ -149,9 +172,11 @@ test('migrates the old 11px mobile default to the usable 8px geometry', async ()
       fullscreen: true,
       useModifierKeyIcons: false,
       tuiMouseInputWhenKeyboardEnabled: true,
+      automaticTuiPrograms: 'lazynotion',
       volumeUpAction: 'none',
       volumeDownAction: 'none',
       fontSize: 12,
+      textContrast: 1,
       scrollback: 9000,
       xtermCacheCapacity: 20,
       cursorBlink: false,

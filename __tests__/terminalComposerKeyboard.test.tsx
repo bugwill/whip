@@ -165,9 +165,11 @@ const props: Props = {
     fullscreen: true,
     useModifierKeyIcons: false,
     tuiMouseInputWhenKeyboardEnabled: true,
+    automaticTuiPrograms: 'lazynotion',
     volumeUpAction: 'none',
     volumeDownAction: 'none',
     fontSize: 14,
+    textContrast: 1,
     scrollback: 2000,
     xtermCacheCapacity: 4,
     cursorBlink: true,
@@ -325,6 +327,35 @@ test('Chat mode covers the terminal while the evicted transcript has no viewport
   expect(ui('TerminalRendererHost').props.onResidencyEnd).toBe(onResidencyEnd);
   act(() => renderer.update(<TerminalScreen {...props} />));
   expect(renderer.root.findAll(node => node.props.className === 'absolute inset-0 z-10 bg-background')).toHaveLength(0);
+});
+
+test('automatic TUI follows each pane foreground program and preserves a manual override', async () => {
+  const requestHerdrApi = jest.fn().mockResolvedValue({
+    type: 'pane_process_info', pane_id: 'p1', process_names: ['lazynotion'],
+  });
+  const first = {
+    ...target, session: { ...target.session, paneId: 'p1' },
+    client: { native: { requestHerdrApi } } as unknown as typeof target.client,
+  };
+  mount({ activeTarget: first, targets: [first] });
+  await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+  expect(requestHerdrApi).toHaveBeenCalledWith({ method: 'pane.process_info', params: { pane_id: 'p1' } });
+  expect(button('disableForcedMouseInput').props.accessibilityState.selected).toBe(true);
+  await press('disableForcedMouseInput');
+  await act(async () => { await jest.advanceTimersByTimeAsync(2000); });
+  expect(button('enableForcedMouseInput').props.accessibilityState.selected).toBe(false);
+  requestHerdrApi.mockResolvedValue({ type: 'pane_process_info', pane_id: 'p1', process_names: ['zsh'] });
+  await act(async () => { await jest.advanceTimersByTimeAsync(2000); });
+  requestHerdrApi.mockResolvedValue({ type: 'pane_process_info', pane_id: 'p1', process_names: ['lazynotion'] });
+  await act(async () => { await jest.advanceTimersByTimeAsync(2000); });
+  expect(button('disableForcedMouseInput').props.accessibilityState.selected).toBe(true);
+  const second = { ...first, key: 'target-2', session: { ...first.session, terminalId: 'terminal-2', paneId: 'p2' } };
+  requestHerdrApi.mockResolvedValue({ type: 'pane_process_info', pane_id: 'p2', process_names: ['zsh'] });
+  await act(async () => { renderer.update(<TerminalScreen {...props} activeTarget={second} targets={[first, second]} />); });
+  expect(button('enableForcedMouseInput').props.accessibilityState.selected).toBe(false);
+  requestHerdrApi.mockResolvedValue({ type: 'pane_process_info', pane_id: 'p1', process_names: ['lazynotion'] });
+  await act(async () => { renderer.update(<TerminalScreen {...props} activeTarget={first} targets={[first, second]} />); });
+  expect(button('disableForcedMouseInput').props.accessibilityState.selected).toBe(true);
 });
 
 test('direction pad is the same height as controls and outside the horizontal scroller', () => {

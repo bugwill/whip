@@ -778,6 +778,7 @@ export type RuntimeHerdrRequest =
       };
     }
   | { method: 'pane.focus' | 'pane.close'; params: { pane_id: string } }
+  | { method: 'pane.process_info'; params: { pane_id: string } }
   | { method: 'pane.rename'; params: { pane_id: string; label: string | null } }
   | {
       method: 'pane.split';
@@ -819,6 +820,7 @@ export type RuntimeHerdrResult =
   | { type: 'tab_info'; tab: WhipTabInfo }
   | { type: 'pane_info'; pane: WhipPaneInfo }
   | { type: 'pane_read'; read: { text: string } }
+  | { type: 'pane_process_info'; pane_id: string; process_names: string[] }
   | { type: 'agent_started'; agent: WhipAgentInfo; argv: string[] }
   | { type: 'agent_info'; agent: WhipAgentInfo }
   | { type: 'agent_prompted'; agent: WhipAgentInfo }
@@ -1698,6 +1700,8 @@ function controlRequest(request: RuntimeHerdrRequest): HerdrControlRequest {
       });
     case 'pane.focus':
       return HerdrControlRequest.PaneFocus.new({ paneId: text('pane_id') });
+    case 'pane.process_info':
+      return HerdrControlRequest.PaneProcessInfo.new({ paneId: text('pane_id') });
     case 'pane.rename':
       return HerdrControlRequest.PaneRename.new({
         paneId: text('pane_id'),
@@ -2272,6 +2276,8 @@ function apiResult(value: HerdrControlResult): RuntimeHerdrResult {
       return { type: 'pane_info', pane: pane(value.inner.pane) };
     case HerdrControlResult_Tags.PaneRead:
       return { type: 'pane_read', read: { text: value.inner.read.text } };
+    case HerdrControlResult_Tags.PaneProcessInfo:
+      return { type: 'pane_process_info', pane_id: value.inner.paneId, process_names: value.inner.processNames };
     case HerdrControlResult_Tags.AgentStarted:
       return {
         type: 'agent_started',

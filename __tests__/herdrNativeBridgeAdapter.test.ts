@@ -95,6 +95,7 @@ jest.mock('../packages/react-native-whip-ssh/src/generated-entry', () => ({
       new: jest.fn(inner => ({ tag: 'WorkspaceFocus', inner })),
     },
     AgentFocus: { new: jest.fn(inner => ({ tag: 'AgentFocus', inner })) },
+    PaneProcessInfo: { new: jest.fn(inner => ({ tag: 'PaneProcessInfo', inner })) },
   },
   HerdrControlResult_Tags: {
     Pong: 'Pong',
@@ -105,6 +106,7 @@ jest.mock('../packages/react-native-whip-ssh/src/generated-entry', () => ({
     TabInfo: 'TabInfo',
     PaneInfo: 'PaneInfo',
     PaneRead: 'PaneRead',
+    PaneProcessInfo: 'PaneProcessInfo',
     AgentStarted: 'AgentStarted',
     AgentInfo: 'AgentInfo',
     AgentPrompted: 'AgentPrompted',
@@ -289,6 +291,13 @@ describe('native HostRuntime adapter', () => {
         params: { workspace_id: 'w1' },
       }),
     ).resolves.toEqual({ type: 'ok' });
+    rustRuntime.controlRequest.mockResolvedValueOnce({
+      tag: 'PaneProcessInfo', inner: { paneId: 'p1', processNames: ['lazynotion'] },
+    });
+    await expect(runtime.requestHerdrApi({
+      method: 'pane.process_info', params: { pane_id: 'p1' },
+    })).resolves.toEqual({ type: 'pane_process_info', pane_id: 'p1', process_names: ['lazynotion'] });
+    expect(rustRuntime.controlRequest).toHaveBeenLastCalledWith({ tag: 'PaneProcessInfo', inner: { paneId: 'p1' } });
     mockRuntimeEventSink.event({
       tag: 'ConnectionStateChanged',
       inner: {

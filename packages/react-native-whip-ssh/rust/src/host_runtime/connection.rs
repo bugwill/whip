@@ -688,6 +688,7 @@ pub(super) fn safe_control_replay(request: &HerdrControlRequest) -> bool {
             HerdrControlRequest::Ping
                 | HerdrControlRequest::SessionSnapshot
                 | HerdrControlRequest::PaneRead { .. }
+                | HerdrControlRequest::PaneProcessInfo { .. }
         )
 }
 

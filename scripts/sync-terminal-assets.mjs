@@ -7,11 +7,13 @@ import terminalClipboardPaste from './terminal-clipboard-paste.cjs';
 import terminalOfflineCache from './terminal-offline-cache.cjs';
 import terminalLinkExtraction from './terminal-link-extraction.cjs';
 import terminalTouchBehavior from './terminal-touch-behavior.cjs';
+import terminalTextContrast from './terminal-text-contrast.cjs';
 import terminalBoundaryScrollModel from '../src/lib/terminalBoundaryScroll.cjs';
 
 const { installAndroidImeBridge, terminalInputDelta } = androidImeBridge;
 const { createTerminalPasteBridge } = terminalClipboardPaste;
 const { createTerminalOfflineCache } = terminalOfflineCache;
+const { terminalTextContrastTable, createTerminalTextContrast } = terminalTextContrast;
 const {
   terminalCellAtPoint,
   terminalMousePointForAction,
@@ -252,6 +254,7 @@ const terminalSessionHtml = `<!doctype html>
     #terminal-visual-debug { position: fixed; z-index: 30; top: 104px; right: 8px; display: none; max-width: calc(100% - 16px); padding: 5px 7px; border: 1px solid #7aa2f7aa; border-radius: 7px; background: #16161ed9; color: #c0caf5; font: 700 9px/1.35 monospace; white-space: pre-wrap; pointer-events: none; }
     /* FitAddon subtracts padding on .xterm when calculating terminal columns. */
     .xterm { box-sizing: border-box; height: 100%; padding: 0 16px; }
+    .xterm-rows > div { filter: var(--whip-text-contrast, none); }
     .xterm-viewport, .xterm-screen { background-color: transparent !important; }
     html[data-display-profile='eink'], html[data-display-profile='eink'] body, html[data-display-profile='eink'] #terminals, html[data-display-profile='eink'] .terminal-session, html[data-display-profile='eink'] #terminal-geometry, html[data-display-profile='eink'] #terminal, html[data-display-profile='eink'] .xterm, html[data-display-profile='eink'] .xterm-viewport, html[data-display-profile='eink'] .xterm-screen { background-color: #ffffff !important; }
     .xterm-viewport { overflow-y: hidden !important; scrollbar-width: none !important; }
@@ -287,6 +290,8 @@ const terminalSessionHtml = `<!doctype html>
     ${installAndroidImeBridge.toString()}
     ${createTerminalPasteBridge.toString()}
     ${createTerminalOfflineCache.toString()}
+    ${terminalTextContrastTable.toString()}
+    ${createTerminalTextContrast.toString()}
     ${terminalCellAtPoint.toString()}
     ${terminalMousePointForAction.toString()}
     ${terminalManualEditRange.toString()}
@@ -889,9 +894,11 @@ const terminalSessionHtml = `<!doctype html>
       terminal.write('\u001bc');
     };
     window.herdrOfflineInput = data => handleOfflineInput(data);
+    const configureTextContrast = createTerminalTextContrast(document.getElementById('terminal'));
     let configuredDisplayProfile = null;
     window.herdrConfigure = options => {
       einkMode = options.einkMode === true;
+      configureTextContrast(options.textContrast);
       terminal.options.fontSize = Math.max(einkMode ? 12 : 8, Math.min(24, Number(options.fontSize) || (einkMode ? 12 : 8)));
       terminal.options.fontWeight = einkMode ? '500' : '400';
       terminal.options.fontWeightBold = '700';
