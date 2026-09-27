@@ -450,7 +450,7 @@ export const zhHant: Record<string, string> = {
   'settings.reopenTerminalCopy': 'Herdr 啟動時開啟上次使用的終端機。',
   'settings.useModifierKeyIcons': '終端機按鍵使用圖示',
   'settings.automaticTuiPrograms': '自動啟用 TUI 的程式',
-  'settings.automaticTuiProgramsCopy': '多個程式名稱請用空格分隔，例如：lazynotion vim。前景程式符合時自動開啟強制 TUI 滑鼠輸入；切換至其他 pane 或返回 shell 時關閉。留空則僅手動控制。程式本身也需支援滑鼠輸入。',
+  'settings.automaticTuiProgramsCopy': '多個程式名稱請用空格分隔，例如：lazynotion vim。進入 pane 時只偵測一次，符合則開啟強制 TUI 滑鼠輸入。同一 pane 內啟動或退出程式不會再次偵測，請切走後切回，或手動點擊 TUI。留空則僅手動控制。程式本身也需支援滑鼠輸入。',
   'settings.useModifierKeyIconsCopy': '以符號取代 CTRL、SHIFT、ALT、ESC、TAB 和 ENTER。',
   'settings.tuiMouseInputWhenKeyboardEnabled': '鍵盤彈出時預設開啟 TUI',
   'settings.tuiMouseInputWhenKeyboardEnabledCopy': '軟體鍵盤開啟時自動啟用 TUI 滑鼠輸入，也可以在工具列中手動切換。',

@@ -450,7 +450,7 @@ export const es = {
   'settings.reopenTerminalCopy': 'Abra la última terminal cuando se inicie Herdr.',
   'settings.useModifierKeyIcons': 'Usar íconos para teclas de terminal',
   'settings.automaticTuiPrograms': 'Activar TUI automáticamente para programas',
-  'settings.automaticTuiProgramsCopy': 'Separa los nombres con espacios, por ejemplo: lazynotion vim. Activa la entrada forzada del ratón TUI para programas coincidentes y la desactiva al cambiar de panel o volver al shell. Déjalo vacío para control manual. El programa también debe admitir el ratón.',
+  'settings.automaticTuiProgramsCopy': 'Separa los nombres con espacios, por ejemplo: lazynotion vim. Comprueba una sola vez al entrar en un panel y activa el ratón TUI si coincide. Iniciar o cerrar programas en el mismo panel no vuelve a comprobar; cambia de panel y regresa o usa el botón TUI. Déjalo vacío para control manual. El programa también debe admitir el ratón.',
   'settings.useModifierKeyIconsCopy': 'Muestra símbolos en lugar de CTRL, SHIFT, ALT, ESC, TAB y ENTER.',
   'settings.tuiMouseInputWhenKeyboardEnabled': 'Abrir la entrada de mouse TUI con el teclado',
   'settings.tuiMouseInputWhenKeyboardEnabledCopy': 'Activa automáticamente la entrada de mouse TUI cuando se abre el teclado. También puedes cambiarla desde la barra de herramientas.',

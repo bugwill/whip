@@ -450,7 +450,7 @@ export const ja = {
   'settings.reopenTerminalCopy': 'Herdr の開始時に最後のターミナルを開きます。',
   'settings.useModifierKeyIcons': '端末キーのアイコンを使用する',
   'settings.automaticTuiPrograms': 'TUI を自動で有効にするプログラム',
-  'settings.automaticTuiProgramsCopy': 'プログラム名をスペースで区切って入力します（例：lazynotion vim）。一致するプログラムが動作中のペインでは強制 TUI マウス入力を有効にし、別のペインやシェルに戻ると無効にします。空欄は手動操作です。プログラム側もマウス入力に対応する必要があります。',
+  'settings.automaticTuiProgramsCopy': 'プログラム名をスペースで区切ります（例：lazynotion vim）。ペインに入るときに一度だけ確認し、一致すると強制 TUI マウス入力を有効にします。同じペインでの起動や終了では再確認しません。別のペインに切り替えて戻るか、TUI ボタンを使ってください。空欄は手動操作です。プログラム側もマウス入力への対応が必要です。',
   'settings.useModifierKeyIconsCopy': 'CTRL、SHIFT、ALT、ESC、TAB、および ENTER の代わりにシンボルを表示します。',
   'settings.tuiMouseInputWhenKeyboardEnabled': 'キーボード表示時に TUI マウス入力を有効にする',
   'settings.tuiMouseInputWhenKeyboardEnabledCopy': 'ソフトウェアキーボードを開いたときに TUI マウス入力を自動的に有効にします。ツールバーから手動で切り替えられます。',

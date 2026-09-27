@@ -450,7 +450,7 @@ export const zhHans = {
   'settings.reopenTerminalCopy': 'Herdr 启动时打开最后一个终端。',
   'settings.useModifierKeyIcons': '使用终端键图标',
   'settings.automaticTuiPrograms': '自动启用 TUI 的程序',
-  'settings.automaticTuiProgramsCopy': '多个程序名请用空格分隔，例如：lazynotion vim。前台程序匹配时自动打开强制 TUI 鼠标输入；切到其他 pane 或返回 shell 时关闭。留空则仅手动控制。程序本身也需支持鼠标输入。',
+  'settings.automaticTuiProgramsCopy': '多个程序名请用空格分隔，例如：lazynotion vim。进入 pane 时只检测一次，匹配则开启强制 TUI 鼠标输入。同一 pane 内启动或退出程序不会再次检测，请切走后切回，或手动点击 TUI。留空则仅手动控制。程序本身也需支持鼠标输入。',
   'settings.useModifierKeyIconsCopy': '显示符号而不是 CTRL、SHIFT、ALT、ESC、TAB 和 ENTER。',
   'settings.tuiMouseInputWhenKeyboardEnabled': '键盘弹出时默认打开 TUI',
   'settings.tuiMouseInputWhenKeyboardEnabledCopy': '软件键盘打开时自动启用 TUI 鼠标输入，也可以在工具栏中手动切换。',

@@ -77,7 +77,7 @@ import { shouldDisplayLatencyWarning } from '@/src/lib/latencyWarning';
 import { useDisplayAnimationType, useDisplayProfile } from '@/src/lib/displayProfile';
 import { cn } from '@/src/lib/utils';
 import { retryDelay } from '../lib/retryDelay';
-import { monitorAutomaticTuiPrograms, parseAutomaticTuiPrograms } from '../lib/automaticTuiPrograms';
+import { checkAutomaticTuiPrograms, parseAutomaticTuiPrograms } from '../lib/automaticTuiPrograms';
 import {
   fixedTerminalControlsAfterPad,
   fixedTerminalControlsBeforePad,
@@ -770,17 +770,23 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     }, [activeTarget?.key, setForcedMouseInputEnabled, status]);
 
     const automaticTuiPrograms = preferences.automaticTuiPrograms;
+    const automaticTuiPaneRef = useRef({ key: activeTarget?.key, checked: false });
     useEffect(() => {
       const target = activeTargetRef.current;
+      if (automaticTuiPaneRef.current.key !== target?.key) {
+        automaticTuiPaneRef.current = { key: target?.key, checked: false };
+      }
+      if (automaticTuiPaneRef.current.checked) return;
       const programs = parseAutomaticTuiPrograms(automaticTuiPrograms);
       if (!target || target.session.kind === 'ssh' || !visible || !ready || status !== 'connected' || programs.length === 0) {
         setForcedMouseInputEnabled(false);
         return;
       }
       setForcedMouseInputEnabled(false);
-      return monitorAutomaticTuiPrograms({
+      if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return;
+      automaticTuiPaneRef.current.checked = true;
+      return checkAutomaticTuiPrograms({
         programs,
-        isActive: () => AppState.currentState !== 'background' && AppState.currentState !== 'inactive',
         readNames: async () => {
           const result = await target.client.native.requestHerdrApi({
             method: 'pane.process_info',

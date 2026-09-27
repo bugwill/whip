@@ -345,10 +345,9 @@ test('automatic TUI follows each pane foreground program and preserves a manual 
   await act(async () => { await jest.advanceTimersByTimeAsync(2000); });
   expect(button('enableForcedMouseInput').props.accessibilityState.selected).toBe(false);
   requestHerdrApi.mockResolvedValue({ type: 'pane_process_info', pane_id: 'p1', process_names: ['zsh'] });
-  await act(async () => { await jest.advanceTimersByTimeAsync(2000); });
-  requestHerdrApi.mockResolvedValue({ type: 'pane_process_info', pane_id: 'p1', process_names: ['lazynotion'] });
-  await act(async () => { await jest.advanceTimersByTimeAsync(2000); });
-  expect(button('disableForcedMouseInput').props.accessibilityState.selected).toBe(true);
+  await act(async () => { await jest.advanceTimersByTimeAsync(60000); });
+  expect(requestHerdrApi).toHaveBeenCalledTimes(1);
+  expect(button('enableForcedMouseInput').props.accessibilityState.selected).toBe(false);
   const second = { ...first, key: 'target-2', session: { ...first.session, terminalId: 'terminal-2', paneId: 'p2' } };
   requestHerdrApi.mockResolvedValue({ type: 'pane_process_info', pane_id: 'p2', process_names: ['zsh'] });
   await act(async () => { renderer.update(<TerminalScreen {...props} activeTarget={second} targets={[first, second]} />); });

@@ -1,5 +1,5 @@
 import {
-  automaticTuiProgramMatches, monitorAutomaticTuiPrograms, parseAutomaticTuiPrograms,
+  automaticTuiProgramMatches, checkAutomaticTuiPrograms, parseAutomaticTuiPrograms,
 } from '../src/lib/automaticTuiPrograms';
 
 test('splits whitespace, ignores duplicates, and matches executable names exactly', () => {
@@ -15,31 +15,23 @@ test('splits whitespace, ignores duplicates, and matches executable names exactl
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
 
-test('detects program start/exit while preserving manual overrides for unchanged processes', async () => {
-  const readNames = jest.fn().mockResolvedValue(['zsh']);
+test('checks once without timers or repeated network requests', async () => {
+  const readNames = jest.fn().mockResolvedValue(['lazynotion']);
   const onChange = jest.fn();
-  const stop = monitorAutomaticTuiPrograms({ programs: ['lazynotion'], readNames, onChange });
-  await jest.advanceTimersByTimeAsync(0);
-  expect(onChange).toHaveBeenLastCalledWith(false);
-  readNames.mockResolvedValue(['lazynotion']);
-  await jest.advanceTimersByTimeAsync(2000);
-  expect(onChange).toHaveBeenLastCalledWith(true);
-  onChange.mockClear();
-  await jest.advanceTimersByTimeAsync(4000);
-  expect(onChange).not.toHaveBeenCalled();
-  readNames.mockResolvedValue(['zsh']);
-  await jest.advanceTimersByTimeAsync(2000);
-  expect(onChange).toHaveBeenLastCalledWith(false);
+  const stop = checkAutomaticTuiPrograms({ programs: ['lazynotion'], readNames, onChange });
+  await jest.advanceTimersByTimeAsync(60000);
+  expect(readNames).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenCalledWith(true);
+  expect(jest.getTimerCount()).toBe(0);
   stop();
 });
 
-test('switching panes cancels late results and prevents overlapping requests', async () => {
+test('leaving a pane ignores its late result', async () => {
   let finish!: (value: string[]) => void;
   const readNames = jest.fn(() => new Promise<string[]>(resolve => { finish = resolve; }));
   const onChange = jest.fn();
-  const stop = monitorAutomaticTuiPrograms({ programs: ['lazynotion'], readNames, onChange });
-  await jest.advanceTimersByTimeAsync(10000);
-  expect(readNames).toHaveBeenCalledTimes(1);
+  const stop = checkAutomaticTuiPrograms({ programs: ['lazynotion'], readNames, onChange });
   stop();
   finish(['lazynotion']);
   await jest.advanceTimersByTimeAsync(10000);
@@ -47,18 +39,11 @@ test('switching panes cancels late results and prevents overlapping requests', a
   expect(readNames).toHaveBeenCalledTimes(1);
 });
 
-test('background checks pause and failed queries disable forced input', async () => {
+test('failed queries disable forced input without retrying', async () => {
   const readNames = jest.fn().mockRejectedValue(new Error('unavailable'));
   const onChange = jest.fn();
-  let active = false;
-  const stop = monitorAutomaticTuiPrograms({ programs: ['vim'], readNames, onChange, isActive: () => active });
-  await jest.advanceTimersByTimeAsync(4000);
-  expect(readNames).not.toHaveBeenCalled();
-  active = true;
-  await jest.advanceTimersByTimeAsync(2000);
+  checkAutomaticTuiPrograms({ programs: ['vim'], readNames, onChange });
+  await jest.advanceTimersByTimeAsync(60000);
   expect(onChange).toHaveBeenCalledWith(false);
-  onChange.mockClear();
-  await jest.advanceTimersByTimeAsync(4000);
-  expect(onChange).not.toHaveBeenCalled();
-  stop();
+  expect(readNames).toHaveBeenCalledTimes(1);
 });

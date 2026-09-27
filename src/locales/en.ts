@@ -461,7 +461,7 @@ export const en = {
   'settings.reopenTerminalCopy': 'Open the last terminal when Herdr starts.',
   'settings.useModifierKeyIcons': 'Use icons for terminal keys',
   'settings.automaticTuiPrograms': 'Automatically enable TUI for programs',
-  'settings.automaticTuiProgramsCopy': 'Separate program names with spaces, for example: lazynotion vim. Matching foreground programs enable forced TUI mouse input; other panes and returning to the shell disable it. Leave empty for manual control. Programs must also support mouse input.',
+  'settings.automaticTuiProgramsCopy': 'Separate program names with spaces, for example: lazynotion vim. Checks once when entering a pane and enables forced TUI mouse input for matching programs. Starting or exiting a program in the same pane does not trigger another check; switch away and back or use the TUI button. Leave empty for manual control. Programs must also support mouse input.',
   'settings.useModifierKeyIconsCopy': 'Show symbols instead of CTRL, SHIFT, ALT, ESC, TAB, and ENTER.',
   'settings.tuiMouseInputWhenKeyboardEnabled': 'Open TUI mouse input with the keyboard',
   'settings.tuiMouseInputWhenKeyboardEnabledCopy': 'Automatically enable TUI mouse input when the software keyboard opens. You can still toggle it from the toolbar.',
