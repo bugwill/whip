@@ -244,6 +244,7 @@ const TERMINAL_KEYS: Partial<Record<TerminalControlId, TerminalKeyDefinition>> =
   {
     esc: ['ESC', '\u001b', 'text'],
     tab: ['TAB', '\t', 'text'],
+    b: ['b', 'b', 'text'],
     up: ['↑', '\u001b[A', 'symbol'],
     left: ['←', '\u001b[D', 'symbol'],
     right: ['→', '\u001b[C', 'symbol'],
