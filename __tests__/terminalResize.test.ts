@@ -39,6 +39,7 @@ type ElementStub = ReturnType<typeof eventTarget> & {
   closest: (selector?: string) => ElementStub | null;
   querySelector: (selector: string) => ElementStub;
   getBoundingClientRect: () => { left: number; width: number; height: number; top: number; bottom: number };
+  dispatchEvent: (event: { type: string; deltaY?: number }) => boolean;
 };
 
 // Execute the shipped runtime with real FitAddon measurements. Only the DOM
@@ -48,6 +49,7 @@ async function runtime(asset: string, userAgent: string) {
   const padding: Record<string, string> = {};
   const classNames = new Set(['presented']);
   const nodes = new Map<string, ElementStub>();
+  const mouseEvents: Array<{ type: string; deltaY?: number }> = [];
   function element(): ElementStub {
     return {
       ...eventTarget(),
@@ -62,6 +64,7 @@ async function runtime(asset: string, userAgent: string) {
         return nodes.get(selector)!;
       },
       getBoundingClientRect: () => ({ left: 0, ...geometry, top: 0, bottom: geometry.height }),
+      dispatchEvent: (event: { type: string; deltaY?: number }) => { mouseEvents.push(event); return true; },
     };
   }
   const root = element();
@@ -86,10 +89,12 @@ async function runtime(asset: string, userAgent: string) {
     element: { ...element(), parentElement: parent, ownerDocument: { defaultView: window } },
     cols: 0,
     rows: 0,
-    modes: { applicationCursorKeysMode: false, mouseTrackingMode: 'none' },
+    modes: { applicationCursorKeysMode: false, mouseTrackingMode: 'none', showCursor: true },
     buffer: {
       active: {
         baseY: 0,
+        cursorY: 0,
+        cursorX: 0,
         viewportY: 0,
         length: 50,
         getLine: (row: number) => row === 0
@@ -109,6 +114,7 @@ async function runtime(asset: string, userAgent: string) {
     parser: { registerOscHandler: jest.fn() },
     loadAddon: (addon: { activate?: (term: Terminal) => void }) => addon.activate?.(terminal as unknown as Terminal),
     open: jest.fn(),
+    write: jest.fn((_data: unknown, callback?: () => void) => callback?.()),
     refresh: jest.fn(),
     clearSelection: jest.fn(),
     blur: jest.fn(),
@@ -132,6 +138,8 @@ async function runtime(asset: string, userAgent: string) {
   const script = html.split('<script>')[1].split('</script>')[0];
   const api = new Script(`${script}\ncreateTerminalSession(root, report);`).runInNewContext({
     root, report, window, TextDecoder, URL,
+    WheelEvent: Object.assign(function (this: object, type: string, options: object) { Object.assign(this, { type }, options); }, { DOM_DELTA_LINE: 1 }),
+    MouseEvent: function (this: object, type: string, options: object) { Object.assign(this, { type }, options); },
     document: {},
     navigator: { userAgent },
     performance: { now: () => 0 },
@@ -146,7 +154,7 @@ async function runtime(asset: string, userAgent: string) {
   await Promise.resolve();
   await Promise.resolve();
   const resizeReports = () => report.mock.calls.filter(([value]) => value.type === 'resize');
-  return { api, window, terminal, geometry, padding, classNames, fitSpy, resizeReports, report, nodes };
+  return { api, window, terminal, geometry, padding, classNames, fitSpy, resizeReports, report, nodes, mouseEvents };
 }
 
 describe.each([
@@ -156,6 +164,109 @@ describe.each([
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
   const setup = () => runtime(asset, platform);
+
+  test.each([true, false])('TUI taps and long presses do not request or focus the keyboard (keyboard=%s)', async keyboard => {
+    const state = await setup();
+    state.api.herdrSetForcedMouseInput(true);
+    state.terminal.modes.showCursor = false;
+    state.api.herdrSetKeyboardEnabled(keyboard);
+    state.terminal.focus.mockClear();
+    state.report.mockClear();
+    const surface = state.nodes.get('#terminal')!;
+    const touch = { target: surface, touches: [{ clientX: 50, clientY: 400 }], changedTouches: [{ clientX: 50, clientY: 400 }] };
+    surface.dispatch('touchstart', touch);
+    surface.dispatch('touchend', touch);
+    surface.dispatch('touchstart', touch);
+    jest.advanceTimersByTime(450);
+    surface.dispatch('touchend', touch);
+    expect(state.terminal.focus).not.toHaveBeenCalled();
+    expect(state.report.mock.calls.filter(([message]) => message.type === 'keyboard-request')).toHaveLength(0);
+    const input = state.report.mock.calls.filter(([message]) => message.type === 'input').map(([message]) => message.data).join('');
+    expect(input.split('\x1b[<0;')).toHaveLength(5);
+  });
+
+  test.each([true, false])('visible input cursor allows keyboard; hidden cursor blocks it (TUI=%s)', async tui => {
+    const state = await setup();
+    state.api.herdrSetForcedMouseInput(tui);
+    state.api.herdrSetKeyboardEnabled(false);
+    state.report.mockClear();
+    const surface = state.nodes.get('#terminal')!;
+    const touch = { target: surface, touches: [{ clientX: 50, clientY: 400 }], changedTouches: [{ clientX: 50, clientY: 400 }] };
+    state.terminal.modes.showCursor = false;
+    surface.dispatch('touchstart', touch);
+    surface.dispatch('touchend', touch);
+    jest.advanceTimersByTime(400);
+    expect(state.report.mock.calls.filter(([message]) => message.type === 'keyboard-request')).toHaveLength(0);
+    state.terminal.modes.showCursor = true;
+    surface.dispatch('touchstart', touch);
+    expect(state.report.mock.calls.filter(([message]) => message.type === 'keyboard-request')).toHaveLength(0);
+    surface.dispatch('touchend', touch);
+    jest.advanceTimersByTime(400);
+    expect(state.report.mock.calls.filter(([message]) => message.type === 'keyboard-request')).toHaveLength(1);
+  });
+
+  test('mouse tap waits for parsed remote output and uses its cursor state', async () => {
+    const state = await setup();
+    state.api.herdrSetForcedMouseInput(true);
+    state.api.herdrSetKeyboardEnabled(false);
+    state.report.mockClear();
+    const surface = state.nodes.get('#terminal')!;
+    const touch = { target: surface, touches: [{ clientX: 50, clientY: 400 }], changedTouches: [{ clientX: 50, clientY: 400 }] };
+    surface.dispatch('touchstart', touch);
+    surface.dispatch('touchend', touch);
+    expect(state.report.mock.calls.filter(([message]) => message.type === 'keyboard-request')).toHaveLength(0);
+    state.terminal.modes.showCursor = false;
+    state.api.herdrWrite('reading output');
+    jest.advanceTimersByTime(400);
+    expect(state.report.mock.calls.filter(([message]) => message.type === 'keyboard-request')).toHaveLength(0);
+    surface.dispatch('touchstart', touch);
+    surface.dispatch('touchend', touch);
+    state.terminal.modes.showCursor = true;
+    state.api.herdrWrite('editor output');
+    expect(state.report.mock.calls.filter(([message]) => message.type === 'keyboard-request')).toHaveLength(1);
+  });
+
+  test('ordinary terminal swipes and long presses do not focus a visible cursor', async () => {
+    const state = await setup();
+    state.api.herdrSetKeyboardEnabled(true);
+    state.terminal.focus.mockClear();
+    state.report.mockClear();
+    const surface = state.nodes.get('#terminal')!;
+    const touch = (y: number) => ({ target: surface, touches: [{ clientX: 50, clientY: y }], changedTouches: [{ clientX: 50, clientY: y }] });
+    surface.dispatch('touchstart', touch(400));
+    surface.dispatch('touchmove', touch(352));
+    surface.dispatch('touchend', touch(352));
+    surface.dispatch('touchstart', touch(400));
+    jest.advanceTimersByTime(450);
+    surface.dispatch('touchend', touch(400));
+    jest.advanceTimersByTime(400);
+    expect(state.terminal.focus).not.toHaveBeenCalled();
+    expect(state.report.mock.calls.filter(([message]) => message.type === 'keyboard-request')).toHaveLength(0);
+  });
+
+  test.each([true, false])('touch swipes reach mouse-capture apps with zero host scrollback (forced=%s)', async forced => {
+    const state = await setup();
+    state.api.herdrSetForcedMouseInput(forced);
+    state.terminal.modes.mouseTrackingMode = forced ? 'none' : 'button';
+    state.api.herdrSetVisualInsets({ top: 0, bottom: 0, scrollOffsetFromBottom: 0, maxScrollOffsetFromBottom: 0 });
+    state.report.mockClear();
+    const surface = state.nodes.get('#terminal')!;
+    const touch = (y: number) => ({ target: surface, touches: [{ clientX: 50, clientY: y }], changedTouches: [{ clientX: 50, clientY: y }] });
+    for (const delta of [-48, 48]) {
+      surface.dispatch('touchstart', touch(400));
+      surface.dispatch('touchmove', touch(400 + delta));
+      surface.dispatch('touchend', touch(400 + delta));
+    }
+    expect(state.report.mock.calls.filter(([message]) => message.type === 'scroll')).toHaveLength(0);
+    expect(state.terminal.scrollLines).not.toHaveBeenCalled();
+    if (forced) {
+      const input = state.report.mock.calls.filter(([message]) => message.type === 'input').map(([message]) => message.data).join('');
+      expect(input.split('\x1b[<65;')).toHaveLength(4);
+      expect(input.split('\x1b[<64;')).toHaveLength(4);
+    } else {
+      expect(state.mouseEvents.map(event => event.deltaY)).toEqual([1, 1, 1, -1, -1, -1]);
+    }
+  });
 
   test('unrelated configuration does not repaint the entire terminal theme', async () => {
     const state = await setup();

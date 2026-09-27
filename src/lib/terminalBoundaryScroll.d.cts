@@ -51,3 +51,8 @@ export function terminalBoundaryScroll(input: {
   gestureDeltaPx: number;
   cellHeightPx: number;
 } & TerminalBoundaryAllowances): TerminalBoundaryScrollResult;
+export function terminalMouseScroll(options: {
+  rowRemainderPx?: number;
+  gestureDeltaPx: number;
+  cellHeightPx: number;
+}): { rowScrollDelta: number; rowRemainderPx: number };

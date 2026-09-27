@@ -7,6 +7,16 @@ function terminalBoundaryClamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
+// Mouse-capture applications own their scrolling range. A swipe must emit
+// wheel rows even when the host terminal has no scrollback (alternate screen).
+function terminalMouseScroll({ rowRemainderPx = 0, gestureDeltaPx, cellHeightPx }) {
+  const height = Math.max(1, terminalBoundaryFiniteNumber(cellHeightPx, 1));
+  const total = terminalBoundaryFiniteNumber(rowRemainderPx)
+    + terminalBoundaryFiniteNumber(gestureDeltaPx);
+  const rows = Math.trunc(total / height);
+  return { rowScrollDelta: rows, rowRemainderPx: total - rows * height };
+}
+
 function terminalBoundaryVisualOffset({
   alternateScreen = false,
   boundary = null,
@@ -281,6 +291,7 @@ function terminalBoundaryScroll({
 }
 
 module.exports = {
+  terminalMouseScroll,
   terminalAtVisualBottom,
   terminalBoundaryClamp,
   terminalBoundaryFiniteNumber,

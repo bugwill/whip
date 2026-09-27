@@ -29,6 +29,7 @@ const {
 // This pure model is the authoritative implementation. The same functions are
 // imported by TypeScript callers/tests and stringified into both WebView assets.
 const {
+  terminalMouseScroll,
   reconcileTerminalBoundaryScroll,
   terminalAtVisualBottom,
   terminalBoundaryClamp,
@@ -305,6 +306,7 @@ const terminalSessionHtml = `<!doctype html>
     ${terminalBoundaryScrollToVisualBottom.toString()}
     ${reconcileTerminalBoundaryScroll.toString()}
     ${terminalBoundaryScroll.toString()}
+    ${terminalMouseScroll.toString()}
     const terminalFontFamily = '${androidTerminalFontFamily}';
     const fontReady = document.fonts?.load
       ? Promise.all([
@@ -419,6 +421,7 @@ const terminalSessionHtml = `<!doctype html>
     // history/menu input, so a producer must explicitly publish this state.
     let terminalEditableRegion = null;
     let forcedMouseInput = false;
+    let mouseScrollRemainderPx = 0;
     let localScrollback = false;
     let offlineScrollback = false;
     let offlineTranscriptChunks = [];
@@ -794,6 +797,7 @@ const terminalSessionHtml = `<!doctype html>
       prepareLiveWrite();
       terminal.write(prepareTerminalWrite(data), () => {
         offlineCache.markDirty();
+        settleKeyboardTap();
         reportTracePhase('trace-xterm-written', inboundCookie);
         reportTraceRendered(inputCookie, resizeCookie, inboundCookie);
       });
@@ -811,6 +815,7 @@ const terminalSessionHtml = `<!doctype html>
       for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
       terminal.write(prepareTerminalWrite(bytes), () => {
         offlineCache.markDirty();
+        settleKeyboardTap();
         reportTracePhase('trace-xterm-written', inboundCookie);
         reportTraceRendered(inputCookie, resizeCookie, inboundCookie);
       });
@@ -843,6 +848,7 @@ const terminalSessionHtml = `<!doctype html>
     window.herdrSetRenderDrop = enabled => { renderDrop = enabled === true; };
     window.herdrSnapshot = (reason, force) => offlineCache.snapshot(reason || 'lifecycle', force === true);
     window.herdrReset = () => {
+      cancelKeyboardTap();
       pendingFrames.clear();
       offlineTranscriptChunks = [];
       offlineTranscriptVisible = false;
@@ -945,6 +951,34 @@ const terminalSessionHtml = `<!doctype html>
     };
     const terminalMouseCaptured = () => terminal.modes.mouseTrackingMode !== 'none';
     const terminalMouseInputEnabled = () => forcedMouseInput || terminalMouseCaptured();
+    let pendingKeyboardTap = false;
+    let keyboardTapTimer = null;
+    const cancelKeyboardTap = () => {
+      pendingKeyboardTap = false;
+      if (keyboardTapTimer) clearTimeout(keyboardTapTimer);
+      keyboardTapTimer = null;
+    };
+    const settleKeyboardTap = () => {
+      if (!pendingKeyboardTap || offlineScrollback || terminal.modes.showCursor !== true) return;
+      const buffer = terminal.buffer.active;
+      const row = buffer.baseY + buffer.cursorY - buffer.viewportY;
+      if (!Number.isFinite(row) || row < 0 || row >= terminal.rows) return;
+      cancelKeyboardTap();
+      if (keyboardEnabled) terminal.focus();
+      else send({ type: 'keyboard-request' });
+    };
+    const requestKeyboardForTap = (point, waitForRemote) => {
+      cancelKeyboardTap();
+      if (offlineScrollback || !bufferCellAt(point.clientX, point.clientY)) return;
+      pendingKeyboardTap = true;
+      // A mouse click can change application modes remotely. Inspect only
+      // after parsed output, with a bounded fallback for an unchanged cursor.
+      keyboardTapTimer = setTimeout(() => {
+        settleKeyboardTap();
+        cancelKeyboardTap();
+      }, 350);
+      if (!waitForRemote) settleKeyboardTap();
+    };
     const terminalMouseCell = point => {
       const screen = terminal.element?.querySelector('.xterm-screen');
       if (!screen) return null;
@@ -1048,6 +1082,21 @@ const terminalSessionHtml = `<!doctype html>
         : window.innerHeight / Math.max(1, terminal.rows));
     };
     const scrollTerminalPixels = (gestureDeltaPx, point) => {
+      if (!offlineScrollback && terminalMouseInputEnabled()) {
+        const mouseScroll = terminalMouseScroll({
+          rowRemainderPx: mouseScrollRemainderPx,
+          gestureDeltaPx,
+          cellHeightPx: terminalCellHeight(),
+        });
+        mouseScrollRemainderPx = mouseScroll.rowRemainderPx;
+        if (mouseScroll.rowScrollDelta === 0) return;
+        if (dispatchTerminalWheel(
+          mouseScroll.rowScrollDelta > 0 ? 'up' : 'down',
+          Math.abs(mouseScroll.rowScrollDelta),
+          point,
+        )) return;
+        mouseScrollRemainderPx = 0;
+      }
       const local = offlineScrollInfo();
       const hasRemoteScroll = Number.isFinite(remoteVisualScrollOffset)
         && Number.isFinite(remoteVisualScrollMaximum);
@@ -1551,7 +1600,7 @@ const terminalSessionHtml = `<!doctype html>
       armSyntheticClickGuard();
       event.preventDefault();
       event.stopPropagation();
-      if (keyboardEnabled && event.touches.length === 1) terminal.focus();
+      cancelKeyboardTap();
       if (!keyboardEnabled) terminal.blur();
       if (event.touches.length === 2) {
         if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
@@ -1575,8 +1624,10 @@ const terminalSessionHtml = `<!doctype html>
         rowRemainderPx: 0,
       };
       touch = { x: point.clientX, y: point.clientY, lastY: point.clientY, moved: false, longPressed: false, selection: null };
+      mouseScrollRemainderPx = 0;
       longPressTimer = setTimeout(() => {
         if (!touch || touch.moved) return;
+        touch.longPressed = true;
         if (terminalMouseInputEnabled()) {
           touch.longPressed = true;
           touch.mouseDragging = dispatchTerminalMouse('down', { clientX: touch.x, clientY: touch.y });
@@ -1703,15 +1754,15 @@ const terminalSessionHtml = `<!doctype html>
           return;
         }
       }
+      if (!touch.moved && !touch.longPressed && point && !offlineScrollback && terminalMouseInputEnabled()) {
+        dispatchTerminalClick(point);
+        requestKeyboardForTap(point, true);
+        event.stopImmediatePropagation();
+        lastTap = null;
+        touch = null;
+        return;
+      }
       if (!touch.moved && !touch.longPressed && point && !keyboardEnabled) {
-        if (terminalTapRequestsKeyboard(
-          point,
-          keyboardEnabled,
-          offlineScrollback,
-          candidate => bufferCellAt(candidate.clientX, candidate.clientY),
-        )) {
-          send({ type: 'keyboard-request' });
-        }
         event.preventDefault();
         event.stopPropagation();
         handleTerminalStationaryTap({
@@ -1724,12 +1775,13 @@ const terminalSessionHtml = `<!doctype html>
           clearInteractiveSelection,
           moveCursor: moveCursorAtPoint,
         });
+        requestKeyboardForTap(point, false);
         lastTap = null;
         touch = null;
         return;
       }
       if (!touch.moved && !touch.longPressed && point) {
-        terminal.focus();
+        requestKeyboardForTap(point, false);
         const now = { time: Date.now(), x: point.clientX, y: point.clientY };
         if (doubleTapAction !== 'none' && lastTap && now.time - lastTap.time <= doubleTapTimeoutMs && Math.hypot(now.x - lastTap.x, now.y - lastTap.y) <= doubleTapDistancePx) {
           event.preventDefault();
@@ -1756,6 +1808,7 @@ const terminalSessionHtml = `<!doctype html>
       touch = null;
     }, { capture: true, passive: false });
     terminalSurface.addEventListener('touchcancel', event => {
+      cancelKeyboardTap();
       if (event.target.closest?.('#selection-toolbar')) return;
       armSyntheticClickGuard();
       event.preventDefault();
