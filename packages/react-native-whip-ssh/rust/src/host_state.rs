@@ -65,6 +65,16 @@ pub(crate) struct SnapshotToken {
 struct ActiveSync {
     token: SnapshotToken,
     buffered_events: Vec<HerdrEvent>,
+    /// This snapshot began after a pending gap request and therefore answers
+    /// it; if it fails, the request is re-armed for the resync task.
+    covers_resync_request: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResyncAction {
+    Run,
+    WaitForActiveSync,
+    Done,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,6 +102,11 @@ pub(crate) struct HostState {
     last_synced_at_ms: Option<u64>,
     last_event_at_ms: Option<u64>,
     needs_resync: bool,
+    /// Set when a delivery gap is reported while a snapshot is in flight. That
+    /// snapshot may predate the gap, so its completion must not clear the need.
+    resync_after_active_sync: bool,
+    /// A delivery gap asked for a snapshot that has not started yet.
+    resync_requested: bool,
     resync_running: bool,
     snapshot: Option<HerdrSessionSnapshot>,
     active_sync: Option<ActiveSync>,
@@ -112,6 +127,8 @@ impl Default for HostState {
             last_synced_at_ms: None,
             last_event_at_ms: None,
             needs_resync: false,
+            resync_after_active_sync: false,
+            resync_requested: false,
             resync_running: false,
             snapshot: None,
             active_sync: None,
@@ -169,6 +186,8 @@ impl HostState {
         self.connection_generation = generation;
         self.active_sync = None;
         self.resync_running = false;
+        self.resync_after_active_sync = false;
+        self.resync_requested = false;
         self.needs_resync = true;
         self.error = None;
         self.freshness = if self.snapshot.is_some() {
@@ -182,6 +201,8 @@ impl HostState {
     pub(crate) fn mark_reconnecting(&mut self, reason: String) {
         self.active_sync = None;
         self.resync_running = false;
+        self.resync_after_active_sync = false;
+        self.resync_requested = false;
         self.needs_resync = true;
         self.error = Some(reason);
         self.freshness = if self.snapshot.is_some() {
@@ -195,6 +216,8 @@ impl HostState {
     pub(crate) fn mark_disconnected(&mut self) {
         self.active_sync = None;
         self.resync_running = false;
+        self.resync_after_active_sync = false;
+        self.resync_requested = false;
         self.needs_resync = false;
         self.sync_status = HostSyncStatus::Idle;
         self.freshness = HostFreshness::Unavailable;
@@ -203,6 +226,13 @@ impl HostState {
 
     pub(crate) fn begin_sync(&mut self, connection_generation: u64) -> SnapshotToken {
         self.sync_generation = self.sync_generation.saturating_add(1);
+        // A snapshot requested from here on observes every earlier gap.
+        self.resync_after_active_sync = false;
+        let covers_resync_request = std::mem::take(&mut self.resync_requested)
+            || self
+                .active_sync
+                .as_ref()
+                .is_some_and(|active| active.covers_resync_request);
         let token = SnapshotToken {
             connection_generation,
             sync_generation: self.sync_generation,
@@ -210,6 +240,7 @@ impl HostState {
         self.active_sync = Some(ActiveSync {
             token,
             buffered_events: Vec::new(),
+            covers_resync_request,
         });
         self.sync_status = HostSyncStatus::Syncing;
         self.error = None;
@@ -255,8 +286,8 @@ impl HostState {
         self.sync_status = HostSyncStatus::Synced;
         self.last_synced_at_ms = Some(now_ms);
         self.error.clone_from(&replay_error);
-        self.needs_resync = replay_error.is_some();
-        self.resync_running = false;
+        self.needs_resync =
+            replay_error.is_some() || std::mem::take(&mut self.resync_after_active_sync);
         self.freshness = if replay_error.is_some() {
             HostFreshness::Stale
         } else {
@@ -279,11 +310,17 @@ impl HostState {
         {
             return ApplyResult::IgnoredStale;
         }
-        self.active_sync = None;
+        if self
+            .active_sync
+            .take()
+            .is_some_and(|active| active.covers_resync_request)
+        {
+            self.resync_requested = true;
+        }
         self.sync_status = HostSyncStatus::Error;
         self.error = Some(reason.clone());
         self.needs_resync = true;
-        self.resync_running = false;
+        self.resync_after_active_sync = false;
         self.freshness = if self.snapshot.is_some() {
             HostFreshness::Stale
         } else {
@@ -423,6 +460,9 @@ impl HostState {
 
     pub(crate) fn mark_needs_resync(&mut self, reason: String) {
         self.needs_resync = true;
+        if self.active_sync.is_some() {
+            self.resync_after_active_sync = true;
+        }
         self.error = Some(reason);
         self.freshness = if self.snapshot.is_some() {
             HostFreshness::Stale
@@ -434,6 +474,7 @@ impl HostState {
 
     pub(crate) fn request_resync(&mut self, reason: String) -> bool {
         self.mark_needs_resync(reason);
+        self.resync_requested = true;
         if self.resync_running {
             return false;
         }
@@ -441,13 +482,38 @@ impl HostState {
         true
     }
 
-    pub(crate) fn take_resync_request(&mut self) -> bool {
-        if !self.needs_resync || self.sync_status == HostSyncStatus::Syncing {
-            self.resync_running = false;
-            return false;
+    /// Decide the next step of the single resync task. `resync_running` is
+    /// owned by that task and only released here or by `cancel_resync`.
+    ///
+    /// Only explicit gap requests cause a run. Other stale markers, such as a
+    /// failed subscription start, are left to the monitoring worker so that a
+    /// persistent failure cannot turn this task into a snapshot loop.
+    pub(crate) fn next_resync_action(&mut self, stop_waiting: bool) -> ResyncAction {
+        let active = self.active_sync.as_ref();
+        if self.resync_requested {
+            if active.is_some() && !stop_waiting {
+                return ResyncAction::WaitForActiveSync;
+            }
+            self.resync_requested = false;
+            self.needs_resync = false;
+            return ResyncAction::Run;
         }
-        self.needs_resync = false;
-        true
+        // Another caller's snapshot answers the request; stay responsible for
+        // it until it either completes or re-arms the request by failing.
+        if active.is_some_and(|active| active.covers_resync_request) && !stop_waiting {
+            return ResyncAction::WaitForActiveSync;
+        }
+        self.resync_running = false;
+        ResyncAction::Done
+    }
+
+    pub(crate) fn cancel_resync(&mut self) {
+        self.resync_running = false;
+    }
+
+    /// A snapshot is already in flight and will produce fresh state.
+    pub(crate) fn sync_in_flight(&self) -> bool {
+        self.active_sync.is_some()
     }
 
     pub(crate) fn pane_ids(&self) -> Vec<String> {
@@ -2509,8 +2575,8 @@ mod tests {
         let reason = "missing parent".to_owned();
         assert!(state.request_resync(reason.clone()));
         assert!(!state.request_resync(reason));
-        assert!(state.take_resync_request());
-        assert!(!state.take_resync_request());
+        assert_eq!(state.next_resync_action(false), ResyncAction::Run);
+        assert_eq!(state.next_resync_action(false), ResyncAction::Done);
     }
 
     #[test]
@@ -2519,7 +2585,7 @@ mod tests {
         state.mark_needs_resync("event stream delivery gap".to_owned());
 
         assert!(state.request_resync("event stream restored".to_owned()));
-        assert!(state.take_resync_request());
+        assert_eq!(state.next_resync_action(false), ResyncAction::Run);
     }
 
     #[test]
@@ -2593,5 +2659,66 @@ mod tests {
         state.mark_disconnected();
         revisions.push(state.revision);
         assert!(revisions.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn gap_during_in_flight_snapshot_survives_its_completion_and_runs_once() {
+        let mut state = synced_state();
+        let token = state.begin_sync(1);
+        assert!(state.request_resync("gap during snapshot".to_owned()));
+        // The in-flight snapshot may predate the gap: wait instead of duplicating it.
+        assert_eq!(state.next_resync_action(false), ResyncAction::WaitForActiveSync);
+        assert_eq!(
+            state.complete_sync(token, snapshot(), 20),
+            ApplyResult::Applied
+        );
+        assert!(state.reconciliation_health().0);
+        assert_eq!(state.next_resync_action(false), ResyncAction::Run);
+        let resync = state.begin_sync(1);
+        state.complete_sync(resync, snapshot(), 21);
+        assert!(!state.reconciliation_health().0);
+        assert_eq!(state.next_resync_action(false), ResyncAction::Done);
+        assert!(!state.sync_in_flight());
+    }
+
+    #[test]
+    fn snapshot_started_after_gap_answers_request_and_failure_rearms_it() {
+        let mut state = synced_state();
+        assert!(state.request_resync("gap".to_owned()));
+        // Another caller (JS refresh or monitoring) starts after the gap.
+        let covering = state.begin_sync(1);
+        assert_eq!(state.next_resync_action(false), ResyncAction::WaitForActiveSync);
+        state.fail_sync(covering, "network".to_owned());
+        assert_eq!(state.next_resync_action(false), ResyncAction::Run);
+
+        let mut state = synced_state();
+        assert!(state.request_resync("gap".to_owned()));
+        let covering = state.begin_sync(1);
+        state.complete_sync(covering, snapshot(), 20);
+        assert!(!state.reconciliation_health().0);
+        assert_eq!(state.next_resync_action(false), ResyncAction::Done);
+        // The owner is released, so a later gap starts a new task.
+        assert!(state.request_resync("later gap".to_owned()));
+    }
+
+    #[test]
+    fn stale_marker_without_gap_request_does_not_loop_resync_task() {
+        let mut state = synced_state();
+        assert!(state.request_resync("gap".to_owned()));
+        assert_eq!(state.next_resync_action(false), ResyncAction::Run);
+        let token = state.begin_sync(1);
+        state.fail_sync(token, "subscription start failed".to_owned());
+        state.mark_needs_resync("event subscription unavailable".to_owned());
+        // Left to the monitoring worker's health cadence rather than a hot loop.
+        assert_eq!(state.next_resync_action(false), ResyncAction::Done);
+        assert!(state.reconciliation_health().0);
+    }
+
+    #[test]
+    fn resync_wait_is_bounded_by_superseding_a_stuck_snapshot() {
+        let mut state = synced_state();
+        let _stuck = state.begin_sync(1);
+        assert!(state.request_resync("gap".to_owned()));
+        assert_eq!(state.next_resync_action(true), ResyncAction::Run);
     }
 }

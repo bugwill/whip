@@ -620,6 +620,7 @@ export const zhHant: Record<string, string> = {
   'terminal.historyEmpty': '從輸入編輯器傳送或貼到終端機的文字會顯示在這裡。',
   'terminal.closeHistory': '關閉輸入記錄',
   'terminal.useHistoryEntry': '從記錄貼上：{{text}}',
+  'terminal.interruptProgram': '中斷程式（Ctrl+C）',
   'terminal.escapeKey': 'Escape 鍵',
   'terminal.tabKey': 'Tab 鍵',
   'terminal.enterKey': 'Enter 鍵',

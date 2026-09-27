@@ -13,6 +13,7 @@ mod host_profiles;
 mod host_runtime;
 mod host_state;
 mod pairing;
+mod power_diagnostics;
 mod remote_ops;
 mod remote_preview;
 mod ssh;
@@ -27,6 +28,7 @@ pub use host_profiles::*;
 pub use host_runtime::*;
 pub use host_state::*;
 pub use remote_ops::*;
+pub use power_diagnostics::{power_diagnostics_snapshot, set_power_diagnostics_enabled};
 
 use std::sync::OnceLock;
 

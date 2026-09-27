@@ -636,6 +636,7 @@ export const en = {
   'terminal.historyEmpty': 'Text sent from the composer or pasted into a terminal will appear here.',
   'terminal.closeHistory': 'Close input history',
   'terminal.useHistoryEntry': 'Paste from history: {{text}}',
+  'terminal.interruptProgram': 'Interrupt program (Ctrl+C)',
   'terminal.escapeKey': 'Escape key',
   'terminal.tabKey': 'Tab key',
   'terminal.enterKey': 'Enter key',

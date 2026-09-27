@@ -103,6 +103,8 @@ import {
   type AppCoreView as NativeAppCoreView,
 } from './generated-entry';
 
+export { powerDiagnosticsSnapshot, setPowerDiagnosticsEnabled } from './generated-entry';
+
 export interface HerdrBridgeEvent {
   type:
     | 'terminal'

@@ -28,6 +28,7 @@ export type TerminalSessionsByHost = ReadonlyMap<string, HostTerminalSessions>;
 type CoreBinding = {
   core: NativeAppCore;
   commit: (view: AppCoreProjection) => void;
+  requestProjection?: (view?: AppCoreProjection) => void;
 };
 
 export function updateHostTerminalSessions(
@@ -71,8 +72,8 @@ export function useTerminalSessions() {
   }, [state]);
 
   const bindAppCore = useCallback(
-    (core: NativeAppCore, commit: (view: AppCoreProjection) => void) => {
-      coreBindingRef.current = { core, commit };
+    (core: NativeAppCore, commit: (view: AppCoreProjection) => void, requestProjection?: (view?: AppCoreProjection) => void) => {
+      coreBindingRef.current = { core, commit, requestProjection };
     },
     [],
   );
@@ -185,15 +186,17 @@ export function useTerminalSessions() {
     error?: string,
     reconnectAttempt = 0,
   ) => {
-    const { core, commit } = requireCore();
-    commit(core.updateTerminalLifecycle(
+    const { core, commit, requestProjection } = requireCore();
+    const view = core.updateTerminalLifecycle(
       sessionId,
       terminalId,
       nativeState,
       retrying,
       error,
       reconnectAttempt,
-    ));
+    );
+    if (requestProjection) requestProjection(view);
+    else commit(view);
   }, [requireCore]);
 
   const updateStatus = useCallback((

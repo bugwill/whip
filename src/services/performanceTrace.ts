@@ -748,3 +748,109 @@ export function terminalFrameRendered(visibleCookie: number): void {
   const trace = pendingByVisibleCookie.get(visibleCookie);
   if (trace) endVisible(trace, 'visible');
 }
+
+/** Optional scene diagnostics; independent of native tracing and entirely in memory. */
+export type PerformanceDiagnosticsSnapshot = {
+  counters: Record<string, number>;
+  gauges: Record<string, number>;
+  native?: unknown;
+  durations: Record<string, { count: number; totalMs: number; maxMs: number }>;
+};
+const MAX_DIAGNOSTIC_METRICS = 256;
+let diagnosticsEnabled = false;
+let diagnosticSceneGeneration = 0;
+let diagnosticBackend: { begin: () => void; end: () => unknown } | undefined;
+export function registerPerformanceDiagnosticBackend(backend: { begin: () => void; end: () => unknown }): void {
+  diagnosticBackend = backend;
+}
+export function getPerformanceDiagnosticSceneGeneration(): number { return diagnosticSceneGeneration; }
+let diagnosticCounters: PerformanceDiagnosticsSnapshot['counters'] = {};
+let diagnosticGauges: PerformanceDiagnosticsSnapshot['gauges'] = {};
+let diagnosticDurations: PerformanceDiagnosticsSnapshot['durations'] = {};
+export function setPerformanceDiagnosticsEnabled(enabled: boolean): void {
+  if (enabled && !diagnosticsEnabled) diagnosticSceneGeneration += 1;
+  diagnosticsEnabled = enabled;
+}
+export function isPerformanceDiagnosticsEnabled(): boolean { return diagnosticsEnabled; }
+export function resetPerformanceDiagnostics(): void {
+  diagnosticCounters = {};
+  diagnosticGauges = {};
+  diagnosticDurations = {};
+}
+export function recordPerformanceDiagnostic(name: string, value = 1): void {
+  if (!diagnosticsEnabled) return;
+  if (!(name in diagnosticCounters) && Object.keys(diagnosticCounters).length >= MAX_DIAGNOSTIC_METRICS) return;
+  diagnosticCounters[name] = (diagnosticCounters[name] ?? 0) + value;
+}
+export function recordPerformanceDiagnosticDuration(name: string, durationMs: number): void {
+  if (!diagnosticsEnabled) return;
+  if (!(name in diagnosticDurations) && Object.keys(diagnosticDurations).length >= MAX_DIAGNOSTIC_METRICS) return;
+  const duration = Math.max(0, durationMs);
+  const current = diagnosticDurations[name] ?? { count: 0, totalMs: 0, maxMs: 0 };
+  current.count += 1;
+  current.totalMs += duration;
+  current.maxMs = Math.max(current.maxMs, duration);
+  diagnosticDurations[name] = current;
+}
+export function getPerformanceDiagnosticsSnapshot(): PerformanceDiagnosticsSnapshot {
+  return {
+    counters: { ...diagnosticCounters },
+    gauges: { ...diagnosticGauges },
+    durations: Object.fromEntries(Object.entries(diagnosticDurations).map(
+      ([name, value]) => [name, { ...value }],
+    )),
+  };
+}
+
+/** Manually begin a short baseline or comparison scene. No periodic work is started. */
+export function beginPerformanceDiagnosticScene(): void {
+  if (diagnosticsEnabled) diagnosticSceneGeneration += 1;
+  resetPerformanceDiagnostics();
+  setPerformanceDiagnosticsEnabled(true);
+  diagnosticBackend?.begin();
+}
+/** Stop collection and export a detached snapshot once, without logging or persistence. */
+export function endPerformanceDiagnosticScene(): PerformanceDiagnosticsSnapshot {
+  setPerformanceDiagnosticsEnabled(false);
+  const snapshot = getPerformanceDiagnosticsSnapshot();
+  if (diagnosticBackend) snapshot.native = diagnosticBackend.end();
+  return snapshot;
+}
+
+export function setPerformanceDiagnosticGauge(name: string, value: number): void {
+  if (!diagnosticsEnabled) return;
+  if (!(name in diagnosticGauges) && Object.keys(diagnosticGauges).length >= MAX_DIAGNOSTIC_METRICS) return;
+  diagnosticGauges[name] = value;
+}
+export function recordPerformanceDiagnosticMax(name: string, value: number): void {
+  if (!diagnosticsEnabled) return;
+  setPerformanceDiagnosticGauge(name, Math.max(diagnosticGauges[name] ?? 0, value));
+}
+
+const diagnosticCollectors = new Set<() => Promise<void>>();
+/** Renderer collectors only run when a developer explicitly exports a scene. */
+export function registerPerformanceDiagnosticCollector(collector: () => Promise<void>): () => void {
+  diagnosticCollectors.add(collector);
+  return () => { diagnosticCollectors.delete(collector); };
+}
+export async function collectAndEndPerformanceDiagnosticScene(): Promise<PerformanceDiagnosticsSnapshot> {
+  if (diagnosticsEnabled) {
+    // Keep collection enabled until WebView acknowledgements have been consumed.
+    const results = await Promise.allSettled([...diagnosticCollectors].map(collector => collector()));
+    for (const result of results) {
+      if (result.status === 'rejected') recordPerformanceDiagnostic('diagnostics.collectorFailures');
+    }
+  }
+  return endPerformanceDiagnosticScene();
+}
+// A deliberately manual developer-console entry point, including release JS contexts
+// when their debugger exposes globalThis. It starts no autonomous collection.
+(globalThis as typeof globalThis & {
+  __whipPerformanceDiagnostics?: {
+    begin: typeof beginPerformanceDiagnosticScene;
+    end: typeof collectAndEndPerformanceDiagnosticScene;
+  };
+}).__whipPerformanceDiagnostics = {
+  begin: beginPerformanceDiagnosticScene,
+  end: collectAndEndPerformanceDiagnosticScene,
+};

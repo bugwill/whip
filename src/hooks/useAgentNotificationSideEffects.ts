@@ -121,9 +121,11 @@ export function useAgentNotificationNavigation({
   stateRef,
   hosts,
   openPaneTerminal,
+  refreshRuntimeProjection,
 }: {
   notifications: ReturnType<typeof useAgentNotifications>;
   restoreComplete: boolean;
+  refreshRuntimeProjection?: () => void;
   /** Re-run resolution as host snapshots arrive after a notification tap. */
   state: LiveHostSessionsState;
   stateRef: SessionRuntimeStore['stateRef'];
@@ -143,6 +145,7 @@ export function useAgentNotificationNavigation({
     if (!target || notifications.wasHandled(target.notificationId)) {
       return false;
     }
+    refreshRuntimeProjection?.();
     const resolved = resolveAgentNotificationTarget(stateRef.current, target);
     if (!resolved) return false;
     hosts.closeEditor();

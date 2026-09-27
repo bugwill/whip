@@ -6,9 +6,9 @@ use std::time::Instant;
 
 use crate::herdr_api::{HerdrControlRequest, HerdrControlResult};
 use crate::herdr_events::{
-    HerdrEvent, HerdrEventError, close_herdr_event_subscription, start_on_runtime as start_events,
+    HerdrEvent, HerdrEventError, close_herdr_event_subscription, start_replacing_on_runtime as start_events,
 };
-use crate::host_state::{ApplyResult, HostStateSnapshot, SnapshotToken, now_ms};
+use crate::host_state::{ApplyResult, HostStateSnapshot, ResyncAction, SnapshotToken, now_ms};
 
 pub(super) fn reconcile_control_result(
     inner: &Arc<RuntimeInner>,
@@ -16,6 +16,14 @@ pub(super) fn reconcile_control_result(
     result: &HerdrControlResult,
     pane_close_terminal_id: Option<&str>,
 ) {
+    if !matches!(result, HerdrControlResult::SessionSnapshot { .. }) {
+        match request {
+            HerdrControlRequest::PaneSendInput { pane_id, .. }
+            | HerdrControlRequest::PaneSendText { pane_id, .. }
+            | HerdrControlRequest::PaneSendKeys { pane_id, .. } => inner.agents.wake_pane(pane_id),
+            _ => {}
+        }
+    }
     if matches!(result, HerdrControlResult::SessionSnapshot { .. }) {
         return;
     }
@@ -148,7 +156,13 @@ pub(super) fn event_subscription_needs_update(inner: &RuntimeInner) -> bool {
     state
         .event
         .as_ref()
-        .is_none_or(|event| event.pane_ids != pane_ids || event.retry_running)
+        .is_none_or(|event| !event_subscription_current(event, &pane_ids))
+}
+
+/// An acknowledged or still-starting subscription for the same pane set needs
+/// no restart; restarting an in-flight setup would only supersede it.
+fn event_subscription_current(event: &EventSubscriptionRuntime, pane_ids: &[String]) -> bool {
+    event.pane_ids == pane_ids && (event.active || event.starting) && !event.retry_running
 }
 
 pub(super) fn event_subscription_start_failed(inner: Arc<RuntimeInner>, reason: String) {
@@ -166,6 +180,7 @@ pub(super) fn event_subscription_start_failed(inner: Arc<RuntimeInner>, reason: 
 }
 
 pub(super) async fn refresh_host_state_inner(inner: Arc<RuntimeInner>) -> HostStateSnapshot {
+    crate::power_diagnostics::record(crate::power_diagnostics::Counter::Reconcile, 1);
     if let Err(error) = ensure_herdr_server(&inner).await {
         let (_, token) = begin_host_state_sync(&inner);
         inner
@@ -183,25 +198,63 @@ pub(super) async fn refresh_host_state_inner(inner: Arc<RuntimeInner>) -> HostSt
     inner.state.lock().host_state.projection()
 }
 
+/// Coalesces a burst of gap reports into one snapshot request.
+const RESYNC_COALESCE_DELAY: Duration = Duration::from_millis(250);
+/// Poll interval while another snapshot is already in flight.
+const RESYNC_ACTIVE_SYNC_POLL: Duration = Duration::from_millis(250);
+/// Bound on waiting for someone else's snapshot before superseding it.
+const RESYNC_ACTIVE_SYNC_MAX_WAIT: Duration = Duration::from_secs(15);
+
+/// Gap recovery runs on its own task rather than the monitoring worker, so a
+/// slow latency probe cannot delay it. One task per connection generation owns
+/// `resync_running`; it waits for an in-flight snapshot instead of issuing a
+/// duplicate, then re-checks for gaps reported while that snapshot ran.
 pub(super) fn schedule_state_resync(inner: Arc<RuntimeInner>, reason: String) {
-    let should_spawn = inner.state.lock().host_state.request_resync(reason);
+    let (should_spawn, generation) = {
+        let mut state = inner.state.lock();
+        (state.host_state.request_resync(reason), state.generation)
+    };
     if !should_spawn {
         return;
     }
-    if let Ok(runtime) = crate::runtime() {
-        runtime.spawn(async move {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            let should_refresh = {
+    let Ok(runtime) = crate::runtime() else {
+        inner.state.lock().host_state.cancel_resync();
+        return;
+    };
+    runtime.spawn(async move {
+        tokio::time::sleep(RESYNC_COALESCE_DELAY).await;
+        let mut waited = Duration::ZERO;
+        loop {
+            let action = {
                 let mut state = inner.state.lock();
-                state.connection == HostConnectionState::Connected
-                    && !state.explicit_disconnect
-                    && state.host_state.take_resync_request()
+                if state.generation != generation {
+                    // Connection replacement already reset the resync owner.
+                    return;
+                }
+                if state.connection != HostConnectionState::Connected || state.explicit_disconnect
+                {
+                    state.host_state.cancel_resync();
+                    return;
+                }
+                state
+                    .host_state
+                    .next_resync_action(waited >= RESYNC_ACTIVE_SYNC_MAX_WAIT)
             };
-            if should_refresh {
-                let _ = refresh_host_state_inner(inner).await;
+            match action {
+                ResyncAction::Done => return,
+                ResyncAction::WaitForActiveSync => {
+                    tokio::time::sleep(RESYNC_ACTIVE_SYNC_POLL).await;
+                    waited += RESYNC_ACTIVE_SYNC_POLL;
+                }
+                ResyncAction::Run => {
+                    waited = Duration::ZERO;
+                    let _ = refresh_host_state_inner(inner.clone()).await;
+                    // Gaps reported during this snapshot are coalesced too.
+                    tokio::time::sleep(RESYNC_COALESCE_DELAY).await;
+                }
             }
-        });
-    }
+        }
+    });
 }
 
 #[derive(Debug, Default)]
@@ -262,6 +315,9 @@ pub(crate) fn deliver_herdr_events(
         drop(state);
         result
     };
+    for pane_id in &result.changed_agent_pane_ids {
+        runtime.agents.wake_pane(pane_id);
+    }
     if result.changed {
         emit_host_state(&runtime);
     }
@@ -271,13 +327,25 @@ pub(crate) fn deliver_herdr_events(
     None
 }
 
+pub(super) fn mark_event_subscription_closed(state: &mut RuntimeState) {
+    if let Some(event) = state.event.as_mut() {
+        event.active = false;
+        event.starting = false;
+        // Invalidate a setup still awaiting start_events: its later successful
+        // return must not overwrite a close callback that already ran.
+        event.operation_epoch = event.operation_epoch.wrapping_add(1);
+        event.retry_running = false;
+    }
+}
+
 pub(crate) fn event_subscription_closed(client_key: &str, reason: String) -> bool {
     let runtime = runtimes().read().get(client_key).and_then(Weak::upgrade);
     let Some(runtime) = runtime else { return false };
-    let state = runtime.state.lock();
+    let mut state = runtime.state.lock();
     if state.event.is_none() || state.connection != HostConnectionState::Connected {
         return true;
     }
+    mark_event_subscription_closed(&mut state);
     drop(state);
     schedule_state_resync(
         runtime.clone(),
@@ -327,40 +395,62 @@ pub(crate) fn terminal_kitty_keyboard_report_all_changed(
     }
 }
 
+/// Outcome of a start that did not fail for the operation that requested it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EventStart {
+    /// The subscription is acknowledged and owned by the current operation.
+    Current,
+    /// A newer operation or a close callback replaced this start. The newer
+    /// owner is responsible for recovery, so this is neither success nor failure.
+    Superseded,
+}
+
+fn event_operation_current(state: &RuntimeState, epoch: u64, operation_epoch: u64) -> bool {
+    state.epoch == epoch
+        && state
+            .event
+            .as_ref()
+            .is_some_and(|event| event.operation_epoch == operation_epoch)
+}
+
 pub(super) async fn start_desired_events(
     inner: Arc<RuntimeInner>,
     epoch: u64,
-) -> Result<(), HerdrEventError> {
+) -> Result<EventStart, HerdrEventError> {
     let (protocol, pane_ids, operation_epoch) = {
-        let state = inner.state.lock();
-        let event = state.event.as_ref().ok_or_else(|| {
+        let mut state = inner.state.lock();
+        let protocol = state.protocol;
+        let event = state.event.as_mut().ok_or_else(|| {
             HerdrEventError::SubscriptionUnavailable(
                 "event subscription is not requested".to_owned(),
             )
         })?;
-        (
-            state.protocol.ok_or_else(|| {
-                HerdrEventError::UnsupportedProtocol("Herdr protocol is unknown".to_owned())
-            })?,
-            event.pane_ids.clone(),
-            event.operation_epoch,
-        )
+        let protocol = protocol.ok_or_else(|| {
+            HerdrEventError::UnsupportedProtocol("Herdr protocol is unknown".to_owned())
+        })?;
+        event.active = false;
+        event.starting = true;
+        (protocol, event.pane_ids.clone(), event.operation_epoch)
     };
-    start_events(inner.herdr.clone(), protocol, pane_ids).await?;
-    let state = inner.state.lock();
-    if state.epoch != epoch
-        || state
-            .event
-            .as_ref()
-            .is_none_or(|event| event.operation_epoch != operation_epoch)
-    {
+    let started = start_events(inner.herdr.clone(), protocol, pane_ids).await;
+    let mut state = inner.state.lock();
+    if !event_operation_current(&state, epoch, operation_epoch) {
         drop(state);
-        close_herdr_event_subscription(inner.id.clone());
-        return Err(HerdrEventError::SubscriptionUnavailable(
-            "stale event subscription completed after replacement".to_owned(),
-        ));
+        // Only this start's own ID is closed; a replacement keeps its stream.
+        if let Ok(subscription_handle) = started {
+            subscription_handle.close_if_owned();
+        }
+        return Ok(EventStart::Superseded);
     }
-    Ok(())
+    let event = state.event.as_mut().expect("current operation has an event");
+    event.starting = false;
+    match started {
+        Ok(_) => {
+            event.active = true;
+            Ok(EventStart::Current)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) async fn start_or_update_state_events(
@@ -369,33 +459,36 @@ pub(super) async fn start_or_update_state_events(
     ensure_herdr_server(&inner)
         .await
         .map_err(|error| HerdrEventError::SubscriptionUnavailable(error.to_string()))?;
-    let (epoch, changed) = {
-        let mut state = inner.state.lock();
-        let pane_ids = state.host_state.pane_ids();
-        if state
-            .event
-            .as_ref()
-            .is_some_and(|event| event.pane_ids == pane_ids && !event.retry_running)
+    let (epoch, changed) =
         {
-            (state.epoch, false)
-        } else {
-            let operation_epoch = state
+            let mut state = inner.state.lock();
+            let pane_ids = state.host_state.pane_ids();
+            if state
                 .event
                 .as_ref()
-                .map_or(1, |event| event.operation_epoch.wrapping_add(1));
-            state.event = Some(EventSubscriptionRuntime {
-                pane_ids,
-                operation_epoch,
-                retry_running: false,
-            });
-            (state.epoch, true)
-        }
-    };
+                .is_some_and(|event| event_subscription_current(event, &pane_ids))
+            {
+                (state.epoch, false)
+            } else {
+                let operation_epoch = state
+                    .event
+                    .as_ref()
+                    .map_or(1, |event| event.operation_epoch.wrapping_add(1));
+                state.event = Some(EventSubscriptionRuntime {
+                    active: false,
+                    starting: false,
+                    pane_ids,
+                    operation_epoch,
+                    retry_running: false,
+                });
+                (state.epoch, true)
+            }
+        };
     if !changed {
         return Ok(());
     }
     close_herdr_event_subscription(inner.id.clone());
-    start_desired_events(inner, epoch).await
+    start_desired_events(inner, epoch).await.map(|_| ())
 }
 
 pub(super) fn schedule_event_retry(inner: Arc<RuntimeInner>, reason: String) {
@@ -409,6 +502,8 @@ pub(super) fn schedule_event_retry(inner: Arc<RuntimeInner>, reason: String) {
         if event.retry_running || explicit_disconnect {
             return;
         }
+        event.active = false;
+        event.starting = false;
         event.retry_running = true;
         let operation_epoch = event.operation_epoch;
         drop(state);
@@ -435,7 +530,9 @@ pub(super) fn schedule_event_retry(inner: Arc<RuntimeInner>, reason: String) {
                 }
                 close_herdr_event_subscription(inner.id.clone());
                 match start_desired_events(inner.clone(), epoch).await {
-                    Ok(()) => {
+                    // The replacing operation owns recovery and its own flags.
+                    Ok(EventStart::Superseded) => return,
+                    Ok(EventStart::Current) => {
                         let generation = {
                             let mut state = inner.state.lock();
                             if let Some(event) = state.event.as_mut() {
@@ -517,13 +614,15 @@ impl HostRuntime {
                         .as_ref()
                         .map_or(1, |event| event.operation_epoch.wrapping_add(1));
                     state.event = Some(EventSubscriptionRuntime {
+                        active: false,
+                        starting: false,
                         pane_ids,
                         operation_epoch,
                         retry_running: false,
                     });
                     state.epoch
                 };
-                start_desired_events(inner, epoch).await
+                start_desired_events(inner, epoch).await.map(|_| ())
             })
             .await
             .map_err(|error| {

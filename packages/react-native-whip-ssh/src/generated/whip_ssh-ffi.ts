@@ -425,6 +425,9 @@ interface NativeModuleInterface {
     publicKey: Uint8Array,
     deviceName: Uint8Array,
   ): bigint;
+  ubrn_uniffi_whip_ssh_fn_func_power_diagnostics_snapshot(
+    uniffi_out_err: UniffiRustCallStatus,
+  ): Uint8Array;
   ubrn_uniffi_whip_ssh_fn_func_prepare_herdr_terminal_bridge(
     clientKey: Uint8Array,
     socketPath: Uint8Array,
@@ -483,6 +486,11 @@ interface NativeModuleInterface {
   ): void;
   ubrn_uniffi_whip_ssh_fn_func_set_known_hosts(
     contents: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): void;
+  ubrn_uniffi_whip_ssh_fn_func_set_power_diagnostics_enabled(
+    enabled: number,
+    reset: number,
     uniffi_out_err: UniffiRustCallStatus,
   ): void;
   ubrn_uniffi_whip_ssh_fn_func_set_ssh_agent_forwarding(
@@ -1168,6 +1176,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_whip_ssh_checksum_func_open_ssh_local_forward(): number;
   ubrn_uniffi_whip_ssh_checksum_func_open_ssh_unix_socket_channel(): number;
   ubrn_uniffi_whip_ssh_checksum_func_pair_host(): number;
+  ubrn_uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot(): number;
   ubrn_uniffi_whip_ssh_checksum_func_prepare_herdr_terminal_bridge(): number;
   ubrn_uniffi_whip_ssh_checksum_func_remove_ssh_sftp_directory(): number;
   ubrn_uniffi_whip_ssh_checksum_func_remove_ssh_sftp_file(): number;
@@ -1180,6 +1189,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_whip_ssh_checksum_func_set_herdr_terminal_event_sink(): number;
   ubrn_uniffi_whip_ssh_checksum_func_set_host_runtime_event_sink(): number;
   ubrn_uniffi_whip_ssh_checksum_func_set_known_hosts(): number;
+  ubrn_uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled(): number;
   ubrn_uniffi_whip_ssh_checksum_func_set_ssh_agent_forwarding(): number;
   ubrn_uniffi_whip_ssh_checksum_func_set_trusted_host_keys(): number;
   ubrn_uniffi_whip_ssh_checksum_func_shutdown(): number;

@@ -1,0 +1,45 @@
+import java.security.MessageDigest
+
+// Stable paths are essential for Gradle/CMake incremental builds. This init
+// script also applies to included plugin builds, which produce JARs.
+def outputRoot = System.getenv('WHIP_BUILD_ROOT')
+if (!outputRoot) throw new GradleException('WHIP_BUILD_ROOT is required')
+def redirectedDirectory = { project ->
+    def digest = MessageDigest.getInstance('SHA-256')
+        .digest(project.projectDir.canonicalPath.getBytes('UTF-8'))
+        .encodeHex().toString().substring(0, 16)
+    new File(outputRoot, "gradle/${project.name}-${digest}")
+}
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(redirectedDirectory(project))
+    // App autolinking reads this while app/build.gradle is being evaluated,
+    // so the copy must precede project evaluation, not projectsEvaluated.
+    if (project.parent == null) {
+        def source = new File(project.projectDir, 'build/generated/autolinking/autolinking.json')
+        if (source.isFile()) {
+            def destination = new File(project.layout.buildDirectory.get().asFile,
+                'generated/autolinking/autolinking.json')
+            destination.parentFile.mkdirs()
+            if (!destination.isFile() || !Arrays.equals(source.bytes, destination.bytes)) {
+                destination.bytes = source.bytes
+            }
+        }
+    }
+}
+gradle.projectsEvaluated {
+    allprojects { project ->
+        if (project.layout.buildDirectory.get().asFile.canonicalPath != redirectedDirectory(project).canonicalPath) {
+            throw new GradleException("Build directory escaped WHIP_BUILD_ROOT: ${project.path}")
+        }
+    }
+    // RN's settings plugin writes this JSON to a hard-coded source path.
+    def source = new File(rootProject.projectDir, 'build/generated/autolinking/autolinking.json')
+    if (source.isFile()) {
+        def destination = new File(rootProject.layout.buildDirectory.get().asFile,
+            'generated/autolinking/autolinking.json')
+        destination.parentFile.mkdirs()
+        if (!destination.isFile() || !Arrays.equals(source.bytes, destination.bytes)) {
+            destination.bytes = source.bytes
+        }
+    }
+}

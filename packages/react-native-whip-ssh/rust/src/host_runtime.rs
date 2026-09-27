@@ -384,6 +384,10 @@ struct SshShellRuntime {
 
 #[derive(Clone, Debug)]
 struct EventSubscriptionRuntime {
+    /// Herdr acknowledged the subscription for the current operation.
+    active: bool,
+    /// A start for the current operation is awaiting its acknowledgement.
+    starting: bool,
     pane_ids: Vec<String>,
     operation_epoch: u64,
     retry_running: bool,

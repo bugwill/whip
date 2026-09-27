@@ -7,6 +7,7 @@ import type {
 } from 'react-native-whip-ssh';
 
 import type { LiveHostSessionsState } from '../liveHostSessions';
+import type { RuntimeProjectionPriority } from '../lib/runtimeProjectionScheduler';
 import type { HerdrClient } from '../services/HerdrClient';
 import type { ConnectionProfile, HostProfile } from '../types';
 
@@ -29,6 +30,7 @@ export interface SessionRuntimeStore {
   appCoreRef: MutableRefObject<NativeAppCore>;
   sessionProfilesRef: MutableRefObject<Map<string, HostProfile>>;
   commitAppCore: (view: AppCoreProjection) => void;
+  requestRuntimeProjection?: (view?: AppCoreProjection, priority?: RuntimeProjectionPriority) => void;
 }
 
 export interface ConnectOptions {

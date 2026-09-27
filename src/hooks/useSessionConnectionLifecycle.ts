@@ -8,7 +8,8 @@ import {
   useState,
   type MutableRefObject,
 } from 'react';
-import { Platform } from 'react-native';
+import { recordPerformanceDiagnostic } from '../services/performanceTrace';
+import { AppState, Platform } from 'react-native';
 import type { TFunction } from 'i18next';
 import type {
   HostRuntimeState,
@@ -38,6 +39,7 @@ import {
 } from '../lib/connectionErrors';
 import { hostDisplayName } from '../lib/hostProfiles';
 import { isHerdrProtocolMismatch } from '../lib/herdrProtocol';
+import type { RuntimeProjectionPriority } from '../lib/runtimeProjectionScheduler';
 import {
   isLiveHostSshConnected,
   runtimeStateInvalidatesLiveHostLatency,
@@ -88,6 +90,7 @@ export function useSessionConnectionLifecycle({
   appCoreRef,
   sessionProfilesRef,
   commitAppCore,
+  requestRuntimeProjection,
   restoredTerminalHostIdsRef,
   alertsEnabled,
   monitoringPaused,
@@ -138,6 +141,15 @@ export function useSessionConnectionLifecycle({
   alertsEnabledRef.current = alertsEnabled;
   monitoringPausedRef.current = monitoringPaused;
 
+  const requestProjection = useCallback((priority: RuntimeProjectionPriority = 'urgent') => {
+    if (requestRuntimeProjection) {
+      requestRuntimeProjection(undefined, priority);
+      return;
+    }
+    const commit = () => commitAppCore(appCoreRef.current.view());
+    if (priority === 'transition') startTransition(commit);
+    else commit();
+  }, [appCoreRef, commitAppCore, requestRuntimeProjection]);
   const getState = useCallback(() => stateRef.current, [stateRef]);
   const getClient = useCallback(
     (sessionId: string) => runtimesRef.current.get(sessionId)?.client,
@@ -202,7 +214,7 @@ export function useSessionConnectionLifecycle({
         destructions.push(destroyRuntime(sessionId, runtime));
       }
       if (session) {
-        view = appCoreRef.current.detachRuntime(sessionId);
+        appCoreRef.current.detachRuntime(sessionId);
         view = appCoreRef.current.setPlaceholderConnection(
           sessionId,
           'disconnected',
@@ -247,7 +259,7 @@ export function useSessionConnectionLifecycle({
           'control-reconnect-protocol-mismatch',
           { sessionId, error: networkErrorMessage(cause) },
         );
-        commitAppCore(appCoreRef.current.view());
+        requestProjection();
         return;
       }
       recordNetworkDiagnostic('warn', 'control-recovery-requested', {
@@ -262,7 +274,7 @@ export function useSessionConnectionLifecycle({
         });
       });
     },
-    [appCoreRef, commitAppCore, hosts, runtimesRef, stateRef],
+    [requestProjection, hosts, runtimesRef, stateRef],
   );
 
   const createRuntime = useCallback(
@@ -279,15 +291,14 @@ export function useSessionConnectionLifecycle({
         transitions: RuntimeAgentStatusTransition[] = [],
       ) => {
         if (runtimesRef.current.get(sessionId) !== runtime) return;
+        recordPerformanceDiagnostic(`runtime.hostState.${AppState.currentState === 'active' ? 'foreground' : 'background'}`);
         const snapshot = runtime.client.snapshotFromHostState(hostState);
         handleAgentStateChange({
           sessionId,
           snapshot,
           transitions,
         });
-        startTransition(() => {
-          commitAppCore(appCoreRef.current.view());
-        });
+        requestProjection('transition');
         if (
           hostState.freshness === 'fresh' ||
           hostState.freshness === 'unavailable'
@@ -329,7 +340,7 @@ export function useSessionConnectionLifecycle({
             || event.state === 'connecting'
             || event.state === 'failed'
           ) {
-            commitAppCore(appCoreRef.current.view());
+            requestProjection();
           }
           return;
         }
@@ -392,15 +403,14 @@ export function useSessionConnectionLifecycle({
           return;
         }
         if (event.type === 'fatal-error') {
-          commitAppCore(appCoreRef.current.view());
+          requestProjection();
         }
       });
       runtime.acceptHostState = acceptHostState;
       return runtime;
     },
     [
-      appCoreRef,
-      commitAppCore,
+      requestProjection,
       clearLatency,
       handleAgentStateChange,
       handleLatencyMeasurement,

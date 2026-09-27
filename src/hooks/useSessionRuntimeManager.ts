@@ -1,4 +1,5 @@
 import {
+  startTransition,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -10,6 +11,7 @@ import { AppState, Platform } from 'react-native';
 import type { TFunction } from 'i18next';
 import {
   NativeAppCore,
+  type AppCoreProjection,
   type HerdProjection,
   type HerdSessionMetadata,
 } from 'react-native-whip-ssh';
@@ -43,6 +45,13 @@ import {
   projectAppCoreSessions,
   type LiveHostSessionsState,
 } from '../liveHostSessions';
+import '../services/powerDiagnostics';
+import {
+  createRuntimeProjectionScheduler,
+  publishRuntimeProjection,
+  type RuntimeProjectionPriority,
+} from '../lib/runtimeProjectionScheduler';
+import { isPerformanceDiagnosticsEnabled, recordPerformanceDiagnostic, recordPerformanceDiagnosticDuration } from '../services/performanceTrace';
 import type { TerminalRenderTarget } from '../lib/terminalRenderer';
 import type { TabLaunchIntent } from '../lib/herdrCreationFlows';
 import type { HerdrClient } from '../services/HerdrClient';
@@ -173,6 +182,7 @@ export function useSessionRuntimeManager({
   const [resumeAllowed, setResumeAllowed] = useState(Platform.OS !== 'android');
   const [resumeRetryTick, setResumeRetryTick] = useState(0);
   const monitoringPaused = deviceLocked || !resumeAllowed;
+  // Only commits update this ref: a stale render must never overwrite a synchronous refresh.
   const stateRef = useRef(state);
   const runtimesRef = useRef(new Map<string, LiveRuntime>());
   const appCoreRef = useRef(new NativeAppCore());
@@ -182,9 +192,10 @@ export function useSessionRuntimeManager({
   const monitoringPausedRef = useRef(monitoringPaused);
   const resumeInFlightRef = useRef(false);
   monitoringPausedRef.current = monitoringPaused;
-  stateRef.current = state;
+
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextState => {
+      projectionSchedulerRef.current?.setActive(nextState === 'active');
       setAppActive(nextState === 'active');
     });
     return () => subscription.remove();
@@ -212,9 +223,14 @@ export function useSessionRuntimeManager({
   for (const host of hosts.getHosts()) {
     sessionProfilesRef.current.set(host.id, host);
   }
+  const projectionSchedulerRef = useRef<ReturnType<typeof createRuntimeProjectionScheduler<AppCoreProjection>> | null>(null);
   const projectTerminalAppCore = terminals.projectAppCore;
   const commitAppCore = useCallback<SessionRuntimeStore['commitAppCore']>(
     view => {
+      projectionSchedulerRef.current?.committed();
+      const diagnosticStarted = isPerformanceDiagnosticsEnabled() ? performance.now() : null;
+      const phase = AppState.currentState === 'active' ? 'foreground' : 'background';
+      recordPerformanceDiagnostic(`runtime.projection.${phase}`);
       const hostSnapshots = captureAppCoreHostSnapshots(
         view,
         (sessionId, hostState) => {
@@ -228,16 +244,53 @@ export function useSessionRuntimeManager({
         },
       );
       projectTerminalAppCore(view);
-      setState(current => projectAppCoreSessions(
+      const next = projectAppCoreSessions(
         view,
         sessionProfilesRef.current,
-        current,
+        stateRef.current,
         hostSnapshots,
-      ));
+      );
+      publishRuntimeProjection(stateRef, next, setState);
+      if (diagnosticStarted !== null) recordPerformanceDiagnosticDuration(
+        `runtime.projection.${phase}`, performance.now() - diagnosticStarted,
+      );
     },
     [projectTerminalAppCore],
   );
-  terminals.bindAppCore(appCoreRef.current, commitAppCore);
+  const projectRuntime = useCallback((existingView?: AppCoreProjection) => {
+    if (existingView) { commitAppCore(existingView); return; }
+    const phase = AppState.currentState === 'active' ? 'foreground' : 'background';
+    const started = isPerformanceDiagnosticsEnabled() ? performance.now() : null;
+    recordPerformanceDiagnostic(`runtime.view.${phase}`);
+    const view = appCoreRef.current.view();
+    if (started !== null) recordPerformanceDiagnosticDuration(
+      `runtime.view.${phase}`, performance.now() - started,
+    );
+    commitAppCore(view);
+  }, [commitAppCore]);
+  const projectRuntimeRef = useRef(projectRuntime);
+  projectRuntimeRef.current = projectRuntime;
+  if (!projectionSchedulerRef.current) {
+    projectionSchedulerRef.current = createRuntimeProjectionScheduler<AppCoreProjection>(
+      (view, priority) => {
+        // stateRef is still published synchronously inside the commit; only the
+        // React render of frequent host-state updates yields to input.
+        if (priority === 'transition') startTransition(() => projectRuntimeRef.current(view));
+        else projectRuntimeRef.current(view);
+      },
+      AppState.currentState === 'active',
+    );
+  }
+  const requestRuntimeProjection = useCallback((
+    view?: AppCoreProjection,
+    priority?: RuntimeProjectionPriority,
+  ) => {
+    projectionSchedulerRef.current!.request(view, priority);
+  }, []);
+  const refreshRuntimeProjection = useCallback(() => {
+    projectionSchedulerRef.current!.setActive(AppState.currentState === 'active');
+  }, []);
+  terminals.bindAppCore(appCoreRef.current, commitAppCore, requestRuntimeProjection);
   const store: SessionRuntimeStore = {
     state,
     stateRef,
@@ -245,6 +298,7 @@ export function useSessionRuntimeManager({
     appCoreRef,
     sessionProfilesRef,
     commitAppCore,
+    requestRuntimeProjection,
   };
 
   const handleAgentStateChange = useAgentNotificationSideEffects({
@@ -362,9 +416,7 @@ export function useSessionRuntimeManager({
     }
   });
   useEffect(() => {
-    handleDeviceLockLifecycle().catch(lockLifecycleError => {
-      hosts.setError(String(lockLifecycleError));
-    });
+    handleDeviceLockLifecycle().catch(reportUnlockResumeError);
   }, [
     appActive,
     monitoringPaused,
@@ -406,6 +458,7 @@ export function useSessionRuntimeManager({
     stateRef,
     hosts,
     openPaneTerminal: terminal.openPaneTerminal,
+    refreshRuntimeProjection,
   });
 
   const activeSession = getActiveLiveHostSession(state);

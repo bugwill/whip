@@ -989,6 +989,13 @@ extern "C" {
         /*handle*/ uint64_t sink, 
         RustCallStatus *uniffi_out_err
     );
+    RustBuffer uniffi_whip_ssh_fn_func_power_diagnostics_snapshot(RustCallStatus *uniffi_out_err
+    );
+    void uniffi_whip_ssh_fn_func_set_power_diagnostics_enabled(
+        int8_t enabled, 
+        int8_t reset, 
+        RustCallStatus *uniffi_out_err
+    );
     int8_t uniffi_whip_ssh_fn_func_cancel_ssh_sftp_download(
         RustBuffer key, 
         RustCallStatus *uniffi_out_err
@@ -1429,6 +1436,10 @@ extern "C" {
     uint16_t uniffi_whip_ssh_checksum_func_create_host_runtime(
     );
     uint16_t uniffi_whip_ssh_checksum_func_set_host_runtime_event_sink(
+    );
+    uint16_t uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot(
+    );
+    uint16_t uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled(
     );
     uint16_t uniffi_whip_ssh_checksum_func_cancel_ssh_sftp_download(
     );
@@ -7192,6 +7203,22 @@ NativeWhipSsh::NativeWhipSsh(
             return this->cpp_uniffi_whip_ssh_fn_func_set_host_runtime_event_sink(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_whip_ssh_fn_func_power_diagnostics_snapshot"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_whip_ssh_fn_func_power_diagnostics_snapshot"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_whip_ssh_fn_func_power_diagnostics_snapshot(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_whip_ssh_fn_func_set_power_diagnostics_enabled"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_whip_ssh_fn_func_set_power_diagnostics_enabled"),
+        2,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_whip_ssh_fn_func_set_power_diagnostics_enabled(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_whip_ssh_fn_func_cancel_ssh_sftp_download"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_whip_ssh_fn_func_cancel_ssh_sftp_download"),
@@ -8086,6 +8113,22 @@ NativeWhipSsh::NativeWhipSsh(
         0,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_whip_ssh_checksum_func_set_host_runtime_event_sink(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_whip_ssh_checksum_func_cancel_ssh_sftp_download"] = jsi::Function::createFromHostFunction(
@@ -11050,6 +11093,25 @@ jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_fn_func_set_host_runtime_event_sin
         
         return jsi::Value::undefined();
 }
+jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_fn_func_power_diagnostics_snapshot(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        RustCallStatus status = uniffi::whip_ssh::Bridging<RustCallStatus>::rustSuccess(rt);
+        auto value = uniffi_whip_ssh_fn_func_power_diagnostics_snapshot(&status
+        );
+        uniffi::whip_ssh::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
+
+        
+        return uniffi::whip_ssh::Bridging<RustBuffer>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_fn_func_set_power_diagnostics_enabled(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        RustCallStatus status = uniffi::whip_ssh::Bridging<RustCallStatus>::rustSuccess(rt);
+        uniffi_whip_ssh_fn_func_set_power_diagnostics_enabled(uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[0]), uniffi_jsi::Bridging<int8_t>::fromJs(rt, callInvoker, args[1]), 
+            &status
+        );
+        uniffi::whip_ssh::Bridging<RustCallStatus>::copyIntoJs(rt, callInvoker, status, args[count - 1]);
+
+        
+        return jsi::Value::undefined();
+}
 jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_fn_func_cancel_ssh_sftp_download(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         RustCallStatus status = uniffi::whip_ssh::Bridging<RustCallStatus>::rustSuccess(rt);
         auto value = uniffi_whip_ssh_fn_func_cancel_ssh_sftp_download(uniffi::whip_ssh::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), 
@@ -11923,6 +11985,20 @@ jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_checksum_func_create_host_runtime(
 }
 jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_checksum_func_set_host_runtime_event_sink(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_whip_ssh_checksum_func_set_host_runtime_event_sink(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeWhipSsh::cpp_uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled(
         );
 
         

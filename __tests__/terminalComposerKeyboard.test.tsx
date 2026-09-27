@@ -374,8 +374,8 @@ test('model and Fast stay fixed while Home and TUI mouse move to the scrolling r
   const rail = renderer.root.findByProps({ testID: 'terminal-scrollable-controls' });
   const fixedButtons = () => fixed.findAll(node => String(node.type) === 'Button').map(node => node.props.accessibilityLabel);
   const original = fixedButtons();
-  expect(original).toHaveLength(8);
-  expect(original).toEqual(expect.arrayContaining(['terminal.switchModel', 'terminal.toggleFastMode', 'terminal.showCodexStatus']));
+  expect(original).toHaveLength(9);
+  expect(original).toEqual(expect.arrayContaining(['terminal.switchModel', 'terminal.toggleFastMode', 'terminal.showCodexStatus', 'terminal.interruptProgram']));
   expect(original).not.toContain('terminal.enableForcedMouseInput');
   expect(fixed.findAll(node => node.props.accessibilityLabel === '按住并向上下左右滑动以移动光标').length).toBeGreaterThan(0);
   expect(rail.props.horizontal).toBe(true);
@@ -387,6 +387,24 @@ test('model and Fast stay fixed while Home and TUI mouse move to the scrolling r
   expect(fixedButtons()).toEqual(original);
   expect(rail.findAll(node => String(node.type) === 'Button' && node.props.accessibilityLabel === 'terminal.enableForcedMouseInput')).toHaveLength(1);
   expect(rail.findAll(node => String(node.type) === 'Text' && node.props.children === 'HOME')).toHaveLength(1);
+});
+
+test.each([
+  [false, '\u0003'],
+  [true, '\u001b[99;5:1u'],
+])('interrupt sends Ctrl+C directly with kitty report-all=%s', async (kittyKeyboardReportAll, expected) => {
+  const writeToTerminal = jest.fn(async () => undefined);
+  const connectedTarget = { ...target, client: { terminal: { writeToTerminal } } } as unknown as Props['targets'][number];
+  mount({ activeTarget: connectedTarget, targets: [connectedTarget] });
+  await press('altModifier');
+  await press('shiftModifier');
+  await act(async () => { ui('TerminalRendererHost').props.onProtocolStateChange(connectedTarget, { kittyKeyboardReportAll }); });
+  terminalHandle.input.mockClear();
+  await press('interruptProgram');
+  expect(writeToTerminal).toHaveBeenCalledTimes(1);
+  expect(writeToTerminal).toHaveBeenCalledWith('terminal-1', expected);
+  expect(terminalHandle.input).not.toHaveBeenCalled();
+  expect(props.onControlUse).toHaveBeenCalledWith('ctrl-c');
 });
 
 test.each([

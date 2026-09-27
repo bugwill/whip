@@ -620,6 +620,7 @@ export const es = {
   'terminal.historyEmpty': 'El texto enviado desde el compositor o pegado en una terminal aparecerá aquí.',
   'terminal.closeHistory': 'Cerrar historial de entrada',
   'terminal.useHistoryEntry': 'Pegar del historial: {{text}}',
+  'terminal.interruptProgram': 'Interrumpir programa (Ctrl+C)',
   'terminal.escapeKey': 'Tecla de escape',
   'terminal.tabKey': 'Tecla de tabulación',
   'terminal.enterKey': 'Tecla Enter',

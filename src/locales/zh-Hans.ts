@@ -620,6 +620,7 @@ export const zhHans = {
   'terminal.historyEmpty': '从输入编辑器发送或粘贴到终端的文本会显示在这里。',
   'terminal.closeHistory': '关闭输入历史记录',
   'terminal.useHistoryEntry': '从历史记录中粘贴：{{text}}',
+  'terminal.interruptProgram': '中断程序（Ctrl+C）',
   'terminal.escapeKey': '退出键',
   'terminal.tabKey': 'Tab 键',
   'terminal.enterKey': '输入键',

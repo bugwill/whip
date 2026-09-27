@@ -226,6 +226,8 @@ test('retries a notification target after the host snapshot arrives', () => {
     activeSessionId: 'host-1',
   };
 
+  const stateRef = { current: emptyState };
+  const refreshRuntimeProjection = jest.fn();
   function Harness() {
     const [state, setState] = useState(emptyState);
     updateState = setState;
@@ -233,7 +235,8 @@ test('retries a notification target after the host snapshot arrives', () => {
       notifications,
       restoreComplete: true,
       state,
-      stateRef: { current: state },
+      stateRef,
+      refreshRuntimeProjection,
       hosts,
       openPaneTerminal,
     });
@@ -243,7 +246,31 @@ test('retries a notification target after the host snapshot arrives', () => {
   act(() => { create(<Harness />); });
   expect(openPaneTerminal).not.toHaveBeenCalled();
 
-  act(() => updateState(sessionState));
+  refreshRuntimeProjection.mockImplementation(() => { stateRef.current = sessionState; });
+  // Trigger navigation while React still has the old empty projection.
+  act(() => updateState({ ...emptyState }));
   expect(openPaneTerminal).toHaveBeenCalledWith('host-1', pane, true);
   expect(notifications.consume).toHaveBeenCalledWith('notification-1');
+});
+
+test('background intermediate blocked and done transitions both produce alerts', () => {
+  const onChange = renderAgentSideEffectsHarness();
+  const base = {
+    server: { running: true }, focused_workspace_id: null, focused_tab_id: null,
+    focused_pane_id: null, workspaces: [], tabs: [], layouts: [],
+  };
+  const sequence = ['blocked', 'working', 'done'] as const;
+  let previous: 'working' | 'blocked' | 'done' = 'working';
+  act(() => {
+    sequence.forEach((current, index) => {
+      const agent = { ...pane, agent_status: current, revision: index + 3 };
+      onChange({
+        sessionId: 'host-1', snapshot: { ...base, agents: [agent], panes: [agent] },
+        transitions: [{ paneId: pane.pane_id, previous, current, revision: index + 3 }],
+      });
+      previous = current;
+    });
+  });
+  expect(jest.mocked(alertAgent).mock.calls.map(call => call[0].agent_status)).toEqual(['blocked', 'done']);
+  expect(dismissAgentAlertsForPane).toHaveBeenCalledTimes(1);
 });

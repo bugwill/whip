@@ -294,6 +294,15 @@ const TERMINAL_CONTROL_LABEL_STYLE = {
   textAlignVertical: 'center',
 } as const;
 
+function InterruptProgramIcon({ color }: { color: string }) {
+  return (
+    <Svg width={TERMINAL_ICON_SIZE} height={TERMINAL_ICON_SIZE} viewBox="0 0 24 24" fill="none">
+      <Path d="M8 3h8l5 5v8l-5 5H8l-5-5V8Z" stroke={color} strokeWidth={1.8} strokeLinejoin="round" />
+      <Path d="M9 9h6v6H9Z" fill={color} />
+    </Svg>
+  );
+}
+
 function ModelSwitchIcon({ color }: { color: string }) {
   return (
     <Svg width={TERMINAL_ICON_SIZE} height={TERMINAL_ICON_SIZE} viewBox="0 0 24 24" fill="none">
@@ -1747,6 +1756,31 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
               ) : (
                 <Eraser size={TERMINAL_ICON_SIZE} color={appColors.text} strokeWidth={2} />
               )}
+            </View>
+          </TerminalControlButton>
+        );
+      }
+      if (control === 'ctrl-c') {
+        return (
+          <TerminalControlButton
+            key={control}
+            accessibilityLabel={t('terminal.interruptProgram')}
+            accessibilityState={{ disabled: status !== 'connected' }}
+            className={TERMINAL_ICON_CONTROL_CLASS}
+            disabled={status !== 'connected'}
+            variant="secondary"
+            onPress={() => {
+              onControlUse(control);
+              // Encode an explicit Ctrl+C independently of sticky modifiers,
+              // and bypass renderer.input so it cannot apply them a second time.
+              reportBackgroundFailure(
+                writeInput(applyTerminalModifiers('c', 'armed', 'off', 'off', protocolState.kittyKeyboardReportAll)),
+                TERMINAL_INPUT_CONTEXT,
+              );
+            }}
+          >
+            <View className={TERMINAL_ICON_BOX_CLASS}>
+              <InterruptProgramIcon color={appColors.text} />
             </View>
           </TerminalControlButton>
         );

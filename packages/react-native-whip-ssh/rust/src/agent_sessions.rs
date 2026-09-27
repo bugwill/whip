@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
+use tokio::sync::Notify;
 
 use chrono::NaiveDateTime;
 use parking_lot::{Mutex, RwLock};
@@ -17,6 +18,18 @@ use crate::herdr_connection::{ConnectionExecStream, HerdrConnection};
 
 const RETRY_DELAY: Duration = Duration::from_millis(1_500);
 const OPENCODE_POLL_DELAY: Duration = Duration::from_millis(1_200);
+fn opencode_poll_delay(is_eink: bool, idle_polls: u32) -> Duration {
+    if !is_eink {
+        return OPENCODE_POLL_DELAY;
+    }
+    Duration::from_millis(match idle_polls {
+        0 => 1200,
+        1 => 2400,
+        2 => 5000,
+        _ => 10000,
+    })
+}
+
 const CODEX_CHECKPOINT_BYTES: u64 = 256 * 1024;
 const OPENCODE_CHECKPOINT_EVENTS: u64 = 64;
 static NEXT_STREAM_CONTEXT: AtomicU64 = AtomicU64::new(1);
@@ -178,6 +191,8 @@ struct SessionRuntime {
     paused: bool,
     closed: bool,
     explicit_restart_pending: bool,
+    idle_polls: u32,
+    poll_wakeup: Arc<Notify>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -289,6 +304,7 @@ struct ManagerState {
     // - authoritative HostState replacement invalidates or replaces bindings;
     // - release closes resources, while only explicit bind/start reopens them.
     connected: bool,
+    is_eink: bool,
     sessions: HashMap<String, SessionRuntime>,
     terminal_bindings: HashMap<String, TerminalBinding>,
     checkpoints: HashMap<String, PendingCheckpoint>,
@@ -340,6 +356,7 @@ impl AgentSessionManager {
                 connection,
                 state: Mutex::new(ManagerState {
                     connected: false,
+                    is_eink: false,
                     sessions: HashMap::new(),
                     terminal_bindings: HashMap::new(),
                     checkpoints: HashMap::new(),
@@ -349,6 +366,36 @@ impl AgentSessionManager {
                     retention_revision: None,
                 }),
             }),
+        }
+    }
+
+    pub(crate) fn set_eink(&self, is_eink: bool) {
+        let mut state = self.inner.state.lock();
+        if state.is_eink == is_eink {
+            return;
+        }
+        state.is_eink = is_eink;
+        for session in state.sessions.values_mut() {
+            session.idle_polls = 0;
+            session.poll_wakeup.notify_one();
+        }
+    }
+
+    // notify_one retains a permit even during a cursor request: the following
+    // sleep consumes it immediately, without starting a concurrent request.
+    pub(crate) fn wake_pane(&self, pane_id: &str) {
+        let mut state = self.inner.state.lock();
+        let keys = state
+            .terminal_bindings
+            .values()
+            .filter(|binding| binding.pane_id == pane_id && binding.active)
+            .map(|binding| binding.key.clone())
+            .collect::<HashSet<_>>();
+        for key in keys {
+            if let Some(session) = state.sessions.get_mut(&key) {
+                session.idle_polls = 0;
+                session.poll_wakeup.notify_one();
+            }
         }
     }
 
@@ -378,6 +425,7 @@ impl AgentSessionManager {
             for session in state.sessions.values_mut() {
                 session.operation_epoch = NEXT_OPERATION_EPOCH.fetch_add(1, Ordering::Relaxed);
                 session.sync_generation = session.sync_generation.saturating_add(1);
+                session.poll_wakeup.notify_one();
                 session.retry_running = false;
                 session.paused = true;
                 if let Some(context) = session.stream_context.take() {
@@ -388,6 +436,7 @@ impl AgentSessionManager {
                 }
                 let update = if closed {
                     session.closed = true;
+                    session.poll_wakeup.notify_one();
                     session.core.close_update()
                 } else {
                     session.core.mark_stale_update(reason)
@@ -512,6 +561,8 @@ impl AgentSessionManager {
                     paused: false,
                     closed: false,
                     explicit_restart_pending: false,
+                    idle_polls: 0,
+                    poll_wakeup: Arc::new(Notify::new()),
                 }
             });
             session.terminals.insert(identity.terminal_id.clone());
@@ -570,8 +621,13 @@ impl AgentSessionManager {
             };
             let mut stream = None;
             let mut resume = false;
+            if active {
+                session.idle_polls = 0;
+                session.poll_wakeup.notify_one();
+            }
             if !any_active && !session.closed {
                 session.sync_generation = session.sync_generation.saturating_add(1);
+                session.poll_wakeup.notify_one();
                 session.retry_running = false;
                 session.paused = true;
                 if let Some(context) = session.stream_context.take() {
@@ -794,6 +850,7 @@ impl AgentSessionManager {
             let _ = stream.close();
         }
         session.closed = true;
+        session.poll_wakeup.notify_one();
         session.explicit_restart_pending = false;
         let _ = session.core.close_update();
         state
@@ -1029,6 +1086,9 @@ impl AgentSessionManager {
                 session.operation_epoch = NEXT_OPERATION_EPOCH.fetch_add(1, Ordering::Relaxed);
             }
             session.sync_generation = session.sync_generation.saturating_add(1);
+            session.poll_wakeup.notify_one();
+            session.poll_wakeup = Arc::new(Notify::new());
+            session.idle_polls = 0;
             session.retry_running = false;
             session.paused = false;
             if !preserve_checkpoint {
@@ -1244,6 +1304,17 @@ impl AgentSessionManager {
         sync_generation: u64,
         session_id: String,
     ) {
+        {
+            let mut state = self.inner.state.lock();
+            if !has_active_consumer(&state, &key)
+                || current_session_sync_mut(&mut state, &key, operation_epoch, sync_generation)
+                    .is_none()
+            {
+                return;
+            }
+        }
+        let cursor_started = crate::power_diagnostics::enabled().then(std::time::Instant::now);
+        crate::power_diagnostics::record(crate::power_diagnostics::Counter::OpenCodeCursor, 1);
         let connection = self.inner.connection.clone();
         let cursor_output = match execute(
             &connection,
@@ -1263,6 +1334,12 @@ impl AgentSessionManager {
                 return;
             }
         };
+        if let Some(started) = cursor_started {
+            crate::power_diagnostics::record(
+                crate::power_diagnostics::Counter::OpenCodeCursorMicros,
+                started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+            );
+        }
         let remote_cursor = match parse_open_code_cursor(&cursor_output) {
             Ok(cursor) => cursor,
             Err(error) => {
@@ -1290,11 +1367,18 @@ impl AgentSessionManager {
         };
 
         if local_cursor == Some(remote_cursor) {
+            crate::power_diagnostics::record(
+                crate::power_diagnostics::Counter::OpenCodeNoChange,
+                1,
+            );
             let update = {
                 let mut state = self.inner.state.lock();
                 current_session_sync_mut(&mut state, &key, operation_epoch, sync_generation)
                     .and_then(|session| match &mut session.core {
-                        AgentSessionCore::OpenCode(core) => Some(core.mark_live_update()),
+                        AgentSessionCore::OpenCode(core) => {
+                            session.idle_polls = session.idle_polls.saturating_add(1);
+                            Some(core.mark_live_update())
+                        }
                         AgentSessionCore::Codex(_) => None,
                     })
             };
@@ -1307,6 +1391,14 @@ impl AgentSessionManager {
             return;
         }
 
+        if let Some(session) = current_session_sync_mut(
+            &mut self.inner.state.lock(),
+            &key,
+            operation_epoch,
+            sync_generation,
+        ) {
+            session.idle_polls = 0;
+        }
         let needs_full = local_cursor.is_none_or(|cursor| remote_cursor < cursor);
         let command = if needs_full {
             opencode_export_command(&session_id)
@@ -1381,6 +1473,12 @@ impl AgentSessionManager {
                     return;
                 }
             }
+        }
+        if let Some(started) = cursor_started {
+            crate::power_diagnostics::record(
+                crate::power_diagnostics::Counter::OpenCodeVisibleMicros,
+                started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+            );
         }
         self.schedule_opencode_poll(key, operation_epoch, sync_generation, session_id);
     }
@@ -1490,25 +1588,32 @@ impl AgentSessionManager {
     ) {
         let scheduled = {
             let mut state = self.inner.state.lock();
+            let is_eink = state.is_eink;
             let Some(session) =
                 current_session_sync_mut(&mut state, &key, operation_epoch, sync_generation)
             else {
                 return;
             };
             if session.retry_running || session.terminals.is_empty() {
-                false
+                None
             } else {
                 session.retry_running = true;
-                true
+                Some((
+                    opencode_poll_delay(is_eink, session.idle_polls),
+                    session.poll_wakeup.clone(),
+                ))
             }
         };
-        if !scheduled {
+        let Some((delay, wakeup)) = scheduled else {
             return;
-        }
+        };
         let manager = self.clone();
         if let Ok(runtime) = crate::runtime() {
             runtime.spawn(async move {
-                tokio::time::sleep(OPENCODE_POLL_DELAY).await;
+                tokio::select! {
+                    () = tokio::time::sleep(delay) => {},
+                    () = wakeup.notified() => {},
+                }
                 let should_poll = {
                     let mut state = manager.inner.state.lock();
                     let Some(session) = current_session_sync_mut(
@@ -2047,6 +2152,81 @@ mod tests {
             1,
             HerdrConnection::new(runtime_id.to_owned(), String::new(), None, None),
         )
+    }
+
+    #[test]
+    fn eink_idle_backoff_is_bounded_and_normal_policy_is_unchanged() {
+        let waits = (0..5)
+            .map(|idle| opencode_poll_delay(true, idle).as_millis())
+            .collect::<Vec<_>>();
+        assert_eq!(waits, [1200, 2400, 5000, 10000, 10000]);
+        assert_eq!(opencode_poll_delay(false, 100), OPENCODE_POLL_DELAY);
+        assert_eq!(opencode_poll_delay(true, 0), OPENCODE_POLL_DELAY);
+    }
+
+    #[test]
+    fn opencode_wakeup_permit_survives_request_and_interrupts_long_sleep() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let wake = Notify::new();
+            // A send/status event arrives while the cursor request is running.
+            wake.notify_one();
+            tokio::time::timeout(Duration::from_millis(50), wake.notified())
+                .await
+                .unwrap();
+            // The permit is consumed once, rather than causing a busy loop.
+            assert!(
+                tokio::time::timeout(Duration::from_millis(5), wake.notified())
+                    .await
+                    .is_err()
+            );
+        });
+    }
+
+    #[test]
+    fn pausing_or_closing_releases_old_ten_second_poll_without_network_work() {
+        for close in [false, true] {
+            let manager = test_manager("sleep-cancellation");
+            let binding = manager
+                .bind_opencode("terminal".into(), "ses_cancel".into())
+                .unwrap();
+            let (epoch, generation) = {
+                let mut state = manager.inner.state.lock();
+                state.connected = true;
+                state.is_eink = true;
+                let session = state.sessions.get_mut(&binding.transcript_key).unwrap();
+                session.started = true;
+                session.idle_polls = 3;
+                (session.operation_epoch, session.sync_generation)
+            };
+            let before = Arc::strong_count(&manager.inner);
+            manager.schedule_opencode_poll(
+                binding.transcript_key.clone(),
+                epoch,
+                generation,
+                "ses_cancel".into(),
+            );
+            assert_eq!(Arc::strong_count(&manager.inner), before + 1);
+            if close {
+                manager.close_terminal("terminal");
+            } else {
+                assert!(manager.set_binding_active(&binding.binding_token, false));
+            }
+            crate::runtime().unwrap().block_on(async {
+                tokio::time::timeout(Duration::from_millis(250), async {
+                    while Arc::strong_count(&manager.inner) != before {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                })
+                .await
+                .unwrap();
+            });
+            let mut state = manager.inner.state.lock();
+            assert!(
+                current_session_sync_mut(&mut state, &binding.transcript_key, epoch, generation)
+                    .is_none()
+            );
+        }
     }
 
     #[test]

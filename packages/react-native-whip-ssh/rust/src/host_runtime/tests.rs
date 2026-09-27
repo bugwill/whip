@@ -129,6 +129,8 @@ fn connected_runtime_inner(id: &str) -> Arc<RuntimeInner> {
     state.generation = 1;
     state.host_state.connection_installed(1);
     state.event = Some(EventSubscriptionRuntime {
+        active: true,
+        starting: false,
         pane_ids: Vec::new(),
         operation_epoch: 1,
         retry_running: false,
@@ -950,6 +952,8 @@ fn herdr_event_burst_is_fully_applied_before_one_projection() {
     state.connection = HostConnectionState::Connected;
     state.generation = 1;
     state.event = Some(EventSubscriptionRuntime {
+        active: true,
+        starting: false,
         pane_ids: vec!["pane-1".to_owned(), "pane-2".to_owned()],
         operation_epoch: 1,
         retry_running: false,
@@ -1057,6 +1061,8 @@ fn confirmed_pane_close_cancels_terminal_retry_without_restarting_events() {
             ApplyResult::Applied
         );
         state.event = Some(EventSubscriptionRuntime {
+            active: true,
+            starting: false,
             pane_ids: vec!["pane-1".to_owned(), "pane-2".to_owned()],
             operation_epoch: 1,
             retry_running: false,
@@ -1899,6 +1905,8 @@ fn stale_connection_cannot_overwrite_newer_epoch() {
 fn disconnect_closes_terminal_intent_and_event_subscription() {
     let mut state = RuntimeState::new(&config());
     state.event = Some(EventSubscriptionRuntime {
+        active: true,
+        starting: false,
         pane_ids: vec!["p1".to_owned()],
         operation_epoch: 1,
         retry_running: true,
@@ -2060,12 +2068,16 @@ fn disconnect_while_reconnecting_prevents_replacement_install() {
 fn stale_event_subscription_epoch_is_detectable_after_restart() {
     let mut state = RuntimeState::new(&config());
     state.event = Some(EventSubscriptionRuntime {
+        active: true,
+        starting: false,
         pane_ids: vec!["old".to_owned()],
         operation_epoch: 4,
         retry_running: true,
     });
     let stale = state.event.as_ref().unwrap().operation_epoch;
     state.event = Some(EventSubscriptionRuntime {
+        active: true,
+        starting: false,
         pane_ids: vec!["new".to_owned()],
         operation_epoch: stale + 1,
         retry_running: false,
@@ -2078,6 +2090,8 @@ fn stale_event_subscription_epoch_is_detectable_after_restart() {
 fn old_subscription_cannot_survive_explicit_disconnect() {
     let mut state = RuntimeState::new(&config());
     state.event = Some(EventSubscriptionRuntime {
+        active: true,
+        starting: false,
         pane_ids: vec![],
         operation_epoch: 9,
         retry_running: false,
@@ -2238,5 +2252,95 @@ fn all_focus_requests_are_replayable_but_mutations_are_not() {
             text: "do not replay".to_owned(),
         },),
         HerdrRequestReplay::Never
+    );
+}
+
+#[test]
+fn gap_resync_does_not_depend_on_monitoring_worker() {
+    let inner = connected_runtime_inner("gap-resync-independent");
+    // The worker may be blocked in a slow latency probe; gap recovery must not wait on it.
+    inner.monitoring.lock().worker_running = true;
+    schedule_state_resync(inner.clone(), "first gap".to_owned());
+    assert!(!inner.monitoring.lock().force_reconcile);
+    assert!(inner.state.lock().host_state.resync_running());
+    // Repeated gaps are coalesced into the running task.
+    schedule_state_resync(inner.clone(), "second gap".to_owned());
+    inner.state.lock().explicit_disconnect = true;
+    crate::runtime().unwrap().block_on(async {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while inner.state.lock().host_state.resync_running() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+fn starting_subscription_is_not_restarted_by_concurrent_reconciliation() {
+    let inner = connected_runtime_inner("event-starting-not-restarted");
+    let pane_ids = inner.state.lock().host_state.pane_ids();
+    {
+        let mut state = inner.state.lock();
+        let event = state.event.as_mut().unwrap();
+        event.pane_ids = pane_ids;
+        event.active = false;
+        event.starting = true;
+    }
+    // A second snapshot during the ACK wait must not supersede the setup.
+    assert!(!event_subscription_needs_update(&inner));
+    {
+        let mut state = inner.state.lock();
+        mark_event_subscription_closed(&mut state);
+        assert!(!state.event.as_ref().unwrap().starting);
+    }
+    assert!(event_subscription_needs_update(&inner));
+}
+
+#[test]
+fn dead_event_subscription_is_not_valid_after_retry_exhaustion() {
+    let inner = connected_runtime_inner("monitor-dead-subscription");
+    let pane_ids = inner.state.lock().host_state.pane_ids();
+    {
+        let mut state = inner.state.lock();
+        let event = state.event.as_mut().unwrap();
+        event.pane_ids = pane_ids;
+        event.retry_running = false;
+        event.active = false;
+    }
+    assert!(event_subscription_needs_update(&inner));
+}
+
+#[test]
+fn disconnected_monitoring_does_not_probe_or_spin_when_both_deadlines_are_due() {
+    let runtime_config = config();
+    let state = RuntimeState::new(&runtime_config);
+    let inner = runtime_inner_with_state("monitor-disconnected-schedule", runtime_config, state);
+    monitoring::set_monitoring_state(&inner, true, true, false, true);
+    crate::runtime().unwrap().block_on(async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    });
+    let monitoring = inner.monitoring.lock();
+    assert_eq!(monitoring.test_actual_probes, 0);
+    assert_eq!(monitoring.test_due_counts, (1, 1));
+}
+
+#[test]
+fn subscription_close_invalidates_in_flight_setup_before_it_can_mark_active() {
+    let inner = connected_runtime_inner("event-close-during-setup");
+    let mut state = inner.state.lock();
+    let setup_epoch = state.event.as_ref().unwrap().operation_epoch;
+    mark_event_subscription_closed(&mut state);
+    let event = state.event.as_ref().unwrap();
+    assert_ne!(event.operation_epoch, setup_epoch);
+    assert!(!event.active);
+    assert!(!event.retry_running);
+    // start_desired_events checks this exact operation token after await.
+    assert!(
+        state
+            .event
+            .as_ref()
+            .is_none_or(|event| event.operation_epoch != setup_epoch)
     );
 }

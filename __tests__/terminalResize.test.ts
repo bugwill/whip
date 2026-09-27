@@ -33,7 +33,12 @@ function eventTarget() {
   };
 }
 
+type DocumentStub = { defaultView?: unknown; createElementNS: (namespace: string, name: string) => ElementStub };
+
 type ElementStub = ReturnType<typeof eventTarget> & {
+  ownerDocument: DocumentStub;
+  setAttribute: ReturnType<typeof jest.fn>;
+  appendChild: ReturnType<typeof jest.fn>;
   style: { display: string; setProperty: ReturnType<typeof jest.fn> };
   classList: { contains: (name: string) => boolean; remove: (name: string) => boolean };
   closest: (selector?: string) => ElementStub | null;
@@ -50,9 +55,13 @@ async function runtime(asset: string, userAgent: string) {
   const classNames = new Set(['presented']);
   const nodes = new Map<string, ElementStub>();
   const mouseEvents: Array<{ type: string; deltaY?: number }> = [];
+  const document: DocumentStub = { createElementNS: () => element() };
   function element(): ElementStub {
     return {
       ...eventTarget(),
+      ownerDocument: document,
+      setAttribute: jest.fn(),
+      appendChild: jest.fn(),
       style: { display: '', setProperty: jest.fn() },
       classList: {
         contains: (name: string) => classNames.has(name),
@@ -81,12 +90,12 @@ async function runtime(asset: string, userAgent: string) {
     }),
     ReactNativeWebView: { postMessage: jest.fn() },
   };
-  Object.assign(parent, { ownerDocument: { defaultView: window } });
+  document.defaultView = window;
   let resizeListener = (_size: { cols: number; rows: number }) => {};
   const terminal = {
     options: { fontSize: 8, scrollbar: { showScrollbar: false } },
     dimensions: { css: { cell: { width: 8, height: 16 } } },
-    element: { ...element(), parentElement: parent, ownerDocument: { defaultView: window } },
+    element: { ...element(), parentElement: parent },
     cols: 0,
     rows: 0,
     modes: { applicationCursorKeysMode: false, mouseTrackingMode: 'none', showCursor: true },
@@ -140,7 +149,7 @@ async function runtime(asset: string, userAgent: string) {
     root, report, window, TextDecoder, URL,
     WheelEvent: Object.assign(function (this: object, type: string, options: object) { Object.assign(this, { type }, options); }, { DOM_DELTA_LINE: 1 }),
     MouseEvent: function (this: object, type: string, options: object) { Object.assign(this, { type }, options); },
-    document: {},
+    document,
     navigator: { userAgent },
     performance: { now: () => 0 },
     setTimeout, clearTimeout,

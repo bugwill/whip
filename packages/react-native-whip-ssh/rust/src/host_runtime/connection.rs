@@ -401,6 +401,7 @@ pub(super) fn begin_reconnect_for_generation(
     }) else {
         return false;
     };
+    crate::power_diagnostics::record(crate::power_diagnostics::Counter::Reconnect, 1);
     let ssh = inner.herdr.clear(generation);
     let jumps = std::mem::take(&mut *inner.jump_sessions.lock());
     invalidate_remote_operations(&inner, generation, &reason);

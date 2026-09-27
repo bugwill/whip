@@ -15,6 +15,7 @@ import type { TerminalFrame } from '../src/lib/terminalBridge';
 import type { TerminalRenderTarget } from '../src/lib/terminalRenderer';
 import { MIN_XTERM_CACHE_CAPACITY } from '../src/lib/terminalRendererLru';
 import { DisplayProfileProvider } from '../src/lib/displayProfile';
+import { beginPerformanceDiagnosticScene, collectAndEndPerformanceDiagnosticScene, isPerformanceDiagnosticsEnabled, setPerformanceDiagnosticsEnabled } from '../src/services/performanceTrace';
 import type { TerminalPreferences } from '../src/services/devicePreferences';
 
 jest.mock('expo/virtual/env', () => ({ env: {} }));
@@ -24,6 +25,7 @@ jest.mock('react-native-css-interop/jsx-runtime', () =>
 jest.mock('react-native', () => {
   const mockListeners = new Set<(mockState: string) => void>();
   return {
+    NativeModules: {},
     AppState: {
       currentState: 'active',
       listeners: mockListeners,
@@ -57,7 +59,7 @@ jest.mock(
   '../src/services/performanceTrace',
   () =>
     new Proxy(
-      { __esModule: true },
+      { __esModule: true, ...Object.fromEntries(Object.entries(jest.requireActual('../src/services/performanceTrace')).filter(([name]) => /PerformanceDiagnostic/.test(name))) },
       {
         get: (target, property) =>
           property in target
@@ -107,6 +109,7 @@ describe('TerminalRendererHost lifecycle', () => {
   });
 
   afterEach(() => {
+    setPerformanceDiagnosticsEnabled(false);
     act(() => renderer?.unmount());
   });
 
@@ -142,6 +145,7 @@ describe('TerminalRendererHost lifecycle', () => {
     const retained = new Set<string>();
     let nextAttachmentId = 0;
     let frameHandler: ((frame: TerminalFrame) => void) | null = null;
+    const frameHandlers = new Map<string, (frame: TerminalFrame) => void>();
     let closedHandler: ((reason?: string) => void) | undefined;
     const closeTerminalBridge = jest.fn((terminalId: string) => {
       retained.delete(terminalId);
@@ -158,6 +162,7 @@ describe('TerminalRendererHost lifecycle', () => {
       ) => {
         retained.add(terminalId);
         frameHandler = onFrame;
+        frameHandlers.set(terminalId, onFrame);
         closedHandler = onClosed;
         return { testAttachmentId: ++nextAttachmentId };
       },
@@ -188,7 +193,7 @@ describe('TerminalRendererHost lifecycle', () => {
       closeTerminalBridge,
       detachTerminal,
       isTerminalBridgeRetained,
-      emitFrame: (frame: TerminalFrame) => frameHandler?.(frame),
+      emitFrame: (frame: TerminalFrame, terminalId?: string) => (terminalId ? frameHandlers.get(terminalId) : frameHandler)?.(frame),
       disconnect: (terminalId = 'term-1') => {
         retained.delete(terminalId);
         closedHandler?.('Transport disconnected');
@@ -450,12 +455,68 @@ describe('TerminalRendererHost lifecycle', () => {
 
     await setVisible(true);
     expect(client.openTerminal).toHaveBeenCalledTimes(2);
+    expect(client.openTerminal).toHaveBeenLastCalledWith(
+      'term-1', expect.any(Function), expect.any(Function), expect.any(Function),
+      { columns: 80, rows: 24, cellWidthPx: 8, cellHeightPx: 16 },
+    );
     act(() => client.emitFrame({
       type: 'terminal.frame', seq: 1, encoding: 'ansi', width: 80, height: 24,
       full: true, bytes: encoded,
     }));
     expect(injected.join('\n')).toContain('herdrReset');
     expect(client.closeTerminalBridge).not.toHaveBeenCalled();
+  });
+
+  test('E-Ink pane switches retain cached owners and recover the visible baseline', async () => {
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const client = createClient({});
+    const targets = ['term-1', 'term-2', 'term-3'].map(id => createTarget(id, client, scroll));
+    const { activateTarget, webView, injected } = await mountReadyHost(targets[0], targets, true, 4, true);
+    const frame: TerminalFrame = {
+      type: 'terminal.frame', seq: 1, encoding: 'ansi', width: 80, height: 24,
+      full: true, bytes: Buffer.from('visible output').toString('base64'),
+    };
+    act(() => client.emitFrame(frame));
+    injected.length = 0;
+    await activateTarget(targets[1]);
+    await sendRendererMessage(webView, { type: 'terminal-ready', key: targets[1].key });
+    await sendRendererMessage(webView, {
+      type: 'resize', source: 'fit', key: targets[1].key,
+      cols: 80, rows: 24, cellWidthPx: 8, cellHeightPx: 16,
+    });
+    act(() => client.emitFrame(frame));
+    await activateTarget(targets[2]);
+    expect(client.releaseTerminal).not.toHaveBeenCalled();
+    expect(injected.filter(script => script.includes(`herdrSnapshot(${JSON.stringify(targets[0].key)}`))).toHaveLength(0);
+    await activateTarget(targets[0]);
+    expect(client.openTerminal).toHaveBeenCalledTimes(2);
+    expect(client.releaseTerminal).not.toHaveBeenCalled();
+    await sendRendererMessage(webView, { type: 'fit-complete', key: targets[0].key });
+    expect(client.resizeTerminal).toHaveBeenLastCalledWith('term-1', 80, 24, 8, 16, null, true);
+    injected.length = 0;
+    act(() => client.emitFrame(frame, 'term-1'));
+    expect(injected.join('\n')).toContain('herdrWriteBase64Chunk');
+    expect(injected.join('\n')).not.toContain('herdrReset');
+  });
+
+  test('E-Ink releases a cached controller when its renderer is evicted', async () => {
+    const client = createClient({});
+    const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+    const targets = ['term-1', 'term-2', 'term-3', 'term-4'].map(id => createTarget(id, client, scroll));
+    const { activateTarget, webView } = await mountReadyHost(targets[0], targets, true, 4, true);
+    for (const target of targets.slice(1)) {
+      await activateTarget(target);
+      await sendRendererMessage(webView, { type: 'terminal-ready', key: target.key });
+      await sendRendererMessage(webView, {
+        type: 'resize', source: 'fit', key: target.key,
+        cols: 80, rows: 24, cellWidthPx: 8, cellHeightPx: 16,
+      });
+    }
+    expect(client.openTerminal).toHaveBeenCalledTimes(4);
+    expect(client.releaseTerminal).toHaveBeenCalledTimes(1);
+    expect(client.releaseTerminal).toHaveBeenCalledWith('term-1', expect.any(Object));
+    expect(client.isTerminalBridgeRetained('term-1')).toBe(false);
+    for (const target of targets.slice(1)) expect(client.isTerminalBridgeRetained(target.session.terminalId)).toBe(true);
   });
 
   test('late ready/resize callbacks cannot reconnect a cached inactive E-Ink pane', async () => {
@@ -490,7 +551,7 @@ describe('TerminalRendererHost lifecycle', () => {
       frame(2, 'second');
       frame(3, 'third');
       expect(injected).toEqual([]);
-      jest.advanceTimersByTime(99);
+      jest.advanceTimersByTime(249);
       expect(injected).toEqual([]);
       jest.advanceTimersByTime(1);
       expect(injected).toHaveLength(1);
@@ -516,7 +577,7 @@ describe('TerminalRendererHost lifecycle', () => {
       jest.advanceTimersByTime(500);
       frame(6, 'back to batch');
       expect(injected).toEqual([]);
-      jest.advanceTimersByTime(100);
+      jest.advanceTimersByTime(250);
       expect(injected).toHaveLength(1);
 
       injected.length = 0;
@@ -531,11 +592,104 @@ describe('TerminalRendererHost lifecycle', () => {
       jest.advanceTimersByTime(5_000);
       frame(8, 'later output');
       expect(injected).toEqual([]);
-      jest.advanceTimersByTime(100);
+      jest.advanceTimersByTime(250);
       expect(injected).toHaveLength(1);
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  test.each(['string', 'buffer'])('E-Ink SSH %s preserves ANSI fragments, baseline, pressure and slow echo', async encoding => {
+    jest.useFakeTimers();
+    try {
+      const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+      const client = createClient({ 'term-1': scroll });
+      const target = createTarget('term-1', client, scroll);
+      target.session.kind = 'ssh';
+      const { handle, injected } = await mountReadyHost(target, [target], true, 4, true);
+      const frame = (seq: number, text: string) => {
+        const buffer = Uint8Array.from(Buffer.from(text));
+        client.emitFrame({ type: 'terminal.frame', seq, encoding: 'utf8', width: 80, height: 24,
+          full: false, bytes: encoding === 'string' ? text : buffer.buffer });
+      };
+      frame(1, 'first');
+      expect(injected.join('')).toContain('herdrReset');
+      injected.length = 0;
+      frame(2, '\u001b[');
+      frame(3, '31mred');
+      expect(injected).toEqual([]);
+      jest.advanceTimersByTime(250);
+      expect(injected).toHaveLength(1);
+      const first = encoding === 'string' ? JSON.stringify('\u001b[') : Buffer.from('\u001b[').toString('base64');
+      const second = encoding === 'string' ? '31mred' : Buffer.from('31mred').toString('base64');
+      expect(injected[0].indexOf(first)).toBeLessThan(injected[0].indexOf(second));
+      injected.length = 0;
+      for (let seq = 4; seq < 36; seq++) frame(seq, 'x');
+      expect(injected).toHaveLength(1);
+      act(() => { handle.current?.input('echo'); });
+      injected.length = 0;
+      jest.advanceTimersByTime(1_000);
+      frame(36, 'echo');
+      expect(injected).toHaveLength(1);
+      injected.length = 0;
+      jest.advanceTimersByTime(500);
+      frame(37, 'queued');
+      expect(injected).toEqual([]);
+      act(() => renderer.unmount());
+      const count = injected.length;
+      expect(jest.getTimerCount()).toBe(0);
+      jest.advanceTimersByTime(5_000);
+      expect(injected).toHaveLength(count);
+    } finally { jest.useRealTimers(); }
+  });
+
+  test('continuous passive output settles to two timed injections per second', async () => {
+    jest.useFakeTimers();
+    try {
+      const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+      const client = createClient({ 'term-1': scroll });
+      const target = createTarget('term-1', client, scroll);
+      const { injected } = await mountReadyHost(target, [target], true, 4, true);
+      const frame = (seq: number) => client.emitFrame({ type: 'terminal.frame', seq, encoding: 'ansi',
+        width: 80, height: 24, full: seq === 1, bytes: Buffer.from('x').toString('base64') });
+      frame(1);
+      for (let seq = 2; seq <= 22; seq++) { jest.advanceTimersByTime(100); frame(seq); }
+      jest.advanceTimersByTime(500);
+      frame(23);
+      injected.length = 0;
+      for (let seq = 24; seq <= 33; seq++) { jest.advanceTimersByTime(100); frame(seq); }
+      expect(injected).toHaveLength(2);
+    } finally { jest.useRealTimers(); }
+  });
+
+  test('diagnostic scene end waits for WebView snapshot acknowledgement and removes its deadline', async () => {
+    jest.useFakeTimers();
+    try {
+      beginPerformanceDiagnosticScene();
+      const scroll = { offset_from_bottom: 0, max_offset_from_bottom: 0, viewport_rows: 24 };
+      const client = createClient({ 'term-1': scroll });
+      const target = createTarget('term-1', client, scroll);
+      const { webView, injected } = await mountReadyHost(target, [target], true, 4, true);
+      const ending = collectAndEndPerformanceDiagnosticScene();
+      const collection = injected.find(script => /herdrCollectPerformanceDiagnostics\(\d+\)/.test(script));
+      expect(collection).toBeDefined();
+      const requestId = Number(collection?.match(/herdrCollectPerformanceDiagnostics\((\d+)\)/)?.[1]);
+      expect(isPerformanceDiagnosticsEnabled()).toBe(true);
+      client.emitFrame({ type: 'terminal.frame', seq: 1, encoding: 'utf8', full: true, width: 80, height: 24, bytes: 'during collection' });
+      expect(injected.at(-1)).not.toContain('herdrSetPerformanceDiagnostics(' + JSON.stringify(target.key) + ', true');
+      await sendRendererMessage(webView, { type: 'performance-diagnostics', key: target.key,
+        counters: { writes: 2, pendingWriteBytes: 3, maxWriteMs: 10 } });
+      await sendRendererMessage(webView, { type: 'performance-diagnostics-collected', requestId });
+      const snapshot = await ending;
+      expect(snapshot.gauges[`webview.${target.key}.writes`]).toBe(2);
+      expect(snapshot.gauges[`webview.${target.key}.pendingWriteBytes`]).toBe(3);
+      expect(isPerformanceDiagnosticsEnabled()).toBe(false);
+      jest.runAllTicks();
+      expect(jest.getTimerCount()).toBe(0);
+      beginPerformanceDiagnosticScene();
+      client.emitFrame({ type: 'terminal.frame', seq: 2, encoding: 'utf8', full: true, width: 80, height: 24, bytes: 'next scene' });
+      expect(injected.at(-1)).toContain('herdrSetPerformanceDiagnostics(' + JSON.stringify(target.key) + ', true');
+    } finally { jest.useRealTimers(); }
   });
 
   test('display-profile switch flushes queued E-Ink output before normal configuration', async () => {

@@ -5,7 +5,13 @@ rust_dir="$(cd "$(dirname "$0")" && pwd)"
 module_dir="$(cd "$rust_dir/.." && pwd)"
 repo_dir="$(cd "$module_dir/../.." && pwd)"
 target="aarch64-linux-android"
-source_library="$rust_dir/target/$target/release/libwhip_ssh.a"
+target_directory="${CARGO_TARGET_DIR:-$rust_dir/target}"
+# Cargo resolves relative target directories from the caller's working directory.
+# Use one absolute directory for both compilation and the archive/bindings input.
+if [[ "$target_directory" != /* ]]; then
+  target_directory="$PWD/$target_directory"
+fi
+source_library="$target_directory/$target/release/libwhip_ssh.a"
 destination_library="$module_dir/android/src/main/jniLibs/arm64-v8a/libwhip_ssh.a"
 ubrn="$repo_dir/node_modules/.bin/ubrn"
 
@@ -49,6 +55,7 @@ fi
 cargo build \
   --locked \
   --manifest-path "$rust_dir/Cargo.toml" \
+  --target-dir "$target_directory" \
   --target "$target" \
   --release
 

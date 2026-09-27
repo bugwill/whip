@@ -792,6 +792,42 @@ const terminalSessionHtml = `<!doctype html>
         send({ type: 'trace-rendered', inputCookie, resizeCookie, inboundCookie });
       }));
     };
+    let performanceDiagnostics = false;
+    let diagnosticGeneration = 0;
+    let diagnosticScene = null;
+    let diagnosticCounters = { writes: 0, bytes: 0, completed: 0, totalWriteMs: 0, maxWriteMs: 0 };
+    let pendingWriteBytes = 0;
+    const diagnosticWrite = (data, callback) => {
+      if (!performanceDiagnostics) { terminal.write(data, callback); return; }
+      const bytes = typeof data === 'string' ? new TextEncoder().encode(data).byteLength : data.byteLength;
+      const generation = diagnosticGeneration;
+      const started = performance.now();
+      diagnosticCounters.writes += 1;
+      diagnosticCounters.bytes += bytes;
+      pendingWriteBytes += bytes;
+      terminal.write(data, () => {
+        const elapsed = performance.now() - started;
+        if (generation !== diagnosticGeneration) { if (callback) callback(); return; }
+        pendingWriteBytes -= bytes;
+        diagnosticCounters.completed += 1;
+        diagnosticCounters.totalWriteMs += elapsed;
+        diagnosticCounters.maxWriteMs = Math.max(diagnosticCounters.maxWriteMs, elapsed);
+        if (callback) callback();
+      });
+    };
+    window.herdrSetPerformanceDiagnostics = (enabled, scene) => {
+      if (enabled === true && (!performanceDiagnostics || (scene !== undefined && scene !== diagnosticScene))) {
+        diagnosticGeneration += 1;
+        diagnosticScene = scene;
+        diagnosticCounters = { writes: 0, bytes: 0, completed: 0, totalWriteMs: 0, maxWriteMs: 0 };
+        pendingWriteBytes = 0;
+      }
+      performanceDiagnostics = enabled === true;
+    };
+    window.herdrCollectPerformanceDiagnostics = () => {
+      if (!performanceDiagnostics) return;
+      send({ type: 'performance-diagnostics', counters: { ...diagnosticCounters, pendingWriteBytes } });
+    };
     window.herdrWrite = (data, inputCookie, resizeCookie, inboundCookie) => {
       reportTracePhase('trace-write-received', inboundCookie);
       if (renderDrop) {
@@ -800,7 +836,7 @@ const terminalSessionHtml = `<!doctype html>
         return;
       }
       prepareLiveWrite();
-      terminal.write(prepareTerminalWrite(data), () => {
+      diagnosticWrite(prepareTerminalWrite(data), () => {
         offlineCache.markDirty();
         settleKeyboardTap();
         reportTracePhase('trace-xterm-written', inboundCookie);
@@ -818,7 +854,7 @@ const terminalSessionHtml = `<!doctype html>
       const binary = atob(data);
       const bytes = new Uint8Array(binary.length);
       for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-      terminal.write(prepareTerminalWrite(bytes), () => {
+      diagnosticWrite(prepareTerminalWrite(bytes), () => {
         offlineCache.markDirty();
         settleKeyboardTap();
         reportTracePhase('trace-xterm-written', inboundCookie);
@@ -898,6 +934,7 @@ const terminalSessionHtml = `<!doctype html>
     let configuredDisplayProfile = null;
     window.herdrConfigure = options => {
       einkMode = options.einkMode === true;
+      window.herdrSetPerformanceDiagnostics(options.performanceDiagnostics);
       configureTextContrast(options.textContrast);
       terminal.options.fontSize = Math.max(einkMode ? 12 : 8, Math.min(24, Number(options.fontSize) || (einkMode ? 12 : 8)));
       terminal.options.fontWeight = einkMode ? '500' : '400';
@@ -1299,6 +1336,7 @@ const terminalSessionHtml = `<!doctype html>
       });
     };
     let lastFitGeometry = null;
+    let lastMeasuredGeometry = null;
     const measureEffectiveTerminalGeometry = () => {
       const element = terminal.element;
       const parent = element?.parentElement;
@@ -1313,10 +1351,25 @@ const terminalSessionHtml = `<!doctype html>
       const width = Math.max(0, pixels(parentStyle, 'width'));
       const height = Math.max(0, pixels(parentStyle, 'height'));
       if (!width || !height) return null;
+      const measurementSignature = [
+        width, height,
+        pixels(elementStyle, 'padding-left'), pixels(elementStyle, 'padding-right'),
+        pixels(elementStyle, 'padding-top'), pixels(elementStyle, 'padding-bottom'),
+        cell.width, cell.height, view.devicePixelRatio || 1, terminal.options.fontSize,
+        terminal.options.scrollback === 0,
+        terminal.options.scrollbar?.showScrollbar ?? true,
+        terminal.options.scrollbar?.width ?? 'default',
+      ].join(':');
+      // Activation retries must still observe late WebView layout changes,
+      // but stable geometry need not repeat FitAddon's dimension calculation.
+      if (lastMeasuredGeometry?.measurementSignature === measurementSignature) {
+        return lastMeasuredGeometry;
+      }
       const proposed = fit.proposeDimensions();
       if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return null;
-      return {
+      lastMeasuredGeometry = {
         ...proposed,
+        measurementSignature,
         signature: [
           width - pixels(elementStyle, 'padding-left') - pixels(elementStyle, 'padding-right'),
           height - pixels(elementStyle, 'padding-top') - pixels(elementStyle, 'padding-bottom'),
@@ -1324,6 +1377,7 @@ const terminalSessionHtml = `<!doctype html>
           proposed.cols, proposed.rows,
         ].join(':'),
       };
+      return lastMeasuredGeometry;
     };
     const resize = (geometry = measureEffectiveTerminalGeometry()) => {
       if (geometry && geometry.signature === lastFitGeometry
@@ -2071,6 +2125,16 @@ const terminalHtml = `<!doctype html>
         // Invalidate delayed fits belonging to the previously active pane.
         activationFitGeneration += 1;
       }
+    };
+    window.herdrSetPerformanceDiagnostics = (key, enabled, scene) => call(key, 'herdrSetPerformanceDiagnostics', [enabled, scene]);
+    window.herdrCollectPerformanceDiagnostics = requestId => {
+      for (const [key, entry] of terminals) {
+        if (entry.ready) {
+          call(key, 'herdrCollectPerformanceDiagnostics');
+          if (Number.isInteger(requestId)) call(key, 'herdrSetPerformanceDiagnostics', [false]);
+        }
+      }
+      send({ type: 'performance-diagnostics-collected', requestId });
     };
     window.herdrWriteBase64Chunk = (key, sequence, data, final, inputCookie, resizeCookie, inboundCookie) => call(key, 'herdrWriteBase64Chunk', [sequence, data, final, inputCookie, resizeCookie, inboundCookie]);
     window.herdrWrite = (key, data, inputCookie, resizeCookie, inboundCookie) => call(key, 'herdrWrite', [data, inputCookie, resizeCookie, inboundCookie]);

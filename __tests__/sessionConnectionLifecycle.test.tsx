@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import type { AppCoreProjection } from 'react-native-whip-ssh';
+import type { AppCoreProjection, RuntimeAgentStatusTransition, HostRuntimeState } from 'react-native-whip-ssh';
 
+import { createRuntimeProjectionScheduler } from '../src/lib/runtimeProjectionScheduler';
 import { useSessionConnectionLifecycle } from '../src/hooks/useSessionConnectionLifecycle';
 import {
   createEmptyHerdrSnapshot as mockEmptySnapshot,
@@ -47,6 +48,7 @@ jest.mock('../src/services/HerdrClient', () => ({
 type Client = {
   disconnect: jest.Mock;
   connect: jest.Mock;
+  setRuntimeEventHandler: jest.Mock;
 };
 const mockClients: Client[] = [];
 const mockClientCreated = jest.fn();
@@ -66,12 +68,12 @@ function deferred<T>() {
 let renderer: ReactTestRenderer;
 let lifecycle: ReturnType<typeof useSessionConnectionLifecycle>;
 
-function setup() {
+function setup(background = false) {
   const stateRef = { current: emptyLiveHostSessions };
   const runtimesRef = { current: new Map<string, LiveRuntime>() };
   let view: AppCoreProjection = { revision: 0, sessions: [] };
   const core = {
-    view: () => view,
+    view: jest.fn(() => view),
     openSession: (id: string, hostId: string) => {
       view = {
         ...view,
@@ -84,6 +86,7 @@ function setup() {
     },
     attachRuntime: jest.fn(),
     detachRuntime: jest.fn(),
+    setPlaceholderConnection: jest.fn(() => view),
     closeSession: (id: string) => {
       view = { ...view, sessions: view.sessions.filter(session => session.id !== id) };
       return view;
@@ -92,7 +95,9 @@ function setup() {
   const restore = jest.fn(async () => ({ activeTerminalId: null, sessions: [] }));
   const setError = jest.fn();
   const navigate = jest.fn();
+  const handleAgentStateChange = jest.fn();
   const options = {
+    handleAgentStateChange,
     stateRef, runtimesRef, appCoreRef: { current: core },
     sessionProfilesRef: { current: new Map([[profile.id, profile]]) },
     commitAppCore: (next: AppCoreProjection) => {
@@ -114,12 +119,16 @@ function setup() {
     clearLatency: jest.fn(),
     t: (key: string) => key,
   } as unknown as Parameters<typeof useSessionConnectionLifecycle>[0];
+  const scheduler = createRuntimeProjectionScheduler(
+    () => options.commitAppCore(core.view()), !background,
+  );
+  options.requestRuntimeProjection = () => scheduler.request();
   function Harness() {
     lifecycle = useSessionConnectionLifecycle(options);
     return null;
   }
   act(() => { renderer = create(<Harness />); });
-  return { stateRef, runtimesRef, core, restore, setError, navigate };
+  return { stateRef, runtimesRef, core, restore, setError, navigate, scheduler, handleAgentStateChange };
 }
 
 beforeEach(() => {
@@ -248,4 +257,52 @@ test('closing before the queued SSH operation runs prevents native runtime creat
   });
   expect(mockClients[0].connect).not.toHaveBeenCalled();
   expect(mockNativeHosts.size).toBe(0);
+});
+
+
+test('background host transitions all reach notification handling without automatic views', async () => {
+  const { runtimesRef, core, scheduler, handleAgentStateChange } = setup(true);
+  await act(async () => { await lifecycle.connect(profile); });
+  core.view.mockClear();
+  const runtime = runtimesRef.current.get(profile.id)!;
+  const first: RuntimeAgentStatusTransition[] = [{ paneId: 'pane', previous: 'working', current: 'idle', revision: 1 }];
+  const second: RuntimeAgentStatusTransition[] = [{ paneId: 'pane', previous: 'idle', current: 'working', revision: 2 }];
+  await act(async () => {
+    runtime.acceptHostState({ freshness: 'fresh' } as HostRuntimeState, first);
+    runtime.acceptHostState({ freshness: 'fresh' } as HostRuntimeState, second);
+  });
+  expect(handleAgentStateChange.mock.calls.map(call => call[0].transitions)).toEqual([first, second]);
+  expect(core.view).not.toHaveBeenCalled();
+  act(() => { scheduler.setActive(true); scheduler.setActive(true); });
+  expect(core.view).toHaveBeenCalledTimes(1);
+  await act(async () => { await lifecycle.close(profile.id); });
+  core.view.mockClear();
+  runtime.acceptHostState({ freshness: 'fresh' } as HostRuntimeState, first);
+  expect(core.view).not.toHaveBeenCalled();
+  expect(handleAgentStateChange).toHaveBeenCalledTimes(2);
+});
+
+
+test('background connection and fatal events defer views and lock invalidates old runtime callbacks', async () => {
+  const { core, scheduler } = setup(true);
+  await act(async () => { await lifecycle.connect(profile); });
+  const handler = mockClients[0].setRuntimeEventHandler.mock.calls[0][0];
+  core.view.mockClear();
+  act(() => {
+    handler({ type: 'connection-state', state: 'reconnecting', reconnectAttempt: 1 });
+    handler({ type: 'connection-state', state: 'failed', reconnectAttempt: 2 });
+    handler({ type: 'fatal-error', error: 'failed' });
+  });
+  expect(core.view).not.toHaveBeenCalled();
+  act(() => scheduler.setActive(true));
+  expect(core.view).toHaveBeenCalledTimes(1);
+  scheduler.setActive(false);
+  await act(async () => { await lifecycle.pauseForDeviceLock(); });
+  core.view.mockClear();
+  act(() => {
+    handler({ type: 'fatal-error', error: 'late' });
+    handler({ type: 'connection-state', state: 'reconnecting', reconnectAttempt: 3 });
+    scheduler.setActive(true);
+  });
+  expect(core.view).not.toHaveBeenCalled();
 });

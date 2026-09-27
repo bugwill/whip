@@ -173,6 +173,8 @@ class NativeWhipSsh : public jsi::HostObject {
     jsi::Value cpp_uniffi_whip_ssh_fn_func_clear_host_runtime_event_sink(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_func_create_host_runtime(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_func_set_host_runtime_event_sink(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_whip_ssh_fn_func_power_diagnostics_snapshot(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_whip_ssh_fn_func_set_power_diagnostics_enabled(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_func_cancel_ssh_sftp_download(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_func_cancel_ssh_sftp_upload(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_fn_func_chmod_ssh_sftp_path(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
@@ -285,6 +287,8 @@ class NativeWhipSsh : public jsi::HostObject {
     jsi::Value cpp_uniffi_whip_ssh_checksum_func_clear_host_runtime_event_sink(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_func_create_host_runtime(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_func_set_host_runtime_event_sink(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_func_cancel_ssh_sftp_download(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_func_cancel_ssh_sftp_upload(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_whip_ssh_checksum_func_chmod_ssh_sftp_path(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);

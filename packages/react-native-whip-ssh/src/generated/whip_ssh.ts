@@ -1154,6 +1154,30 @@ export async function pairHost(
   }
 }
 
+/**
+ * Snapshot once at scene completion; durations are totals in microseconds.
+ * Visible latency is cursor query start to transcript application, not remote
+ * creation to screen paint, which requires remote/device instrumentation.
+ */
+export function powerDiagnosticsSnapshot(): string {
+  return ((__rb: Uint8Array) => {
+    try {
+      return FfiConverterString.lift(__rb);
+    } finally {
+      nativeModule().rustbuffer_free(__rb);
+    }
+  })(
+    uniffiCaller.rustCall(
+      /*caller:*/ callStatus => {
+        return nativeModule().ubrn_uniffi_whip_ssh_fn_func_power_diagnostics_snapshot(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ),
+  );
+}
+
 export async function prepareHerdrTerminalBridge(
   clientKey: string,
   socketPath: string,
@@ -1470,6 +1494,25 @@ export function setKnownHosts(contents: string): void {
     /*caller:*/ callStatus => {
       nativeModule().ubrn_uniffi_whip_ssh_fn_func_set_known_hosts(
         FfiConverterString.lower(contents, nativeModule().rustbuffer_alloc),
+        callStatus,
+      );
+    },
+    /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+  );
+}
+
+/**
+ * Reset explicitly at the start of a diagnostic scene. Disabled by default.
+ */
+export function setPowerDiagnosticsEnabled(
+  enabled: boolean,
+  reset: boolean,
+): void {
+  uniffiCaller.rustCall(
+    /*caller:*/ callStatus => {
+      nativeModule().ubrn_uniffi_whip_ssh_fn_func_set_power_diagnostics_enabled(
+        FfiConverterBool.lower(enabled, nativeModule().rustbuffer_alloc),
+        FfiConverterBool.lower(reset, nativeModule().rustbuffer_alloc),
         callStatus,
       );
     },
@@ -25665,6 +25708,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot() !==
+    23988
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_whip_ssh_checksum_func_power_diagnostics_snapshot',
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_whip_ssh_checksum_func_prepare_herdr_terminal_bridge() !==
     21564
   ) {
@@ -25756,6 +25807,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       'uniffi_whip_ssh_checksum_func_set_known_hosts',
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled() !==
+    61339
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_whip_ssh_checksum_func_set_power_diagnostics_enabled',
     );
   }
   if (

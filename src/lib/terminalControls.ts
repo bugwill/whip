@@ -12,6 +12,7 @@ export const defaultTerminalControlOrder = [
   'ctrl',
   'shift',
   'esc',
+  'ctrl-c',
   'tab',
   'paste',
   'history',
@@ -39,7 +40,7 @@ export const defaultTerminalControlOrder = [
 export type TerminalControlId = typeof defaultTerminalControlOrder[number];
 export type TerminalControlUsage = Partial<Record<TerminalControlId, number>>;
 
-export const fixedTerminalControlsBeforePad = ['keyboard', 'compose', 'tab', 'esc'] as const;
+export const fixedTerminalControlsBeforePad = ['keyboard', 'compose', 'tab', 'esc', 'ctrl-c'] as const;
 export const fixedTerminalControlsAfterPad = ['model', 'fast', 'clear', 'status'] as const;
 export const fixedTerminalControls = [
   ...fixedTerminalControlsBeforePad,

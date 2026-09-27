@@ -775,14 +775,46 @@ fn fail_subscription(subscription: &EventSubscription, reason: String) {
     remove_subscription(subscription.id);
 }
 
+pub(crate) struct StartedSubscription {
+    id: u64,
+    owned: bool,
+}
+impl StartedSubscription {
+    pub(crate) fn close_if_owned(self) {
+        if self.owned {
+            close_subscription_by_id(self.id);
+        }
+    }
+}
+
 pub(crate) async fn start_on_runtime(
     connection: Arc<HerdrConnection>,
     protocol: u32,
     pane_ids: Vec<String>,
-) -> Result<(), HerdrEventError> {
+) -> Result<StartedSubscription, HerdrEventError> {
+    start_subscription(connection, protocol, pane_ids, false).await
+}
+
+/// Host runtime starts always own their subscription. Borrowing a registered
+/// but unacknowledged setup would report a stream as usable before Herdr has
+/// accepted it, and the original creator could later close it underneath us.
+pub(crate) async fn start_replacing_on_runtime(
+    connection: Arc<HerdrConnection>,
+    protocol: u32,
+    pane_ids: Vec<String>,
+) -> Result<StartedSubscription, HerdrEventError> {
+    start_subscription(connection, protocol, pane_ids, true).await
+}
+
+async fn start_subscription(
+    connection: Arc<HerdrConnection>,
+    protocol: u32,
+    pane_ids: Vec<String>,
+    replace: bool,
+) -> Result<StartedSubscription, HerdrEventError> {
     let client_key = connection.client_key().to_owned();
-    if registry().lock().by_client.contains_key(&client_key) {
-        return Ok(());
+    if !replace && let Some(id) = registry().lock().by_client.get(&client_key).copied() {
+        return Ok(StartedSubscription { id, owned: false });
     }
     let request = subscription_request(protocol, &pane_ids)?;
     let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, Ordering::Relaxed);
@@ -794,10 +826,19 @@ pub(crate) async fn start_on_runtime(
         parser: Mutex::new(JsonlEventParser::default()),
         acknowledgement: Mutex::new(Some(acknowledgement_sender)),
     });
-    {
+    let replaced = {
         let mut registry = registry().lock();
         registry.by_id.insert(id, subscription.clone());
-        registry.by_client.insert(client_key.clone(), id);
+        let previous = registry.by_client.insert(client_key.clone(), id);
+        previous.and_then(|previous| registry.by_id.remove(&previous))
+    };
+    if let Some(replaced) = replaced {
+        // The replaced setup is already out of the registry, so its transport
+        // closure cannot report this client's current subscription as closed.
+        replaced.finish_acknowledgement(Err(HerdrEventError::SubscriptionUnavailable(
+            "Herdr event subscription was replaced before acknowledgement".to_owned(),
+        )));
+        replaced.close_stream();
     }
     let frame = Arc::new(move |bytes| transport_frame(id, bytes));
     let closed = Arc::new(move |reason| transport_closed(id, reason));
@@ -847,6 +888,7 @@ pub(crate) async fn start_on_runtime(
             Err(HerdrEventError::TransportDisconnected(error.to_string()))
         }
     }
+    .map(|()| StartedSubscription { id, owned: true })
 }
 
 #[uniffi::export]
@@ -877,6 +919,15 @@ pub async fn start_herdr_event_subscription(
                 "Herdr event runtime task failed: {error}"
             ))
         })?
+        .map(|_| ())
+}
+
+pub(crate) fn close_subscription_by_id(id: u64) {
+    let subscription = subscription(id);
+    if let Some(subscription) = subscription {
+        remove_subscription(id);
+        subscription.close_stream();
+    }
 }
 
 #[uniffi::export]
@@ -901,6 +952,94 @@ pub fn close_herdr_event_subscription(client_key: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn borrowed_existing_subscription_is_not_closed_by_stale_setup() {
+        let client_key = "borrowed-cleanup-test".to_owned();
+        let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, Ordering::Relaxed);
+        let current = Arc::new(EventSubscription {
+            id,
+            client_key: client_key.clone(),
+            stream: Mutex::new(None),
+            parser: Mutex::new(JsonlEventParser::default()),
+            acknowledgement: Mutex::new(None),
+        });
+        {
+            let mut registry = registry().lock();
+            registry.by_id.insert(id, current);
+            registry.by_client.insert(client_key.clone(), id);
+        }
+        let connection = HerdrConnection::new(client_key.clone(), String::new(), None, None);
+        let borrowed = crate::runtime()
+            .unwrap()
+            .block_on(start_on_runtime(connection, 1, Vec::new()))
+            .unwrap();
+        assert!(!borrowed.owned);
+        borrowed.close_if_owned();
+        assert_eq!(registry().lock().by_client.get(&client_key), Some(&id));
+        assert!(subscription(id).is_some());
+        close_subscription_by_id(id);
+    }
+
+    #[test]
+    fn replacing_start_cancels_unacknowledged_setup_instead_of_borrowing_it() {
+        let client_key = "replace-unacknowledged-test".to_owned();
+        let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, Ordering::Relaxed);
+        let (sender, mut receiver) = oneshot::channel();
+        let pending = Arc::new(EventSubscription {
+            id,
+            client_key: client_key.clone(),
+            stream: Mutex::new(None),
+            parser: Mutex::new(JsonlEventParser::default()),
+            acknowledgement: Mutex::new(Some(sender)),
+        });
+        {
+            let mut registry = registry().lock();
+            registry.by_id.insert(id, pending);
+            registry.by_client.insert(client_key.clone(), id);
+        }
+        let connection = HerdrConnection::new(client_key.clone(), String::new(), None, None);
+        let started = crate::runtime().unwrap().block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                start_replacing_on_runtime(connection, herdr_codec::MIN_PROTOCOL, Vec::new()),
+            )
+            .await
+            .expect("replacement start must not hang")
+        });
+        // There is no transport in tests, so the replacement fails; what matters
+        // is that it never reported the unacknowledged setup as usable.
+        assert!(started.is_err());
+        assert!(matches!(receiver.try_recv(), Ok(Err(_))));
+        assert!(subscription(id).is_none());
+        assert!(registry().lock().by_client.get(&client_key).is_none());
+    }
+
+    #[test]
+    fn stale_subscription_cleanup_preserves_replacement() {
+        let client_key = "stale-cleanup-test".to_owned();
+        let old_id = NEXT_SUBSCRIPTION_ID.fetch_add(1, Ordering::Relaxed);
+        let new_id = NEXT_SUBSCRIPTION_ID.fetch_add(1, Ordering::Relaxed);
+        let make = |id| {
+            Arc::new(EventSubscription {
+                id,
+                client_key: client_key.clone(),
+                stream: Mutex::new(None),
+                parser: Mutex::new(JsonlEventParser::default()),
+                acknowledgement: Mutex::new(None),
+            })
+        };
+        {
+            let mut registry = registry().lock();
+            registry.by_id.insert(old_id, make(old_id));
+            registry.by_id.insert(new_id, make(new_id));
+            registry.by_client.insert(client_key.clone(), new_id);
+        }
+        close_subscription_by_id(old_id);
+        assert_eq!(registry().lock().by_client.get(&client_key), Some(&new_id));
+        assert!(subscription(new_id).is_some());
+        close_subscription_by_id(new_id);
+    }
 
     fn event_kind(event: &HerdrEvent) -> Option<HerdrEventKind> {
         match event {

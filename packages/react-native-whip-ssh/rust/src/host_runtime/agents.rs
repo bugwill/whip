@@ -265,6 +265,7 @@ pub(super) async fn submit_pastes_inner(
     parts: Vec<String>,
 ) -> Result<(), HostRuntimeError> {
     let mut submitted_parts = 0_u32;
+    let wake_pane_id = pane_id.clone();
     for (request, completes_part) in pane_submission_requests(pane_id, parts) {
         control_request_inner(inner.clone(), request)
             .await
@@ -276,6 +277,7 @@ pub(super) async fn submit_pastes_inner(
             submitted_parts = submitted_parts.saturating_add(1);
         }
     }
+    inner.agents.wake_pane(&wake_pane_id);
     Ok(())
 }
 #[uniffi::export]

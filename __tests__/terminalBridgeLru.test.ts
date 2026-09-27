@@ -119,6 +119,22 @@ describe('terminal bridge channels', () => {
     expect(native.closeHerdrBridge).toHaveBeenCalledWith('term-1');
   });
 
+  test('reopening a released controller uses renderer geometry before any new fit', async () => {
+    const native = bridgeClient();
+    connectWithPassword.mockResolvedValue(native);
+    const client = new HerdrClient();
+    await client.connect(profile);
+    const geometry = { columns: 164, rows: 62, cellWidthPx: 11, cellHeightPx: 22 };
+    const first = await client.terminal.openTerminal('term-1', jest.fn(), undefined, undefined, geometry);
+    client.terminal.releaseTerminal('term-1', first);
+    expect(client.terminal.isTerminalBridgeRetained('term-1')).toBe(false);
+    native.startHerdrBridge.mockClear();
+    await client.terminal.openTerminal('term-1', jest.fn(), undefined, undefined, geometry);
+    expect(native.startHerdrBridge).toHaveBeenCalledTimes(1);
+    expect(native.startHerdrBridge.mock.calls[0].slice(4, 8)).toEqual([164, 62, 11, 22]);
+    expect(native.herdrBridgeResize).not.toHaveBeenCalled();
+  });
+
   test('detaching a WebView controller keeps its SSH bridge warm', async () => {
     const native = bridgeClient();
     connectWithPassword.mockResolvedValue(native);

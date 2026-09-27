@@ -620,6 +620,7 @@ export const ja = {
   'terminal.historyEmpty': '入力コンポーザーから送信したテキストや、ターミナルに貼り付けたテキストがここに表示されます。',
   'terminal.closeHistory': '入力履歴を閉じる',
   'terminal.useHistoryEntry': '履歴から貼り付け: {{text}}',
+  'terminal.interruptProgram': 'プログラムを中断 (Ctrl+C)',
   'terminal.escapeKey': 'エスケープキー',
   'terminal.tabKey': 'Tab キー',
   'terminal.enterKey': 'Enterキー',
