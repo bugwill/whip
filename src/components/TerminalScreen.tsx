@@ -133,6 +133,7 @@ import {
   type TerminalEditableRegion,
   type TerminalRendererHandle,
 } from './TerminalRendererHost';
+import { ConfirmationPopup } from './ConfirmationPopup';
 import { ComposerInput, MessageComposer } from './MessageComposer';
 import { ComposerCharacterCount, createComposerDraftStore } from './ComposerCharacterCount';
 import { TerminalDirectionPad } from './TerminalDirectionPad';
@@ -569,6 +570,10 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
     >([]);
     const [, setOfflineBackendRevision] = useState(0);
     const [historyOpen, setHistoryOpen] = useState(false);
+    const [interruptTargetKey, setInterruptTargetKey] = useState<string | null>(null);
+    useEffect(() => {
+      setInterruptTargetKey(null);
+    }, [visible, activeTarget?.key, terminalId]);
     const [keyboardEnabled, setKeyboardEnabled] = useState(false);
     const keyboardEnabledRef = useRef(keyboardEnabled);
     const skipNextKeyboardRendererSyncRef = useRef(false);
@@ -1770,13 +1775,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             disabled={status !== 'connected'}
             variant="secondary"
             onPress={() => {
-              onControlUse(control);
-              // Encode an explicit Ctrl+C independently of sticky modifiers,
-              // and bypass renderer.input so it cannot apply them a second time.
-              reportBackgroundFailure(
-                writeInput(applyTerminalModifiers('c', 'armed', 'off', 'off', protocolState.kittyKeyboardReportAll)),
-                TERMINAL_INPUT_CONTEXT,
-              );
+              if (activeTarget) setInterruptTargetKey(activeTarget.key);
             }}
           >
             <View className={TERMINAL_ICON_BOX_CLASS}>
@@ -2862,6 +2861,24 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, Props>(
             </View>
           </View>
         </Modal>
+        <ConfirmationPopup
+          confirmLabel={t('terminal.interruptConfirm')}
+          copy={t('terminal.interruptCopy')}
+          title={t('terminal.interruptProgram')}
+          visible={visible && interruptTargetKey !== null && interruptTargetKey === activeTarget?.key}
+          onCancel={() => setInterruptTargetKey(null)}
+          onConfirm={() => {
+            setInterruptTargetKey(null);
+            if (status !== 'connected' || interruptTargetKey !== activeTarget?.key) return;
+            onControlUse('ctrl-c');
+            // Encode an explicit Ctrl+C independently of sticky modifiers,
+            // and bypass renderer.input so it cannot apply them a second time.
+            reportBackgroundFailure(
+              writeInput(applyTerminalModifiers('c', 'armed', 'off', 'off', protocolState.kittyKeyboardReportAll)),
+              TERMINAL_INPUT_CONTEXT,
+            );
+          }}
+        />
       </View>
     );
   },

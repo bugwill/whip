@@ -621,6 +621,8 @@ export const es = {
   'terminal.closeHistory': 'Cerrar historial de entrada',
   'terminal.useHistoryEntry': 'Pegar del historial: {{text}}',
   'terminal.interruptProgram': 'Interrumpir programa (Ctrl+C)',
+  'terminal.interruptConfirm': 'Interrumpir',
+  'terminal.interruptCopy': '¿Enviar Ctrl+C para interrumpir el programa que se ejecuta en esta terminal?',
   'terminal.escapeKey': 'Tecla de escape',
   'terminal.tabKey': 'Tecla de tabulación',
   'terminal.enterKey': 'Tecla Enter',

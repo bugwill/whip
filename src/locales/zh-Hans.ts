@@ -621,6 +621,8 @@ export const zhHans = {
   'terminal.closeHistory': '关闭输入历史记录',
   'terminal.useHistoryEntry': '从历史记录中粘贴：{{text}}',
   'terminal.interruptProgram': '中断程序（Ctrl+C）',
+  'terminal.interruptConfirm': '中断',
+  'terminal.interruptCopy': '确定发送 Ctrl+C，中断当前终端中运行的程序吗？',
   'terminal.escapeKey': '退出键',
   'terminal.tabKey': 'Tab 键',
   'terminal.enterKey': '输入键',

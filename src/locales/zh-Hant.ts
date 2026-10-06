@@ -621,6 +621,8 @@ export const zhHant: Record<string, string> = {
   'terminal.closeHistory': '關閉輸入記錄',
   'terminal.useHistoryEntry': '從記錄貼上：{{text}}',
   'terminal.interruptProgram': '中斷程式（Ctrl+C）',
+  'terminal.interruptConfirm': '中斷',
+  'terminal.interruptCopy': '確定傳送 Ctrl+C，中斷目前終端中執行的程式嗎？',
   'terminal.escapeKey': 'Escape 鍵',
   'terminal.tabKey': 'Tab 鍵',
   'terminal.enterKey': 'Enter 鍵',

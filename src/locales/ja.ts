@@ -621,6 +621,8 @@ export const ja = {
   'terminal.closeHistory': '入力履歴を閉じる',
   'terminal.useHistoryEntry': '履歴から貼り付け: {{text}}',
   'terminal.interruptProgram': 'プログラムを中断 (Ctrl+C)',
+  'terminal.interruptConfirm': '中断',
+  'terminal.interruptCopy': 'Ctrl+C を送信して、このターミナルで実行中のプログラムを中断しますか？',
   'terminal.escapeKey': 'エスケープキー',
   'terminal.tabKey': 'Tab キー',
   'terminal.enterKey': 'Enterキー',

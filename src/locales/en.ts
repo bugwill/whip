@@ -637,6 +637,8 @@ export const en = {
   'terminal.closeHistory': 'Close input history',
   'terminal.useHistoryEntry': 'Paste from history: {{text}}',
   'terminal.interruptProgram': 'Interrupt program (Ctrl+C)',
+  'terminal.interruptConfirm': 'Interrupt',
+  'terminal.interruptCopy': 'Send Ctrl+C to interrupt the program running in this terminal?',
   'terminal.escapeKey': 'Escape key',
   'terminal.tabKey': 'Tab key',
   'terminal.enterKey': 'Enter key',
